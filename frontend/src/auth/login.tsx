@@ -6,8 +6,16 @@ export default function Login() {
   }
 
   return (
-    <main className="min-h-screen bg-white font-['Plus_Jakarta_Sans'] text-slate-900">
-      <div className="grid min-h-screen lg:grid-cols-2">
+    <main className="relative min-h-screen font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-500 selection:text-white">
+      {/* Mobile/iPad Full Background Image with Soft Light Overlay */}
+      <div 
+        className="fixed inset-0 z-0 bg-cover bg-center lg:hidden"
+        style={{ backgroundImage: "url('/dyci_img/homepage7.jpg')" }}
+      >
+        <div className="absolute inset-0 bg-linear-to-b from-white/40 via-white/20 to-slate-900/30 backdrop-blur-[3px]" />
+      </div>
+
+      <div className="relative z-10 grid min-h-screen lg:grid-cols-2">
         {/* Hero Image Section (Desktop Only) */}
         <section
           className="relative hidden min-h-107.5 overflow-hidden bg-cover bg-center lg:flex lg:min-h-screen"
@@ -31,7 +39,7 @@ export default function Login() {
               DR. YANGA&apos;S COLLEGES, INC.
             </div>
 
-            {/* Inayos na Headline at Gradient Colors */}
+            {/* Headline at Gradient Colors */}
             <h1 className="text-4xl font-black leading-[1.08] tracking-tight text-white xl:text-[3.2rem]">
               Welcome to your
               <span className="mt-1 block">
@@ -44,7 +52,7 @@ export default function Login() {
               </span>
             </h1>
 
-            {/* Inayos na Subtitle Text */}
+            {/* Subtitle Text */}
             <p className="mt-5 max-w-md text-sm font-medium leading-relaxed text-slate-200">
               Seamlessly manage school deployments, equipment tracking, and live audit logs in one unified platform—<strong className="font-extrabold text-white">ensuring campus readiness every day.</strong>
             </p>
@@ -52,98 +60,121 @@ export default function Login() {
         </section>
 
         {/* Login Form Section */}
-        <section className="relative flex min-h-screen items-center justify-center px-5 py-8 sm:px-10 md:py-12 lg:px-16 xl:px-20">
+        <section className="relative flex min-h-screen items-center justify-center px-4 py-6 sm:px-6 lg:bg-white lg:px-16 xl:px-20">
           <a
             href="/"
-            className="absolute left-5 top-5 inline-flex items-center gap-2 rounded-full bg-slate-100 px-4 py-2 text-xs font-extrabold text-slate-700 transition hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 sm:left-10 sm:top-6 sm:py-2.5 lg:hidden"
+            className="absolute left-4 top-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-white/60 bg-white/80 px-3.5 py-1.5 text-[0.7rem] font-extrabold text-slate-800 shadow-sm backdrop-blur-md transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 sm:left-8 sm:top-6 sm:px-4 sm:py-2 sm:text-xs lg:hidden"
           >
-            <span aria-hidden="true" className="text-lg leading-none">←</span>
+            <span aria-hidden="true" className="text-base leading-none">←</span>
             Back to Home
           </a>
 
-          {/* Form Container with Tablet Scaling */}
-          <div className="w-full max-w-90 md:max-w-120 lg:max-w-100">
-
+          {/* Ultra-Responsive Frosted Glass Wrapper */}
+          <div className="relative z-10 w-full max-w-85 rounded-3xl p-px bg-linear-to-b from-white/90 via-white/50 to-blue-400/30 shadow-2xl shadow-slate-950/15 sm:max-w-105 lg:max-w-100 lg:bg-none lg:p-0 lg:shadow-none">
             
-            {/* Logos */}
-            <div className="mb-5 flex items-center justify-center gap-3 sm:mb-6 md:mb-8 md:gap-4">
-              <img
-                src="/dyci_img/A.sset.webp"
-                alt="A.SSET logo"
-                className="h-16 w-16 object-contain transition-all sm:h-18 sm:w-18 md:h-20 md:w-20 lg:h-16 lg:w-16"
-              />
-              <img
-                src="/dyci_img/dyci-logo.webp"
-                alt="Dr. Yanga's Colleges logo"
-                className="h-14 w-14 object-contain transition-all sm:h-15 sm:w-15 md:h-16 md:w-16 lg:h-14 lg:w-14"
-              />
-            </div>
+            <div className="w-full rounded-3xl bg-white/85 p-5 backdrop-blur-xl transition-all sm:p-7 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
 
-            <div className="mb-5 md:mb-7">
-              <h2 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl md:text-3xl lg:text-2xl">
-                Sign in
-              </h2>
-              <p className="mt-1 text-xs font-medium text-slate-500 md:text-sm lg:text-xs">
-                Sign in using your registered email account.
-              </p>
-            </div>
+              {/* Header Badge (Mobile/Tablet Only) */}
+              <div className="mb-3 text-center lg:hidden">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/15 bg-blue-50/70 px-2.5 py-0.5 text-[0.6rem] font-black uppercase tracking-widest text-blue-700 shadow-xs">
+                  <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
+                  A.SSET Campus System
+                </span>
+              </div>
 
-            <form className="space-y-4 md:space-y-5 lg:space-y-4" onSubmit={handleSubmit}>
-              <div>
-                <label
-                  htmlFor="email"
-                  className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-600 md:text-xs lg:text-[0.7rem]"
-                >
-                  DYCI Email Address
-                </label>
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="yourname@example.com"
-                  required
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 md:h-13 md:text-base lg:h-12 lg:text-sm"
+              {/* Logos */}
+              <div className="mb-3.5 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
+                <img
+                  src="/dyci_img/A.sset.webp"
+                  alt="A.SSET logo"
+                  className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16"
+                />
+                <div className="h-6 w-px bg-slate-300/80 sm:h-8" />
+                <img
+                  src="/dyci_img/dyci-logo.webp"
+                  alt="Dr. Yanga's Colleges logo"
+                  className="h-9 w-9 object-contain transition-transform hover:scale-105 sm:h-11 sm:w-11 lg:h-14 lg:w-14"
                 />
               </div>
 
-              <div>
-                <label
-                  htmlFor="password"
-                  className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-600 md:text-xs lg:text-[0.7rem]"
-                >
-                  Password
-                </label>
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="Enter your password"
-                  required
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 md:h-13 md:text-base lg:h-12 lg:text-sm"
-                />
+              <div className="mb-3.5 text-center sm:text-left sm:mb-5">
+                <h2 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl lg:text-2xl">
+                  Sign in
+                </h2>
+                <p className="mt-0.5 text-[0.7rem] font-medium text-slate-600 sm:text-xs">
+                  Sign in using your registered email account.
+                </p>
               </div>
 
-              <div className="flex justify-end pt-0.5">
-                <a
-                  href="#forgot-password"
-                  className="text-xs font-bold text-blue-600 transition hover:text-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 md:text-sm lg:text-xs"
+              <form className="space-y-3 sm:space-y-4" onSubmit={handleSubmit}>
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]"
+                  >
+                    DYCI Email Address
+                  </label>
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="yourname@example.com"
+                    required
+                    className="h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3.5 text-xs font-medium text-slate-900 shadow-xs backdrop-blur-md outline-none transition duration-200 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-3 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="password"
+                    className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]"
+                  >
+                    Password
+                  </label>
+                  <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    placeholder="Enter your password"
+                    required
+                    className="h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3.5 text-xs font-medium text-slate-900 shadow-xs backdrop-blur-md outline-none transition duration-200 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-3 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
+                  />
+                </div>
+
+                <div className="flex justify-end pt-0.5">
+                  <a
+                    href="/forgot-password"
+                    className="text-[0.7rem] font-bold text-blue-600 transition hover:text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 sm:text-xs"
+                  >
+                    Forgot password?
+                  </a>
+                </div>
+
+                <button
+                  type="submit"
+                  className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-[0.7rem] font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition duration-200 hover:bg-blue-500 hover:shadow-blue-600/35 active:scale-[0.98] focus:outline-none focus-visible:ring-3 focus-visible:ring-blue-500/25 sm:h-11 sm:text-xs lg:h-12"
                 >
-                  Forgot password?
-                </a>
+                  Sign in
+                  <span aria-hidden="true" className="text-sm leading-none sm:text-base">→</span>
+                </button>
+              </form>
+
+              {/* Register Option / Link */}
+              <div className="mt-4 pt-3 text-center border-t border-slate-200/60 lg:border-slate-100 sm:mt-5 sm:pt-4">
+                <p className="text-[0.7rem] font-semibold text-slate-600 sm:text-xs">
+                  Don&apos;t have an account yet?{' '}
+                  <a
+                    href="/register"
+                    className="font-extrabold text-blue-600 transition hover:text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                  >
+                    Register here
+                  </a>
+                </p>
               </div>
 
-              <button
-                type="submit"
-                className="mt-1 flex h-11 w-full items-center justify-center gap-2.5 rounded-full bg-blue-600 text-xs font-black uppercase tracking-[0.16em] text-white shadow-lg shadow-blue-600/25 transition hover:bg-blue-500 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-500/25 md:h-13 md:text-sm lg:h-12 lg:text-xs"
-              >
-                Sign in
-                <span aria-hidden="true" className="text-base leading-none md:text-lg">→</span>
-              </button>
-            </form>
-
-          
+            </div>
           </div>
         </section>
       </div>
