@@ -1,6 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import AdminDashboard from './admin/admindashboard'
 import GsoDashboard from './gso/gsodashboard'
+import BorrowingPage from './gso/borrowing'
+import EmployeeMasterData from './gso/employemasterdata'
+import IssuanceRecord from './gso/issuancerecord'
+import ItemsMasterData from './gso/itemsmasterdata'
+
+
+
 import Login from './auth/login'
 import ForgotPassword from './auth/forgotpassword'
 import ResetOtp from './auth/resetotp'
@@ -66,6 +73,18 @@ export default function App() {
 
   if (path === '/admin' || path === '/admin/dashboard') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminDashboard /></ProtectedDashboard>
+  }
+  if (path === '/gso/items') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><ItemsMasterData /></ProtectedDashboard>
+  }
+  if (path === '/gso/employees') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><EmployeeMasterData /></ProtectedDashboard>
+  }
+  if (path === '/gso/issuance') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><IssuanceRecord /></ProtectedDashboard>
+  }
+  if (path === '/gso/requests-borrowing') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><BorrowingPage /></ProtectedDashboard>
   }
   if (path === '/gso' || path === '/gso/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoDashboard /></ProtectedDashboard>

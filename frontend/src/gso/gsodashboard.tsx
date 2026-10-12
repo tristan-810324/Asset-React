@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import GsoNavbar, { type GsoNavigationItem } from '../components/navbars/gsonavbar'
 
 type IconName =
   | 'archive'
@@ -17,8 +18,7 @@ type IconName =
   | 'settings'
   | 'tool'
   | 'truck'
-
-type NavigationItem = 'Overview' | 'Asset Inventory' | 'Assignments' | 'Maintenance' | 'Reports'
+  | 'users'
 
 const iconPaths: Record<IconName, ReactNode> = {
   archive: (
@@ -94,6 +94,13 @@ const iconPaths: Record<IconName, ReactNode> = {
       <circle cx="17" cy="18" r="2" />
     </>
   ),
+  users: (
+    <>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="10" cy="7" r="4" />
+      <path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </>
+  ),
 }
 
 function Icon({ name, className = 'h-5 w-5' }: { name: IconName; className?: string }) {
@@ -112,14 +119,6 @@ function Icon({ name, className = 'h-5 w-5' }: { name: IconName; className?: str
     </svg>
   )
 }
-
-const navigation: { name: NavigationItem; icon: IconName; badge?: string }[] = [
-  { name: 'Overview', icon: 'grid' },
-  { name: 'Asset Inventory', icon: 'archive', badge: '1,248' },
-  { name: 'Assignments', icon: 'truck' },
-  { name: 'Maintenance', icon: 'tool', badge: '8' },
-  { name: 'Reports', icon: 'chart' },
-]
 
 const assetHealth = [
   { label: 'Available', value: '372', change: '+5.2%', color: 'bg-emerald-500', icon: 'archive' as IconName },
@@ -151,7 +150,7 @@ const activityItems = [
 
 export default function GsoDashboard() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [activePage, setActivePage] = useState<NavigationItem>('Overview')
+  const [activePage, setActivePage] = useState<GsoNavigationItem>('Overview')
   const [notice, setNotice] = useState('')
   const today = new Intl.DateTimeFormat('en-PH', {
     weekday: 'long',
@@ -160,7 +159,7 @@ export default function GsoDashboard() {
     year: 'numeric',
   }).format(new Date())
 
-  const handleNavigation = (item: NavigationItem) => {
+  const handleNavigation = (item: GsoNavigationItem) => {
     setActivePage(item)
     setMobileMenuOpen(false)
     if (item !== 'Overview') setNotice(`${item} is ready for its next screen.`)
@@ -172,93 +171,12 @@ export default function GsoDashboard() {
 
   return (
     <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-y-auto bg-[#071b35] px-5 py-6 text-slate-300 shadow-2xl shadow-slate-900/20 transition-transform duration-300 lg:translate-x-0 ${
-          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-        aria-label="GSO navigation"
-      >
-        <div className="flex items-center justify-between px-2">
-          <a href="/" className="flex items-center gap-3" aria-label="A.SSET home">
-            <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-blue-950/30">
-              <img src="/dyci_img/A.sset.webp" alt="A.SSET" className="h-full w-full object-contain" />
-            </span>
-            <span>
-              <span className="block text-sm font-black tracking-tight text-white">A.SSET</span>
-              <span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">GSO Command Center</span>
-            </span>
-          </a>
-          <button
-            type="button"
-            onClick={() => setMobileMenuOpen(false)}
-            className="grid h-9 w-9 place-items-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white lg:hidden"
-            aria-label="Close navigation menu"
-          >
-            <Icon name="close" />
-          </button>
-        </div>
-
-        <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
-        <nav className="mt-3 space-y-1.5" aria-label="Primary navigation">
-          {navigation.map((item) => {
-            const isActive = activePage === item.name
-            return (
-              <button
-                key={item.name}
-                type="button"
-                onClick={() => handleNavigation(item.name)}
-                className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-bold transition ${
-                  isActive
-                    ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35'
-                    : 'text-slate-300 hover:bg-white/8 hover:text-white'
-                }`}
-                aria-current={isActive ? 'page' : undefined}
-              >
-                <Icon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
-                <span className="flex-1">{item.name}</span>
-                {item.badge && (
-                  <span className={`rounded-md px-1.5 py-0.5 text-[0.62rem] font-black ${isActive ? 'bg-white/18 text-white' : 'bg-white/10 text-blue-100'}`}>
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </nav>
-
-        <div className="mt-auto rounded-2xl border border-white/10 bg-white/6 p-4">
-          <div className="flex items-center gap-2 text-blue-200">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.1)]" />
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">System status</span>
-          </div>
-          <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">All asset services are running normally.</p>
-          <button
-            type="button"
-            onClick={() => handleAction('Support center')}
-            className="mt-3 text-xs font-extrabold text-white transition hover:text-blue-200"
-          >
-            Contact support <span aria-hidden="true">→</span>
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => handleAction('Settings')}
-          className="mt-5 flex items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-bold text-slate-300 transition hover:bg-white/8 hover:text-white"
-        >
-          <Icon name="settings" className="h-[1.15rem] w-[1.15rem] text-blue-200" />
-          Settings
-        </button>
-      </aside>
-
-      {mobileMenuOpen && (
-        <button
-          type="button"
-          className="fixed inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] lg:hidden"
-          aria-label="Close navigation menu"
-          onClick={() => setMobileMenuOpen(false)}
-        />
-      )}
+      <GsoNavbar
+        currentPage={activePage}
+        mobileMenuOpen={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        onAction={handleAction}
+      />
 
       <section className="min-h-screen lg:pl-72">
         <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
