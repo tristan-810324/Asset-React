@@ -1,8 +1,33 @@
-import type { FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
+import { dashboardPathForRoles, saveAuthToken, signIn } from './authApi'
 
 export default function Login() {
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const [errorMessage, setErrorMessage] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setErrorMessage('')
+    setIsSubmitting(true)
+
+    const formData = new FormData(event.currentTarget)
+    const email = String(formData.get('email') || '').trim()
+    const password = String(formData.get('password') || '')
+
+    try {
+      const result = await signIn(email, password)
+      const destination = dashboardPathForRoles(result.user.roles)
+
+      if (!destination) {
+        throw new Error('Walang dashboard role ang account na ito. Makipag-ugnayan sa IT Admin.')
+      }
+
+      saveAuthToken(result.token)
+      window.location.replace(destination)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Hindi makapag-sign in. Subukan muli.')
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -152,27 +177,22 @@ export default function Login() {
                   </a>
                 </div>
 
+                {errorMessage && (
+                  <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">
+                    {errorMessage}
+                  </p>
+                )}
+
                 <button
                   type="submit"
+                  disabled={isSubmitting}
+                  aria-busy={isSubmitting}
                   className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-[0.7rem] font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition duration-200 hover:bg-blue-500 hover:shadow-blue-600/35 active:scale-[0.98] focus:outline-none focus-visible:ring-3 focus-visible:ring-blue-500/25 sm:h-11 sm:text-xs lg:h-12"
                 >
-                  Sign in
+                  {isSubmitting ? 'Signing in…' : 'Sign in'}
                   <span aria-hidden="true" className="text-sm leading-none sm:text-base">→</span>
                 </button>
               </form>
-
-              {/* Register Option / Link */}
-              <div className="mt-4 pt-3 text-center border-t border-slate-200/60 lg:border-slate-100 sm:mt-5 sm:pt-4">
-                <p className="text-[0.7rem] font-semibold text-slate-600 sm:text-xs">
-                  Don&apos;t have an account yet?{' '}
-                  <a
-                    href="/register"
-                    className="font-extrabold text-blue-600 transition hover:text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-                  >
-                    Register here
-                  </a>
-                </p>
-              </div>
 
             </div>
           </div>

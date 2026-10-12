@@ -1,0 +1,249 @@
+const crypto = require('node:crypto');
+const pool = require('../../config/db');
+
+async function getUserByEmail(email) {
+  const result = await pool.query(
+    `SELECT id, name, email, password_hash, is_active, token_version
+       FROM users
+      WHERE lower(email) = $1
+      LIMIT 1`,
+    [email],
+  );
+  return result.rows[0] || null;
+}
+
+async function getUserRoles(userId) {
+  const result = await pool.query(
+    `SELECT r.role_key
+       FROM user_roles ur
+       JOIN roles r ON r.id = ur.role_id
+      WHERE ur.user_id = $1
+      ORDER BY r.role_key`,
+    [userId],
+  );
+  return result.rows.map((row) => row.role_key);
+}
+
+async function getSessionUser(userId) {
+  const result = await pool.query(
+    `SELECT id, name, email, is_active, token_version
+       FROM users
+      WHERE id = $1
+      LIMIT 1`,
+    [userId],
+  );
+  return result.rows[0] || null;
+}
+
+async function countRecentLoginFailures(email, ipAddress) {
+  const clientIp = ipAddress || null;
+  const result = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE email = $1) AS email_failures,
+       COUNT(*) FILTER (WHERE ip_address = $2) AS ip_failures
+       FROM login_events
+      WHERE event_type = 'login_failed'
+        AND occurred_at > NOW() - INTERVAL '15 minutes'
+        AND (email = $1 OR ip_address = $2)`,
+    [email, clientIp],
+  );
+  return {
+    emailFailures: Number(result.rows[0].email_failures),
+    ipFailures: Number(result.rows[0].ip_failures),
+  };
+}
+
+async function recordLoginEvent({ userId = null, email, ipAddress, eventType }) {
+  await pool.query(
+    `INSERT INTO login_events (user_id, email, ip_address, event_type)
+     VALUES ($1, $2, $3, $4)`,
+    [userId, email, ipAddress || null, eventType],
+  );
+}
+
+async function incrementAuthRateLimit(bucketKey, windowMinutes) {
+  const result = await pool.query(
+    `INSERT INTO auth_rate_limits (bucket_key, window_started_at, request_count)
+     VALUES ($1, NOW(), 1)
+     ON CONFLICT (bucket_key) DO UPDATE
+       SET request_count = CASE
+             WHEN auth_rate_limits.window_started_at <= NOW() - ($2 * INTERVAL '1 minute') THEN 1
+             ELSE auth_rate_limits.request_count + 1
+           END,
+           window_started_at = CASE
+             WHEN auth_rate_limits.window_started_at <= NOW() - ($2 * INTERVAL '1 minute') THEN NOW()
+             ELSE auth_rate_limits.window_started_at
+           END,
+           updated_at = NOW()
+     RETURNING request_count`,
+    [bucketKey, windowMinutes],
+  );
+  return Number(result.rows[0].request_count);
+}
+
+async function getPasswordResetUser(email) {
+  const result = await pool.query(
+    `SELECT id, name, email, is_active
+       FROM users
+      WHERE lower(email) = $1
+      LIMIT 1`,
+    [email],
+  );
+  return result.rows[0] || null;
+}
+
+async function createPasswordResetOtp({ userId, challengeId, tokenHash }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    const recent = await client.query(
+      `SELECT COUNT(*)::int AS count
+         FROM auth_tokens
+        WHERE user_id = $1
+          AND purpose = 'reset_otp'
+          AND created_at > NOW() - INTERVAL '1 minute'`,
+      [userId],
+    );
+
+    if (recent.rows[0].count > 0) {
+      await client.query('COMMIT');
+      return false;
+    }
+
+    await client.query(
+      `UPDATE auth_tokens
+          SET used_at = NOW()
+        WHERE user_id = $1
+          AND purpose = 'reset_otp'
+          AND used_at IS NULL`,
+      [userId],
+    );
+    await client.query(
+      `INSERT INTO auth_tokens (id, user_id, purpose, token_hash, expires_at)
+       VALUES ($1, $2, 'reset_otp', $3, NOW() + INTERVAL '5 minutes')`,
+      [challengeId, userId, tokenHash],
+    );
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function invalidateToken(tokenId) {
+  await pool.query('UPDATE auth_tokens SET used_at = NOW() WHERE id = $1 AND used_at IS NULL', [tokenId]);
+}
+
+async function consumeOtpAndCreateResetToken({ challengeId, otpHash, resetTokenHash }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(
+      `SELECT id, user_id, token_hash, attempts
+         FROM auth_tokens
+        WHERE id = $1
+          AND purpose = 'reset_otp'
+          AND used_at IS NULL
+          AND expires_at > NOW()
+          AND attempts < 5
+        FOR UPDATE`,
+      [challengeId],
+    );
+    const token = found.rows[0];
+
+    if (!token) {
+      await client.query('COMMIT');
+      return false;
+    }
+
+    const storedHash = Buffer.from(token.token_hash, 'hex');
+    const submittedHash = Buffer.from(otpHash, 'hex');
+    if (storedHash.length !== submittedHash.length || !crypto.timingSafeEqual(storedHash, submittedHash)) {
+      await client.query(
+        `UPDATE auth_tokens
+            SET attempts = attempts + 1,
+                used_at = CASE WHEN attempts + 1 >= 5 THEN NOW() ELSE used_at END
+          WHERE id = $1`,
+        [challengeId],
+      );
+      await client.query('COMMIT');
+      return false;
+    }
+
+    await client.query('UPDATE auth_tokens SET used_at = NOW() WHERE id = $1', [challengeId]);
+    await client.query(
+      `INSERT INTO auth_tokens (user_id, purpose, token_hash, expires_at)
+       VALUES ($1, 'password_reset', $2, NOW() + INTERVAL '10 minutes')`,
+      [token.user_id, resetTokenHash],
+    );
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function updatePasswordWithResetToken({ tokenHash, passwordHash }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(
+      `SELECT id, user_id
+         FROM auth_tokens
+        WHERE purpose = 'password_reset'
+          AND token_hash = $1
+          AND used_at IS NULL
+          AND expires_at > NOW()
+        FOR UPDATE`,
+      [tokenHash],
+    );
+    const token = found.rows[0];
+    if (!token) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+
+    await client.query(
+      `UPDATE users
+          SET password_hash = $1,
+              token_version = token_version + 1,
+              updated_at = NOW()
+        WHERE id = $2`,
+      [passwordHash, token.user_id],
+    );
+    await client.query(
+      `UPDATE auth_tokens
+          SET used_at = NOW()
+        WHERE user_id = $1 AND used_at IS NULL`,
+      [token.user_id],
+    );
+    await client.query('COMMIT');
+    return true;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = {
+  getUserByEmail,
+  getUserRoles,
+  getSessionUser,
+  countRecentLoginFailures,
+  recordLoginEvent,
+  incrementAuthRateLimit,
+  getPasswordResetUser,
+  createPasswordResetOtp,
+  invalidateToken,
+  consumeOtpAndCreateResetToken,
+  updatePasswordWithResetToken,
+};
