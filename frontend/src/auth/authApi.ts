@@ -5,6 +5,22 @@ export type AuthUser = {
   roles: string[];
 };
 
+export type PendingEmailVerification = {
+  requiresEmailVerification: true;
+  challengeId: string;
+  email: string;
+  message?: string;
+};
+
+export type PendingPasswordReset = {
+  challengeId: string;
+  email: string;
+};
+
+export type SignInResult =
+  | PendingEmailVerification
+  | { token: string; user: AuthUser };
+
 type ApiEnvelope<T> = {
   success: boolean;
   data?: T;
@@ -12,14 +28,20 @@ type ApiEnvelope<T> = {
 };
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status?: number) {
+  readonly status?: number
+
+  constructor(message: string, status?: number) {
     super(message);
     this.name = 'ApiError';
+    this.status = status;
   }
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api/v1').replace(/\/+$/, '');
 const authTokenKey = 'dyciAuthToken';
+const pendingEmailVerificationKey = 'dyciPendingEmailVerification';
+const pendingPasswordResetKey = 'dyciPendingPasswordReset';
+const passwordResetTokenKey = 'dyciPasswordResetToken';
 
 export async function apiRequest<T>(path: string, options: RequestInit & { auth?: boolean } = {}): Promise<T> {
   const { auth = true, headers: requestHeaders, ...requestOptions } = options;
@@ -53,11 +75,101 @@ export async function apiRequest<T>(path: string, options: RequestInit & { auth?
 }
 
 export async function signIn(email: string, password: string) {
-  return apiRequest<{ token: string; user: AuthUser }>('/auth/login', {
+  return apiRequest<SignInResult>('/auth/login', {
     method: 'POST',
     auth: false,
     body: JSON.stringify({ email, password }),
   });
+}
+
+export async function verifyEmailOtp(challengeId: string, otp: string) {
+  return apiRequest<{ token: string; user: AuthUser }>('/auth/verify-email-otp', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ challengeId, otp }),
+  });
+}
+
+export async function requestPasswordReset(email: string) {
+  return apiRequest<{ message: string; challengeId: string }>('/auth/forgot-password', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function verifyPasswordResetOtp(challengeId: string, otp: string) {
+  return apiRequest<{ resetToken: string }>('/auth/verify-otp', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ challengeId, otp }),
+  });
+}
+
+export async function finishPasswordReset(resetToken: string, password: string) {
+  return apiRequest<{ message: string }>('/auth/reset-password', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ resetToken, password }),
+  });
+}
+
+export function savePendingPasswordReset(pending: PendingPasswordReset) {
+  sessionStorage.setItem(pendingPasswordResetKey, JSON.stringify(pending));
+}
+
+export function getPendingPasswordReset(): PendingPasswordReset | null {
+  const value = sessionStorage.getItem(pendingPasswordResetKey);
+  if (!value) return null;
+
+  try {
+    const pending = JSON.parse(value) as Partial<PendingPasswordReset>;
+    if (typeof pending.challengeId === 'string' && typeof pending.email === 'string') {
+      return pending as PendingPasswordReset;
+    }
+  } catch {
+    sessionStorage.removeItem(pendingPasswordResetKey);
+  }
+
+  return null;
+}
+
+export function savePasswordResetToken(token: string) {
+  sessionStorage.setItem(passwordResetTokenKey, token);
+}
+
+export function getPasswordResetToken() {
+  const token = sessionStorage.getItem(passwordResetTokenKey);
+  return token && token.length >= 32 ? token : null;
+}
+
+export function clearPasswordResetState() {
+  sessionStorage.removeItem(pendingPasswordResetKey);
+  sessionStorage.removeItem(passwordResetTokenKey);
+}
+
+export function savePendingEmailVerification(pending: PendingEmailVerification) {
+  sessionStorage.setItem(pendingEmailVerificationKey, JSON.stringify(pending));
+}
+
+export function getPendingEmailVerification(): PendingEmailVerification | null {
+  const value = sessionStorage.getItem(pendingEmailVerificationKey);
+  if (!value) return null;
+
+  try {
+    const pending = JSON.parse(value) as Partial<PendingEmailVerification>;
+    if (pending.requiresEmailVerification === true && typeof pending.challengeId === 'string' && typeof pending.email === 'string') {
+      return pending as PendingEmailVerification;
+    }
+  } catch {
+    sessionStorage.removeItem(pendingEmailVerificationKey);
+  }
+
+  return null;
+}
+
+export function clearPendingEmailVerification() {
+  sessionStorage.removeItem(pendingEmailVerificationKey);
 }
 
 export async function getCurrentUser() {

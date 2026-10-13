@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import AdminDashboard from './admin/admindashboard'
+import UserManagement from './admin/usermanagement'
 import GsoDashboard from './gso/gsodashboard'
 import BorrowingPage from './gso/borrowing'
 import EmployeeMasterData from './gso/employemasterdata'
@@ -12,6 +13,7 @@ import Login from './auth/login'
 import ForgotPassword from './auth/forgotpassword'
 import ResetOtp from './auth/resetotp'
 import ResetPassword from './auth/resetpassword'
+import VerifyEmailOtp from './auth/verifyemailotp'
 import Hero from './landing/hero'
 import { ApiError, clearAuthSession, dashboardPathForRoles, getCurrentUser, hasAuthToken } from './auth/authApi'
 
@@ -74,6 +76,9 @@ export default function App() {
   if (path === '/admin' || path === '/admin/dashboard') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminDashboard /></ProtectedDashboard>
   }
+  if (path === '/admin/users') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><UserManagement /></ProtectedDashboard>
+  }
   if (path === '/gso/items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ItemsMasterData /></ProtectedDashboard>
   }
@@ -94,6 +99,7 @@ export default function App() {
   if (path === '/forgot-password') return <ForgotPassword />
   if (path === '/reset-otp') return <ResetOtp />
   if (path === '/reset-password') return <ResetPassword />
+  if (path === '/verify-email') return <VerifyEmailOtp />
 
   return <Hero />
 }

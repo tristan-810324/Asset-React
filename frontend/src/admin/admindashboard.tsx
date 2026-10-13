@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { clearAuthSession } from '../auth/authApi'
+import AdminNavbar from '../components/navbars/adminnavbar'
 
 type AdminIconName = 'activity' | 'alert' | 'bell' | 'chevron-down' | 'close' | 'database' | 'grid' | 'mail' | 'menu' | 'search' | 'settings' | 'shield' | 'users' | 'logout'
 
@@ -77,17 +78,6 @@ function Icon({ name, className = 'h-5 w-5' }: { name: AdminIconName; className?
   )
 }
 
-const navigation: { name: string; icon: AdminIconName }[] = [
-  { name: 'Overview', icon: 'grid' },
-  { name: 'User management', icon: 'users' },
-  { name: 'Roles & permissions', icon: 'shield' },
-  { name: 'Audit logs', icon: 'activity' },
-  { name: 'Security logs', icon: 'shield' },
-  { name: 'System configuration', icon: 'settings' },
-  { name: 'Email monitoring', icon: 'mail' },
-  { name: 'Backup & recovery', icon: 'database' },
-]
-
 const summaryCards = [
   { label: 'System accounts', detail: 'Account totals not connected', icon: 'users' as AdminIconName, color: 'bg-blue-50 text-blue-600' },
   { label: 'Recent activity', detail: 'Activity feed not connected', icon: 'activity' as AdminIconName, color: 'bg-violet-50 text-violet-600' },
@@ -111,64 +101,7 @@ export default function AdminDashboard() {
 
   return (
     <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-y-auto bg-[#071b35] px-5 py-6 text-slate-300 shadow-2xl shadow-slate-900/20 transition-transform duration-300 lg:translate-x-0 ${
-          mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-        aria-label="IT Admin navigation"
-      >
-        <div className="flex items-center justify-between px-2">
-          <a href="/" className="flex items-center gap-3" aria-label="A.SSET home">
-            <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-blue-950/30">
-              <img src="/dyci_img/A.sset.webp" alt="A.SSET" className="h-full w-full object-contain" />
-            </span>
-            <span>
-              <span className="block text-sm font-black tracking-tight text-white">A.SSET</span>
-              <span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">IT Admin Console</span>
-            </span>
-          </a>
-          <button type="button" onClick={() => setMobileMenuOpen(false)} className="grid h-9 w-9 place-items-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white lg:hidden" aria-label="Close navigation menu">
-            <Icon name="close" />
-          </button>
-        </div>
-
-        <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
-        <nav className="mt-3 space-y-1.5" aria-label="Admin modules">
-          {navigation.map((item) => {
-            const isActive = item.name === 'Overview'
-            return (
-              <button
-                key={item.name}
-                type="button"
-                disabled={!isActive}
-                onClick={() => setMobileMenuOpen(false)}
-                className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-bold transition disabled:cursor-not-allowed ${
-                  isActive
-                    ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35'
-                    : 'text-slate-400 opacity-75'
-                }`}
-                aria-current={isActive ? 'page' : undefined}
-              >
-                <Icon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200'}`} />
-                <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                {!isActive && <span className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-500">Soon</span>}
-              </button>
-            )
-          })}
-        </nav>
-
-        <div className="mt-auto rounded-2xl border border-white/10 bg-white/6 p-4">
-          <div className="flex items-center gap-2 text-blue-200">
-            <span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_0_4px_rgba(56,189,248,0.1)]" />
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">Admin workspace</span>
-          </div>
-          <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">Account, audit, and monitoring data will appear here when connected.</p>
-        </div>
-      </aside>
-
-      {mobileMenuOpen && (
-        <button type="button" className="fixed inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] lg:hidden" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)} />
-      )}
+      <AdminNavbar activePath="/admin" mobileMenuOpen={mobileMenuOpen} onMobileMenuClose={() => setMobileMenuOpen(false)} />
 
       <section className="min-h-screen lg:pl-72">
         <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">

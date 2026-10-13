@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { dashboardPathForRoles, saveAuthToken, signIn } from './authApi'
+import { dashboardPathForRoles, saveAuthToken, savePendingEmailVerification, signIn } from './authApi'
 
 export default function Login() {
   const [errorMessage, setErrorMessage] = useState('')
@@ -16,6 +16,12 @@ export default function Login() {
 
     try {
       const result = await signIn(email, password)
+      if ('requiresEmailVerification' in result) {
+        savePendingEmailVerification(result)
+        window.location.replace('/verify-email')
+        return
+      }
+
       const destination = dashboardPathForRoles(result.user.roles)
 
       if (!destination) {

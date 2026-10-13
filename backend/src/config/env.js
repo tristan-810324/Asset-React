@@ -36,18 +36,21 @@ if (smtpPort !== null && (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPor
   throw new Error('SMTP_PORT must be an integer between 1 and 65535.');
 }
 
+const isGmailSmtp = /(^|\.)gmail\.com$/i.test(smtpValues.SMTP_HOST || '');
+const smtpPassword = isGmailSmtp ? smtpValues.SMTP_PASS?.replace(/\s+/g, '') : smtpValues.SMTP_PASS;
+
 module.exports = Object.freeze({
   nodeEnv: process.env.NODE_ENV || 'development',
   port,
   databaseUrl,
   jwtSecret,
-  frontendOrigin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173',
+  frontendOrigin: process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173',
   smtp: configuredSmtpCount === smtpNames.length
     ? {
         host: smtpValues.SMTP_HOST,
         port: smtpPort,
         user: smtpValues.SMTP_USER,
-        pass: smtpValues.SMTP_PASS,
+        pass: smtpPassword,
         from: process.env.SMTP_FROM?.trim() || smtpValues.SMTP_USER,
       }
     : null,

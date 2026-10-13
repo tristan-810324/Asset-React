@@ -9,6 +9,7 @@ const { normalizeEmail, validatePassword, validateChallengeId } = require('./aut
 const invalidLoginMessage = 'Email or password is incorrect.';
 const resetMessage = 'If an active account matches that email, a verification code has been sent.';
 const invalidCodeMessage = 'The verification code is invalid or expired.';
+const emailVerificationMessage = 'A one-time verification code has been sent to your email.';
 const mailTransport = env.smtp
   ? nodemailer.createTransport({
       host: env.smtp.host,
@@ -21,7 +22,7 @@ const mailTransport = env.smtp
 const dummyPasswordHash = bcrypt.hash('not-a-real-account-password', 10);
 
 function httpError(status, message) {
-  return Object.assign(new Error(message), { status });
+  return Object.assign(new Error(message), { status, expose: status === 503 });
 }
 
 function verifier(value) {
@@ -39,6 +40,74 @@ async function enforceRateLimit(kind, identity, maxRequests, windowMinutes) {
 
 function publicUser(user, roles) {
   return { id: user.id, name: user.name, email: user.email, roles };
+}
+
+async function createLoginSession(user, roles, ipAddress) {
+  await authRepository.recordLoginEvent({
+    userId: user.id,
+    email: user.email,
+    ipAddress,
+    eventType: 'login_succeeded',
+  });
+
+  const token = jwt.sign(
+    { ver: user.token_version, roles },
+    env.jwtSecret,
+    { subject: String(user.id), expiresIn: '1h', issuer: 'dyci-gso' },
+  );
+
+  return { token, user: publicUser(user, roles) };
+}
+
+async function requestEmailVerificationOtp(user) {
+  if (!mailTransport) {
+    throw httpError(503, 'Email verification is unavailable. Configure SMTP or contact the IT Admin.');
+  }
+
+  const activeChallengeId = await authRepository.getActiveEmailVerificationOtp(user.id);
+  if (activeChallengeId) {
+    return { requiresEmailVerification: true, challengeId: activeChallengeId, email: user.email };
+  }
+
+  await enforceRateLimit('email_verification_otp', user.email, 5, 60);
+  const challengeId = crypto.randomUUID();
+  const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  const otpHash = verifier(`${challengeId}:${otp}`);
+  const created = await authRepository.createEmailVerificationOtp({
+    userId: user.id,
+    challengeId,
+    tokenHash: otpHash,
+  });
+
+  if (created.unavailable) throw httpError(401, invalidLoginMessage);
+  if (created.alreadyVerified) return { alreadyVerified: true };
+  if (!created.created) {
+    return { requiresEmailVerification: true, challengeId: created.challengeId, email: user.email };
+  }
+
+  try {
+    await mailTransport.sendMail({
+      from: env.smtp.from,
+      to: user.email,
+      subject: 'A.SSET account verification code',
+      text: `Your A.SSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not try to sign in, ignore this email.`,
+    });
+  } catch (error) {
+    await authRepository.invalidateToken(challengeId);
+    console.error('Account verification email could not be delivered.', {
+      code: error.code,
+      responseCode: error.responseCode,
+      command: error.command,
+    });
+    throw httpError(503, 'Could not send the verification code. Check the Gmail SMTP App Password in backend/.env and try again.');
+  }
+
+  return {
+    requiresEmailVerification: true,
+    challengeId,
+    email: user.email,
+    message: emailVerificationMessage,
+  };
 }
 
 async function login({ email, password, ipAddress }) {
@@ -75,20 +144,30 @@ async function login({ email, password, ipAddress }) {
     throw httpError(401, invalidLoginMessage);
   }
 
-  await authRepository.recordLoginEvent({
-    userId: user.id,
-    email: normalizedEmail,
-    ipAddress,
-    eventType: 'login_succeeded',
+  if (!user.email_verified_at) {
+    const verification = await requestEmailVerificationOtp(user);
+    if (!verification.alreadyVerified) return verification;
+  }
+
+  return createLoginSession(user, roles, ipAddress);
+}
+
+async function verifyEmailOtp({ challengeId, otp, ipAddress }) {
+  validateChallengeId(challengeId);
+  await enforceRateLimit('verify_email_otp_ip', ipAddress, 20, 15);
+  if (typeof otp !== 'string' || !/^\d{6}$/.test(otp)) {
+    throw httpError(400, invalidCodeMessage);
+  }
+
+  const user = await authRepository.consumeEmailVerificationOtp({
+    challengeId,
+    otpHash: verifier(`${challengeId}:${otp}`),
   });
+  if (!user) throw httpError(400, invalidCodeMessage);
 
-  const token = jwt.sign(
-    { ver: user.token_version, roles },
-    env.jwtSecret,
-    { subject: String(user.id), expiresIn: '1h', issuer: 'dyci-gso' },
-  );
-
-  return { token, user: publicUser(user, roles) };
+  const roles = await authRepository.getUserRoles(user.id);
+  if (roles.length === 0) throw httpError(401, invalidLoginMessage);
+  return createLoginSession(user, roles, ipAddress);
 }
 
 async function requestPasswordReset({ email, ipAddress }) {
@@ -170,4 +249,4 @@ async function resetPassword({ resetToken, password, ipAddress }) {
   return { message: 'Password updated. You can now sign in.' };
 }
 
-module.exports = { login, requestPasswordReset, verifyPasswordResetOtp, resetPassword };
+module.exports = { login, verifyEmailOtp, requestPasswordReset, verifyPasswordResetOtp, resetPassword };

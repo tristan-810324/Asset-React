@@ -3,6 +3,7 @@ const cors = require('cors');
 const env = require('./config/env');
 const pool = require('./config/db');
 const authRoutes = require('./modules/auth/auth.routes');
+const usersRoutes = require('./modules/users/users.routes');
 const errorMiddleware = require('./middleware/error.middleware');
 
 const app = express();
@@ -24,6 +25,7 @@ app.get('/api/v1/health', async (req, res, next) => {
 });
 
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/users', usersRoutes);
 app.use(errorMiddleware);
 
 module.exports = app;

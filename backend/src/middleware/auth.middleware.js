@@ -14,7 +14,7 @@ module.exports = async function authenticate(req, res, next) {
     const payload = jwt.verify(token, env.jwtSecret, { issuer: 'dyci-gso' });
     const user = await authRepository.getSessionUser(payload.sub);
 
-    if (!user || !user.is_active || user.token_version !== payload.ver) {
+    if (!user || !user.is_active || !user.email_verified_at || user.token_version !== payload.ver) {
       return res.status(401).json({ success: false, error: { message: 'Authentication required.' } });
     }
 

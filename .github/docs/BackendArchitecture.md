@@ -4,7 +4,7 @@
 **Version:** 1.0 — Backend Architecture / Pre-Coding Guide  
 **Tech Stack:** Node.js, Express.js, PostgreSQL, `pg`, JWT (`jsonwebtoken`), `bcryptjs`, `cors`, `dotenv`, Nodemailer, Nodemon  
 **Project root:** `2.Project-Asset/`  
-**Scope:** Backend implementation with the minimal frontend authentication wiring needed to call the API and route authenticated roles. Preserve the existing React + TypeScript + Tailwind files and visual design; do not delete or move frontend files.
+**Scope:** Backend implementation with the minimal frontend authentication wiring needed to call the API and route authenticated roles. Preserve the existing React + TypeScript + Tailwind files and visual design; do not delete or move frontend files. The approved IT Admin user-management change also includes `/admin/users`, the shared AdminNavbar, and first-login email verification UI.
 
 > **Status:** Ito ang **complete folder and architecture reference**, hindi pa working implementation ng lahat ng API o actual database schema. Sa mga susunod na coding phases natin gagawin at ite-test ang JavaScript at SQL contents. Ang lahat ng agreed GSO requirements ay kasama sa plan; wala tayong tinanggal na modules.
 
@@ -22,7 +22,7 @@
 8. Public request portal: **walang permanent public account at walang public self-registration**. IT Admin ang gagawa ng staff accounts.
 9. Ang IT Admin ay **hindi automatic may permission** na mag-edit ng operational inventory records. Server-side role/permission checks ang authority.
 10. Ang folder tree sa ibaba ay **target structure**; hindi requirement na isulat agad lahat ng code sa unang araw.
-11. Sa frontend, limitahan ang changes sa auth API handlers, role-based routing, at malinaw na error/loading feedback; panatilihin ang kasalukuyang layout at assets.
+11. Sa frontend, panatilihin ang kasalukuyang layout at assets. Kasama rin sa approved account-management change ang `/admin/users`, shared admin navigation, at first-login OTP verification; huwag baguhin ang unrelated GSO pages.
 
 ---
 
@@ -347,7 +347,8 @@ No permanent public account. Keep attachment validation and access checks. Any c
 ### 6.5 Login, activation, OTP & password reset
 
 - IT Admin creates authorized GSO staff account.
-- Secure activation / single-use OTP verifies email; staff sets own password.
+- For newly created GSO accounts, the current approved flow uses the shared initial password `Admin123`, stored only as a bcrypt hash. On the first successful email/password sign-in, send a six-digit email OTP; successful verification marks the address verified and signs the staff member in. Later sign-ins use email/password without another verification OTP.
+- Keep the existing seeded `admin@dyci.edu.ph` and `gso@dyci.edu.ph` accounts pre-verified and unchanged.
 - Forgot password: short-lived 6-digit OTP, hash verifier, expiry, attempt/resend limits and rate limiting.
 - Store bcrypt-hashed passwords; never email reusable passwords in plaintext.
 - Use JWT/token or secure session strategy with revocation/session invalidation policy, HTTPS and permission checks on backend.
@@ -355,8 +356,7 @@ No permanent public account. Keep attachment validation and access checks. Any c
 
 ### Local development account bootstrap and role routing
 
-- The requested local development identities are `admin@dyci.edu.ph` (`IT_ADMIN`) and `gso@dyci.edu.ph` (`GSO_STAFF`). They are not inserted by `001_initial_seed.sql`; that seed contains roles and permissions only.
-- Provision each account through a secure local bootstrap or IT Admin account-management flow. Require separate passwords chosen privately and store only password hashes. Never hardcode a shared default password in SQL, source code, or documentation.
+- Preserve the existing local development identities `admin@dyci.edu.ph` (`IT_ADMIN`) and `gso@dyci.edu.ph` (`GSO_STAFF`) and their current login behavior. IT Admin-created GSO accounts use the approved initial password flow above; only bcrypt hashes are stored, and the email must pass one-time OTP verification on first sign-in.
 - Keep public self-registration disabled. Existing registration frontend files may remain in the repository, but they must not create accounts.
 - The frontend login handler calls `POST /api/v1/auth/login`; after success, it routes by the server-returned role (`IT_ADMIN` to `/admin`, `GSO_STAFF` to `/gso`). Protected dashboard routes verify the session through `GET /api/v1/auth/me`.
 - After the one-time database, `.env`, and account provisioning steps are complete, routine local startup uses two VS Code terminals: `cd backend` then `npm run dev`; and `cd frontend` then `npm run dev`.
@@ -369,7 +369,7 @@ All routes below are **proposed** ` /api/v1 ` conventions; adjust only when inte
 
 | Backend module | Proposed URL prefix | Example actions |
 |---|---|---|
-| `auth` | `/api/v1/auth` | `POST /login`, `/forgot-password`, `/verify-otp`, `/reset-password`, `/activate` |
+| `auth` | `/api/v1/auth` | `POST /login`, `/verify-email-otp`, `/forgot-password`, `/verify-otp`, `/reset-password`, `/activate` |
 | `users` | `/api/v1/users` | `GET /`, `POST /`, `PATCH /:id`, `PATCH /:id/roles` |
 | `employees` | `/api/v1/employees` | `GET /`, `POST /`, `GET /:id`, `GET /:id/issuances` |
 | `inventory` | `/api/v1/inventory` | `GET /catalog`, `POST /catalog`, `GET /assets`, `POST /assets`, `GET /assets/:id` |
@@ -684,6 +684,7 @@ Kung malinaw at low-risk ang request, puwedeng diretso nang mag-implement at mag
 
 | Date | Module | Previous flow | Approved new flow | Files/DB affected | Status |
 |---|---|---|---|---|---|
-| YYYY-MM-DD | Example: Issuance | Old behavior | New behavior | List files/migration | Proposed / Implemented / Tested |
+| 2026-10-13 | GSO account creation / first login | Admin-created staff account activation flow | IT Admin creates a GSO account with the shared initial password; first correct sign-in requires one-time email OTP, then later sign-ins use email/password. Preserve both seeded accounts. | `frontend/src/admin/usermanagement.tsx`, `frontend/src/components/navbars/adminnavbar.tsx`, auth/users APIs, migration `002_email_verification_otp.sql` | Implemented; local migration applied |
+| 2026-10-13 | First-login OTP retry | A recently used or invalidated verification token could block login with a one-minute cooldown error | Correct credentials can request a new email OTP when no active challenge remains; existing hourly request and per-code attempt limits remain | `backend/src/modules/auth/auth.service.js`, `backend/src/modules/auth/auth.repository.js`, `installations.md` | Implemented; Node syntax and diff checks passed |
 
 > **For coding assistants:** Read this section together with the relevant current source files and the functional blueprint before implementing a change. This document guides development but does not automatically enforce rules in an editor or coding agent; include these instructions in the agent's project context when applicable.

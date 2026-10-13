@@ -3,7 +3,7 @@ const pool = require('../../config/db');
 
 async function getUserByEmail(email) {
   const result = await pool.query(
-    `SELECT id, name, email, password_hash, is_active, token_version
+    `SELECT id, name, email, password_hash, is_active, email_verified_at, token_version
        FROM users
       WHERE lower(email) = $1
       LIMIT 1`,
@@ -26,7 +26,7 @@ async function getUserRoles(userId) {
 
 async function getSessionUser(userId) {
   const result = await pool.query(
-    `SELECT id, name, email, is_active, token_version
+    `SELECT id, name, email, is_active, email_verified_at, token_version
        FROM users
       WHERE id = $1
       LIMIT 1`,
@@ -126,6 +126,134 @@ async function createPasswordResetOtp({ userId, challengeId, tokenHash }) {
     );
     await client.query('COMMIT');
     return true;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getActiveEmailVerificationOtp(userId) {
+  const result = await pool.query(
+    `SELECT id
+       FROM auth_tokens
+      WHERE user_id = $1
+        AND purpose = 'email_verification_otp'
+        AND used_at IS NULL
+        AND expires_at > NOW()
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [userId],
+  );
+  return result.rows[0]?.id || null;
+}
+
+async function createEmailVerificationOtp({ userId, challengeId, tokenHash }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const account = await client.query(
+      `SELECT id, email_verified_at, is_active
+         FROM users
+        WHERE id = $1
+        FOR UPDATE`,
+      [userId],
+    );
+    const user = account.rows[0];
+    if (!user || !user.is_active) {
+      await client.query('COMMIT');
+      return { unavailable: true };
+    }
+    if (user.email_verified_at) {
+      await client.query('COMMIT');
+      return { alreadyVerified: true };
+    }
+
+    const active = await client.query(
+      `SELECT id
+         FROM auth_tokens
+        WHERE user_id = $1
+          AND purpose = 'email_verification_otp'
+          AND used_at IS NULL
+          AND expires_at > NOW()
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [userId],
+    );
+    if (active.rowCount) {
+      await client.query('COMMIT');
+      return { challengeId: active.rows[0].id, created: false };
+    }
+
+    await client.query(
+      `UPDATE auth_tokens
+          SET used_at = NOW()
+        WHERE user_id = $1
+          AND purpose = 'email_verification_otp'
+          AND used_at IS NULL`,
+      [userId],
+    );
+    await client.query(
+      `INSERT INTO auth_tokens (id, user_id, purpose, token_hash, expires_at)
+       VALUES ($1, $2, 'email_verification_otp', $3, NOW() + INTERVAL '5 minutes')`,
+      [challengeId, userId, tokenHash],
+    );
+    await client.query('COMMIT');
+    return { challengeId, created: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function consumeEmailVerificationOtp({ challengeId, otpHash }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query(
+      `SELECT id, user_id, token_hash, attempts
+         FROM auth_tokens
+        WHERE id = $1
+          AND purpose = 'email_verification_otp'
+          AND used_at IS NULL
+          AND expires_at > NOW()
+          AND attempts < 5
+        FOR UPDATE`,
+      [challengeId],
+    );
+    const token = found.rows[0];
+    if (!token) {
+      await client.query('COMMIT');
+      return null;
+    }
+
+    const storedHash = Buffer.from(token.token_hash, 'hex');
+    const submittedHash = Buffer.from(otpHash, 'hex');
+    if (storedHash.length !== submittedHash.length || !crypto.timingSafeEqual(storedHash, submittedHash)) {
+      await client.query(
+        `UPDATE auth_tokens
+            SET attempts = attempts + 1,
+                used_at = CASE WHEN attempts + 1 >= 5 THEN NOW() ELSE used_at END
+          WHERE id = $1`,
+        [challengeId],
+      );
+      await client.query('COMMIT');
+      return null;
+    }
+
+    await client.query('UPDATE auth_tokens SET used_at = NOW() WHERE id = $1', [challengeId]);
+    const verified = await client.query(
+      `UPDATE users
+          SET email_verified_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND is_active = TRUE AND email_verified_at IS NULL
+        RETURNING id, name, email, is_active, email_verified_at, token_version`,
+      [token.user_id],
+    );
+    await client.query('COMMIT');
+    return verified.rows[0] || null;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -243,6 +371,9 @@ module.exports = {
   incrementAuthRateLimit,
   getPasswordResetUser,
   createPasswordResetOtp,
+  getActiveEmailVerificationOtp,
+  createEmailVerificationOtp,
+  consumeEmailVerificationOtp,
   invalidateToken,
   consumeOtpAndCreateResetToken,
   updatePasswordWithResetToken,

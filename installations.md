@@ -42,6 +42,7 @@ Run the authentication schema, then its repeat-safe reference seed, from the pro
 
 ```powershell
 psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\001_initial_schema.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\002_email_verification_otp.sql
 psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\seeds\001_initial_seed.sql
 ```
 
@@ -77,8 +78,8 @@ SMTP_FROM=
   [Convert]::ToBase64String($secretBytes)
   ```
 
-- Login works without SMTP settings. Password-reset email requires all four SMTP connection values (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`); `SMTP_FROM` is optional and defaults to `SMTP_USER`.
-- If SMTP is not configured, `/forgot-password` returns a service-unavailable response without checking whether an account exists.
+- First-login email verification and password-reset email require all four SMTP connection values (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`); `SMTP_FROM` is optional and defaults to `SMTP_USER`.
+- Existing verified accounts can sign in without SMTP. New GSO staff accounts cannot complete their first sign-in until SMTP is configured. If SMTP is missing, email verification and `/forgot-password` return a service-unavailable response.
 - Keep the existing `.env` file and only update values you have verified. Do not send SMTP or database credentials in chat.
 
 `backend/.env.example` contains placeholders only and is safe to share. It is a reference for required variable names, not a working credential file.
@@ -94,7 +95,7 @@ node .\scripts\create-admin.js
 
 Enter the account name and email. The initial password is masked while typing and must contain 12–72 UTF-8 bytes. The script hashes it before saving, assigns the `IT_ADMIN` role, and does not expose an admin-creation API to the public. Keep the password private; use the forgot-password flow after SMTP is configured if you need to change it.
 
-For the requested local IT Admin identity, enter `admin@dyci.edu.ph` and choose a private password that has not been shared. The current script creates only an IT Admin account; a GSO Staff account (`gso@dyci.edu.ph`) must be provisioned through a future secure IT Admin account-management/bootstrap flow. The seed does not create user accounts or set default passwords.
+For the requested local IT Admin identity, enter `admin@dyci.edu.ph` and choose a private password that has not been shared. Sign in as the IT Admin and create new GSO staff accounts from Admin → User Management. New accounts use the initial password `Admin123`; on first sign-in with the account email and that password, the app sends a one-time OTP using Nodemailer. After successful verification, later sign-ins go directly to the GSO dashboard. The existing seeded `gso@dyci.edu.ph` account remains unchanged and pre-verified.
 
 ## 6. Start the backend and frontend
 
@@ -124,27 +125,28 @@ All endpoints use the `/api/v1/auth` prefix:
 
 | Method and path | Body / purpose |
 |---|---|
-| `POST /login` | `{ "email": "...", "password": "..." }`; returns a one-hour JWT and user/role details |
+| `POST /login` | `{ "email": "...", "password": "..." }`; returns an email-verification challenge for a new unverified account, or a one-hour JWT and user/role details |
+| `POST /verify-email-otp` | `{ "challengeId": "...", "otp": "123456" }`; verifies a new GSO account's email on first sign-in and returns a JWT |
 | `POST /forgot-password` | `{ "email": "..." }`; sends a six-digit OTP when the account exists and SMTP is ready |
 | `POST /verify-otp` | `{ "challengeId": "...", "otp": "123456" }`; returns a short-lived reset token |
 | `POST /reset-password` | `{ "resetToken": "...", "password": "..." }`; consumes the token and invalidates existing JWT sessions |
 | `GET /me` | Requires `Authorization: Bearer <JWT>`; returns the current account and roles |
 
-OTP codes expire after five minutes, allow at most five attempts, and are stored as keyed verifiers. Password reset tokens expire after ten minutes and can only be consumed once. Login errors use a generic response, with database-backed request throttling and security event records.
+First-login verification and password-reset OTP codes expire after five minutes, allow at most five attempts, and are stored as keyed verifiers. Verification is required once per new GSO account; successful verification marks the email verified. Password reset tokens expire after ten minutes and can only be consumed once. Login errors use a generic response, with database-backed request throttling and security event records.
 
 Public registration is intentionally not implemented: the project requirements say IT Admin creates GSO staff accounts. The existing registration page remains untouched.
 
 ## 8. Current frontend connection status
 
-The login form now calls `POST /api/v1/auth/login`, keeps the JWT for the current browser tab, and routes IT Admin users to `/admin` and GSO Staff users to `/gso`. Those routes verify the signed-in role through `GET /api/v1/auth/me`. The IT Admin page is currently a minimal landing screen; account management, activity, and system-monitoring data are not implemented yet. Forgot-password, OTP, and reset-password screens still need their API form handlers. Public registration remains unavailable by project policy, and the existing registration file is preserved.
+The login form calls `POST /api/v1/auth/login`. When an unverified GSO account enters the correct email and initial password, it routes to `/verify-email` after the backend sends an OTP. Successful verification returns a JWT and routes to `/gso`; verified GSO and IT Admin accounts go directly to their dashboard. Protected dashboards confirm the signed-in role through `GET /api/v1/auth/me`. Admin User Management calls the protected `/api/v1/users` endpoints. Public registration remains unavailable, and the existing registration file is preserved.
 
 ## 9. Troubleshooting
 
 - **Backend reports a database connection failure:** confirm PostgreSQL is running, the database exists, and `DATABASE_URL` uses the correct host, port, database name, username, and URL-encoded password.
 - **Backend rejects configuration:** confirm `PORT`, `DATABASE_URL`, and a 32-character `JWT_SECRET`; leave all four SMTP connection values empty or configure all four.
-- **Database reports a missing table or role:** apply `001_initial_schema.sql` first, then `001_initial_seed.sql`.
+- **Database reports a missing table, role, or rejected OTP purpose:** apply `001_initial_schema.sql`, then `002_email_verification_otp.sql`, then `001_initial_seed.sql`.
 - **Browser reports a CORS error:** set `FRONTEND_ORIGIN` to the exact Vite origin shown in its terminal, then restart the backend.
-- **Forgot-password cannot send mail:** verify the SMTP host, port, login, and provider-specific app password; restart the backend after editing `.env`.
+- **First-login OTP or forgot-password cannot send mail:** verify the SMTP host, port, login, and provider-specific app password; restart the backend after editing `.env`. Check the recipient's spam folder as well.
 - **Admin creation says the email already exists:** use the existing account; do not run account creation again with that address.
 
 ## 10. Before sharing or deploying
