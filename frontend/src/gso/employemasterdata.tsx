@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { ApiError } from '../auth/authApi'
 import { createDepartment, createEmployee, listDepartments, listEmployees, updateEmployee, type EmployeeProfile, type EmployeeProfileInput } from './employeesApi'
-import { createEmployeeIssuance, listEmployeeIssuances } from './issuancesApi'
+import { createEmployeeIssuance, createEmployeeReturn, listEmployeeIssuances } from './issuancesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 
 interface DepartmentItem {
@@ -19,6 +19,8 @@ const initialDepartments: DepartmentItem[] = [
   { id: 'dept-6', name: 'Academic Affairs' },
   { id: 'dept-7', name: 'Human Resources' },
 ]
+
+const returnConditionOptions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']
 
 interface EmployeeHistoryLog {
   date: string
@@ -197,11 +199,15 @@ export default function EmployeeMasterData() {
   const [employeeDataError, setEmployeeDataError] = useState('')
   const [employeeSaveError, setEmployeeSaveError] = useState('')
   const [showAllIssuedItems, setShowAllIssuedItems] = useState(false)
-  const [showAllHistory, setShowAllHistory] = useState(false)
+  const [showEmployeeHistoryModal, setShowEmployeeHistoryModal] = useState(false)
+  const [historyDialogTab, setHistoryDialogTab] = useState<'issuance' | 'profile'>('issuance')
   const [employeeIssuanceLoadError, setEmployeeIssuanceLoadError] = useState('')
 
   // Selected employee modal state
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRecord | null>(null)
+  const [availableInventoryStock, setAvailableInventoryStock] = useState<InventoryItemRecord[]>([])
+  const [isLoadingInventory, setIsLoadingInventory] = useState(true)
+  const [inventoryLoadError, setInventoryLoadError] = useState('')
 
   // Edit Employee Modal state
   const [showEmployeeEditModal, setShowEmployeeEditModal] = useState(false)
@@ -267,7 +273,10 @@ export default function EmployeeMasterData() {
   // Handle Surrender/Return Issuance Modal state
   const [showHandleIssuanceModal, setShowHandleIssuanceModal] = useState(false)
   const [selectedReturnAssetCode, setSelectedReturnAssetCode] = useState('')
+  const [returnCondition, setReturnCondition] = useState('Good')
   const [surrenderReason, setSurrenderReason] = useState('')
+  const [returnSubmitError, setReturnSubmitError] = useState('')
+  const [isSubmittingReturn, setIsSubmittingReturn] = useState(false)
 
   // Form states for Add Employee
   const [formData, setFormData] = useState({
@@ -284,11 +293,8 @@ export default function EmployeeMasterData() {
   // Separate Pop-up Modal state for Add New Issuance (with Dropdown selection)
   const [showIssuanceModal, setShowIssuanceModal] = useState(false)
   const [selectedAssetCode, setSelectedAssetCode] = useState('')
-  const [availableInventoryStock, setAvailableInventoryStock] = useState<InventoryItemRecord[]>([])
   const [inventorySearchQuery, setInventorySearchQuery] = useState('')
   const [isInventoryDropdownOpen, setIsInventoryDropdownOpen] = useState(false)
-  const [isLoadingInventory, setIsLoadingInventory] = useState(true)
-  const [inventoryLoadError, setInventoryLoadError] = useState('')
   const [isSubmittingIssuance, setIsSubmittingIssuance] = useState(false)
   const [issuanceSubmitError, setIssuanceSubmitError] = useState('')
   const [issuanceData, setIssuanceData] = useState({
@@ -547,7 +553,7 @@ export default function EmployeeMasterData() {
   }
 
   // Handle Surrender/Return Form Submission
-  const handleConfirmSurrender = (e: React.FormEvent) => {
+  const handleConfirmSurrender = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedEmployee || !selectedReturnAssetCode) {
       alert('Select an issued item to process surrender.')
@@ -556,34 +562,42 @@ export default function EmployeeMasterData() {
 
     const targetItem = selectedEmployee.assignedItems.find((item) => item.code === selectedReturnAssetCode)
     if (!targetItem) return
-
-    const now = new Date()
-    const formattedDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).format(now)
-
-    const newHistoryEntry: EmployeeHistoryLog = {
-      date: formattedDate,
-      event: 'Returned',
-      item: targetItem.name,
-      code: targetItem.code,
-      note: surrenderReason.trim() || 'Returned item surrendered to GSO Storage',
+    setReturnSubmitError('')
+    setIsSubmittingReturn(true)
+    try {
+      const request = await createEmployeeReturn(
+        selectedEmployee.id,
+        targetItem.code,
+        returnCondition,
+        surrenderReason,
+      )
+      const requestedAt = new Date(request.requestedAt)
+      const formattedDate = new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+      }).format(Number.isNaN(requestedAt.getTime()) ? new Date() : requestedAt)
+      const newHistoryEntry: EmployeeHistoryLog = {
+        date: formattedDate,
+        event: 'Return Pending Approval',
+        item: targetItem.name,
+        code: targetItem.code,
+        note: `Awaiting employee email approval. Condition after return: ${returnCondition}. GSO notes: ${surrenderReason.trim()}`,
+      }
+      const updatedEmp: EmployeeRecord = {
+        ...selectedEmployee,
+        history: [newHistoryEntry, ...selectedEmployee.history],
+      }
+      setEmployees((current) => current.map((emp) => (emp.id === selectedEmployee.id ? updatedEmp : emp)))
+      setSelectedEmployee(updatedEmp)
+      setSurrenderReason('')
+      setShowHandleIssuanceModal(false)
+      alert(`A return approval request for ${targetItem.code} was sent to ${selectedEmployee.email}. The item stays issued until the employee confirms.`)
+    } catch (error) {
+      setReturnSubmitError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Unable to send the return approval email.')
+    } finally {
+      setIsSubmittingReturn(false)
     }
-
-    const updatedAssigned = selectedEmployee.assignedItems.filter((item) => item.code !== selectedReturnAssetCode)
-    const updatedHistory = [newHistoryEntry, ...selectedEmployee.history]
-
-    const updatedEmp: EmployeeRecord = {
-      ...selectedEmployee,
-      assigned: updatedAssigned.length,
-      assignedItems: updatedAssigned,
-      history: updatedHistory,
-    }
-
-    setEmployees((current) => current.map((emp) => (emp.id === selectedEmployee.id ? updatedEmp : emp)))
-    setSelectedEmployee(updatedEmp)
-    setSelectedReturnAssetCode('')
-    setSurrenderReason('')
-    setShowHandleIssuanceModal(false)
-    alert(`The asset (${targetItem.code}) has been marked as surrendered and returned to storage.`)
   }
 
   // Handle Inventory Selection Change (Auto-fills Code, Name, Condition)
@@ -610,7 +624,8 @@ export default function EmployeeMasterData() {
   const handleOpenEmployeeProfile = (employee: EmployeeRecord) => {
     setSelectedEmployee(employee)
     setShowAllIssuedItems(false)
-    setShowAllHistory(false)
+    setShowEmployeeHistoryModal(false)
+    setHistoryDialogTab('issuance')
     setEmployeeIssuanceLoadError('')
 
     if (!persistedEmployeeIds.has(employee.id)) return
@@ -1282,11 +1297,11 @@ export default function EmployeeMasterData() {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    aria-expanded={showAllIssuedItems}
-                    onClick={() => setShowAllIssuedItems((showing) => !showing)}
+                    aria-haspopup="dialog"
+                    onClick={() => setShowAllIssuedItems(true)}
                     className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-100"
                   >
-                    {showAllIssuedItems ? 'Show Less' : 'View All Issued Items'}
+                    View All Issued Items
                   </button>
                   <button
                     type="button"
@@ -1323,8 +1338,8 @@ export default function EmployeeMasterData() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(showAllIssuedItems ? selectedEmployee.assignedItems : selectedEmployee.assignedItems.slice(0, 2)).map((item, idx) => (
-                      <tr key={idx} className="border-t border-slate-100">
+                    {selectedEmployee.assignedItems.slice(0, 2).map((item) => (
+                      <tr key={item.code} className="border-t border-slate-100">
                         <td className="px-3.5 py-2.5 font-bold text-slate-500">{item.code}</td>
                         <td className="px-3.5 py-2.5 font-extrabold text-slate-800">{item.name}</td>
                         <td className="px-3.5 py-2.5">
@@ -1351,30 +1366,33 @@ export default function EmployeeMasterData() {
             <div className="mt-5 border-t border-slate-100 pt-4">
               <div className="flex items-center justify-between gap-3">
                 <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                  Issuance & Return History
+                  Employee History
                 </h4>
                 <button
                   type="button"
-                  aria-expanded={showAllHistory}
-                  onClick={() => setShowAllHistory((showing) => !showing)}
+                  aria-haspopup="dialog"
+                  onClick={() => {
+                    setHistoryDialogTab('issuance')
+                    setShowEmployeeHistoryModal(true)
+                  }}
                   className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[0.65rem] font-extrabold text-slate-600 transition hover:bg-slate-50"
                 >
-                  {showAllHistory ? 'Show Less' : 'View All History'}
+                  View History
                 </button>
               </div>
-              <p className="mt-0.5 text-[0.68rem] text-slate-400">Audit logs of all previous transactions for this employee.</p>
+              <p className="mt-0.5 text-[0.68rem] text-slate-400">View issuance, return, and profile change records.</p>
 
-              <div className={`mt-3 space-y-2 pr-1 ${showAllHistory ? 'max-h-40 overflow-y-auto' : ''}`}>
-                {(showAllHistory ? selectedEmployee.history : selectedEmployee.history.slice(0, 2)).map((log, idx) => (
+              <div className="hidden mt-3 space-y-2 pr-1">
+                {selectedEmployee.history.slice(0, 2).map((log, idx) => (
                   <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-2.5">
                     <div>
                       <div className="flex items-center gap-2">
                         <span className={`rounded-md px-2 py-0.5 text-[0.58rem] font-extrabold ${
-                          log.event === 'Issued'
+                          log.event === 'Issued' || log.event === 'Returned'
                             ? 'bg-emerald-50 text-emerald-700'
-                            : log.event === 'Pending Approval'
+                            : log.event === 'Pending Approval' || log.event === 'Return Pending Approval'
                               ? 'bg-blue-50 text-blue-700'
-                              : log.event === 'Rejected' || log.event === 'Expired' || log.event === 'Email Failed'
+                              : log.event === 'Rejected' || log.event === 'Expired' || log.event === 'Email Failed' || log.event === 'Return Rejected' || log.event === 'Return Expired' || log.event === 'Return Email Failed'
                                 ? 'bg-rose-50 text-rose-700'
                                 : 'bg-amber-50 text-amber-700'
                         }`}>
@@ -1396,7 +1414,7 @@ export default function EmployeeMasterData() {
 
             {/* PROFILE CHANGE HISTORY AUDIT LOGS */}
             {selectedEmployee.changeHistory && selectedEmployee.changeHistory.length > 0 && (
-              <div className="mt-5 border-t border-slate-100 pt-4">
+              <div className="hidden mt-5 border-t border-slate-100 pt-4">
                 <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
                   Profile Change History
                 </h4>
@@ -1427,8 +1445,11 @@ export default function EmployeeMasterData() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectedReturnAssetCode(selectedEmployee.assignedItems[0]?.code || '')
+                    const firstIssuedItem = selectedEmployee.assignedItems[0]
+                    setSelectedReturnAssetCode(firstIssuedItem?.code || '')
+                    setReturnCondition(firstIssuedItem?.condition || 'Good')
                     setSurrenderReason('')
+                    setReturnSubmitError('')
                     setShowHandleIssuanceModal(true)
                   }}
                   className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-extrabold text-amber-800 hover:bg-amber-100"
@@ -1445,6 +1466,172 @@ export default function EmployeeMasterData() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {showAllIssuedItems && selectedEmployee && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="issued-items-dialog-title"
+            className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+              <div>
+                <h3 id="issued-items-dialog-title" className="text-base font-black text-slate-900">
+                  Issued Items
+                </h3>
+                <p className="mt-1 text-xs font-semibold text-slate-500">
+                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
+                </p>
+                <p className="mt-1 text-[0.68rem] text-slate-400">
+                  {selectedEmployee.assignedItems.length} active item(s) assigned to this employee.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllIssuedItems(false)}
+                className="shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-5 sm:p-6">
+              {selectedEmployee.assignedItems.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-100">
+                  <table className="w-full min-w-155 text-left text-xs">
+                    <thead className="bg-slate-50 text-[0.6rem] font-extrabold uppercase text-slate-400">
+                      <tr>
+                        <th className="px-3.5 py-3">Asset Code</th>
+                        <th className="px-3.5 py-3">Item Name</th>
+                        <th className="px-3.5 py-3">Condition</th>
+                        <th className="px-3.5 py-3">Assigned Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedEmployee.assignedItems.map((item) => (
+                        <tr key={item.code} className="border-t border-slate-100">
+                          <td className="px-3.5 py-3 font-bold text-slate-600">{item.code}</td>
+                          <td className="px-3.5 py-3 font-extrabold text-slate-800">{item.name}</td>
+                          <td className="px-3.5 py-3">
+                            <span className={`rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
+                              {item.condition}
+                            </span>
+                          </td>
+                          <td className="px-3.5 py-3 font-medium text-slate-500">{item.assignedOn}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
+                  No items currently issued to this employee.
+                </p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {showEmployeeHistoryModal && selectedEmployee && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="employee-history-dialog-title"
+            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+              <div>
+                <h3 id="employee-history-dialog-title" className="text-base font-black text-slate-900">
+                  Employee History
+                </h3>
+                <p className="mt-1 text-xs font-semibold text-slate-500">
+                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmployeeHistoryModal(false)}
+                className="shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
+              <button
+                type="button"
+                aria-pressed={historyDialogTab === 'issuance'}
+                onClick={() => setHistoryDialogTab('issuance')}
+                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${historyDialogTab === 'issuance' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Issuance & Return History
+              </button>
+              <button
+                type="button"
+                aria-pressed={historyDialogTab === 'profile'}
+                onClick={() => setHistoryDialogTab('profile')}
+                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${historyDialogTab === 'profile' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Profile Change History
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-5 sm:p-6">
+              {historyDialogTab === 'issuance' ? (
+                selectedEmployee.history.length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedEmployee.history.map((log, idx) => (
+                      <div key={`${log.code}-${log.date}-${idx}`} className="flex items-start justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded-md px-2 py-0.5 text-[0.58rem] font-extrabold ${
+                              log.event === 'Issued' || log.event === 'Returned'
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : log.event === 'Pending Approval' || log.event === 'Return Pending Approval'
+                                  ? 'bg-blue-50 text-blue-700'
+                                  : log.event === 'Rejected' || log.event === 'Expired' || log.event === 'Email Failed' || log.event === 'Return Rejected' || log.event === 'Return Expired' || log.event === 'Return Email Failed'
+                                    ? 'bg-rose-50 text-rose-700'
+                                    : 'bg-amber-50 text-amber-700'
+                            }`}>
+                              {log.event}
+                            </span>
+                            <span className="text-xs font-bold text-slate-700">{log.item}</span>
+                            <span className="text-[0.62rem] text-slate-400">({log.code})</span>
+                          </div>
+                          <p className="mt-1 text-[0.68rem] text-slate-500">{log.note}</p>
+                        </div>
+                        <span className="shrink-0 text-[0.62rem] font-bold text-slate-400">{log.date}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
+                    No transaction history recorded yet.
+                  </p>
+                )
+              ) : selectedEmployee.changeHistory && selectedEmployee.changeHistory.length > 0 ? (
+                <div className="space-y-2">
+                  {selectedEmployee.changeHistory.map((change, idx) => (
+                    <div key={`${change.changedAt}-${idx}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                      <p className="text-xs font-semibold text-slate-700">{change.reason}</p>
+                      <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
+                        By {change.changedBy || 'Unknown user'} · {change.changedAt}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
+                  No profile changes recorded yet.
+                </p>
+              )}
+            </div>
+          </section>
         </div>
       )}
 
@@ -1478,7 +1665,12 @@ export default function EmployeeMasterData() {
                     <select
                       required
                       value={selectedReturnAssetCode}
-                      onChange={(e) => setSelectedReturnAssetCode(e.target.value)}
+                      onChange={(e) => {
+                        const nextCode = e.target.value
+                        setSelectedReturnAssetCode(nextCode)
+                        const nextItem = selectedEmployee.assignedItems.find((item) => item.code === nextCode)
+                        if (nextItem) setReturnCondition(nextItem.condition)
+                      }}
                       className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                     >
                       {selectedEmployee.assignedItems.map((item) => (
@@ -1491,10 +1683,27 @@ export default function EmployeeMasterData() {
 
                   <label className="block">
                     <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
+                      Condition After GSO Inspection
+                    </span>
+                    <select
+                      required
+                      value={returnCondition}
+                      onChange={(e) => setReturnCondition(e.target.value)}
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                    >
+                      {returnConditionOptions.map((condition) => (
+                        <option key={condition} value={condition}>{condition}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
                       Surrender / Return Reason or Notes
                     </span>
                     <textarea
                       required
+                      maxLength={1000}
                       value={surrenderReason}
                       onChange={(e) => setSurrenderReason(e.target.value)}
                       placeholder="e.g. Returned item due to clearance or department transfer."
@@ -1502,19 +1711,27 @@ export default function EmployeeMasterData() {
                     />
                   </label>
 
+                  {returnSubmitError && (
+                    <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                      {returnSubmitError}
+                    </p>
+                  )}
+
                   <div className="mt-5 flex justify-end gap-2 pt-2">
                     <button
                       type="button"
                       onClick={() => setShowHandleIssuanceModal(false)}
+                      disabled={isSubmittingReturn}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="rounded-xl bg-amber-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-amber-700 shadow-md shadow-amber-600/20"
+                      disabled={isSubmittingReturn}
+                      className="rounded-xl bg-amber-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-amber-700 shadow-md shadow-amber-600/20 disabled:cursor-wait disabled:opacity-60"
                     >
-                      Confirm Surrender & Return Item
+                      {isSubmittingReturn ? 'Sending Approval Request…' : 'Send Return Approval Request'}
                     </button>
                   </div>
                 </>

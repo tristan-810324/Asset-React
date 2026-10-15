@@ -28,6 +28,9 @@ export type InventoryItemRecord = {
   unitOfMeasure: string
   condition: string
   status: string
+  assignedTo: string | null
+  dateIssued: string | null
+  timeIssued: string | null
   createdAt: string
   createdBy: string | null
   changeHistory: InventoryChangeRecord[]

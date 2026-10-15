@@ -16,6 +16,9 @@ const itemColumns = `
   i.inventory_status AS status,
   i.created_at AS "createdAt",
   creator.name AS "createdBy",
+  assignee.first_name || ' ' || assignee.last_name AS "assignedTo",
+  to_char(current_issuance.decided_at, 'Mon DD, YYYY') AS "dateIssued",
+  to_char(current_issuance.decided_at, 'HH12:MI AM') AS "timeIssued",
   COALESCE((
     SELECT json_agg(json_build_object(
       'action', change.action,
@@ -37,6 +40,15 @@ async function listItems() {
     `SELECT ${itemColumns}
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
+       LEFT JOIN LATERAL (
+         SELECT issue.employee_id, issue.decided_at
+           FROM employee_issuances AS issue
+          WHERE issue.item_id = i.id
+            AND issue.status = 'Issued'
+          ORDER BY issue.decided_at DESC, issue.id DESC
+          LIMIT 1
+       ) AS current_issuance ON TRUE
+       LEFT JOIN employees AS assignee ON assignee.id = current_issuance.employee_id
       ORDER BY i.created_at DESC, i.id DESC`,
   );
   return result.rows;
@@ -47,6 +59,15 @@ async function getItemById(queryable, id) {
     `SELECT ${itemColumns}
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
+       LEFT JOIN LATERAL (
+         SELECT issue.employee_id, issue.decided_at
+           FROM employee_issuances AS issue
+          WHERE issue.item_id = i.id
+            AND issue.status = 'Issued'
+          ORDER BY issue.decided_at DESC, issue.id DESC
+          LIMIT 1
+       ) AS current_issuance ON TRUE
+       LEFT JOIN employees AS assignee ON assignee.id = current_issuance.employee_id
       WHERE i.id = $1`,
     [id],
   );

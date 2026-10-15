@@ -1,6 +1,6 @@
 # DYCI GSO / A.SSET — Full Stack Installation Guide
 
-This guide is for a local Windows development setup. It covers the existing React frontend and the Express/PostgreSQL authentication backend. Keep credentials in `backend/.env`; never paste them into source files or commit them.
+This guide is for a local Windows development setup. It covers the React frontend and the Express/PostgreSQL backend, including inventory, employee issuance, and return approval. Keep credentials in `backend/.env`; never paste them into source files or commit them.
 
 ## 1. Prerequisites
 
@@ -38,17 +38,22 @@ Create a database named `dyci_gso` in pgAdmin (right-click **Databases** → **C
 psql -U postgres -d postgres -c "CREATE DATABASE dyci_gso;"
 ```
 
-Run the authentication schema, then its repeat-safe reference seed, from the project root:
+Run the database migrations in order, then apply the reference seed, from the project root:
 
 ```powershell
 psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\001_initial_schema.sql
 psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\002_email_verification_otp.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\003_inventory_items.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\004_inventory_categories_and_change_history.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\005_inventory_created_audit_action.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\006_employees_and_audit_logs.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\007_employee_issuance_returns.sql
 psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\seeds\001_initial_seed.sql
 ```
 
 If PowerShell cannot find `psql`, use pgAdmin's Query Tool and run each SQL file against `dyci_gso`, or add your PostgreSQL `bin` folder to PATH. On Windows, `psql.exe` is commonly under `C:\Program Files\PostgreSQL\<version>\bin\`.
 
-The current migration creates the auth foundation (`users`, roles, permissions, OTP/reset tokens, login events, and hashed rate-limit buckets). It does not yet create the inventory, requests, borrowing, or reporting tables; those belong to later backend phases after their workflows and ERD are finalized.
+The migrations create the authentication foundation, inventory catalog and audit logs, employee profiles and issuance records, and employee-confirmed item returns. Migration `007_employee_issuance_returns.sql` is required for the GSO return-approval email flow.
 
 ## 4. Configure `backend/.env`
 

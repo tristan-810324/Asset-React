@@ -51,6 +51,7 @@ backend/database/migrations/003_inventory_items.sql
 backend/database/migrations/004_inventory_categories_and_change_history.sql
 backend/database/migrations/005_inventory_created_audit_action.sql
 backend/database/migrations/006_employees_and_audit_logs.sql
+backend/database/migrations/007_employee_issuance_returns.sql
 backend/database/seeds/001_initial_seed.sql
 ```
 
@@ -246,7 +247,8 @@ Huwag gamitin ang `git add .` nang hindi muna tinitingnan ang `git status`, lalo
 4. backend/database/migrations/004_inventory_categories_and_change_history.sql
 5. backend/database/migrations/005_inventory_created_audit_action.sql
 6. backend/database/migrations/006_employees_and_audit_logs.sql
-7. backend/database/seeds/001_initial_seed.sql
+7. backend/database/migrations/007_employee_issuance_returns.sql
+8. backend/database/seeds/001_initial_seed.sql
 ```
 
 Ginagamit ng initial schema ang `gen_random_uuid()`. Kung mag-error ang unang migration dahil hindi available ang UUID function, i-run muna ito sa Neon SQL Editor at pagkatapos ay ulitin ang migrations:
@@ -463,6 +465,7 @@ Bago gumawa ng user:
 - [ ] Na-run ang `004_inventory_categories_and_change_history.sql`.
 - [ ] Na-run ang `005_inventory_created_audit_action.sql`.
 - [ ] Na-run ang `006_employees_and_audit_logs.sql`.
+- [ ] Na-run ang `007_employee_issuance_returns.sql`.
 - [ ] Na-run ang `001_initial_seed.sql`.
 - [ ] May initial roles at permissions.
 

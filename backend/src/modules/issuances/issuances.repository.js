@@ -318,18 +318,50 @@ async function listEmployeeIssuances(employeeCode) {
       [employee.id],
     ),
     pool.query(
-      `SELECT CASE issue.status
-                WHEN 'Pending' THEN 'Pending Approval'
-                ELSE issue.status
-              END AS event,
-              inventory.description AS item,
-              inventory.item_code AS code,
-              COALESCE(issue.decision_note, issue.notes, '') AS note,
-              to_char(COALESCE(issue.decided_at, issue.requested_at), 'Mon DD, YYYY') AS date
-         FROM employee_issuances AS issue
-         JOIN item_catalog AS inventory ON inventory.id = issue.item_id
-        WHERE issue.employee_id = $1
-        ORDER BY COALESCE(issue.decided_at, issue.requested_at) DESC, issue.id DESC`,
+      `SELECT history.event,
+              history.item,
+              history.code,
+              history.note,
+              to_char(history.event_at, 'Mon DD, YYYY') AS date
+         FROM (
+           SELECT CASE issue.status
+                    WHEN 'Pending' THEN 'Pending Approval'
+                    WHEN 'Returned' THEN 'Issued'
+                    ELSE issue.status
+                  END AS event,
+                  inventory.description AS item,
+                  inventory.item_code AS code,
+                  COALESCE(issue.decision_note, issue.notes, '') AS note,
+                  COALESCE(issue.decided_at, issue.requested_at) AS event_at,
+                  issue.id AS sort_id
+             FROM employee_issuances AS issue
+             JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+            WHERE issue.employee_id = $1
+
+           UNION ALL
+
+           SELECT CASE return_request.status
+                    WHEN 'Pending' THEN 'Return Pending Approval'
+                    WHEN 'Returned' THEN 'Returned'
+                    WHEN 'Rejected' THEN 'Return Rejected'
+                    WHEN 'Expired' THEN 'Return Expired'
+                    ELSE 'Return Email Failed'
+                  END AS event,
+                  inventory.description AS item,
+                  inventory.item_code AS code,
+                  CASE return_request.status
+                    WHEN 'Pending' THEN 'Awaiting employee email approval. Condition after return: ' || return_request.return_condition || '. GSO notes: ' || return_request.reason
+                    WHEN 'Returned' THEN COALESCE(return_request.decision_note, 'Return confirmed by employee.') || ' Condition after return: ' || return_request.return_condition || '. GSO notes: ' || return_request.reason
+                    ELSE COALESCE(return_request.decision_note, return_request.reason)
+                  END AS note,
+                  COALESCE(return_request.decided_at, return_request.requested_at) AS event_at,
+                  return_request.id AS sort_id
+             FROM employee_issuance_returns AS return_request
+             JOIN employee_issuances AS issue ON issue.id = return_request.issuance_id
+             JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+            WHERE issue.employee_id = $1
+         ) AS history
+        ORDER BY history.event_at DESC, history.sort_id DESC`,
       [employee.id],
     ),
   ]);
