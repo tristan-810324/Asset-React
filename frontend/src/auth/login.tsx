@@ -25,13 +25,13 @@ export default function Login() {
       const destination = dashboardPathForRoles(result.user.roles)
 
       if (!destination) {
-        throw new Error('Walang dashboard role ang account na ito. Makipag-ugnayan sa IT Admin.')
+        throw new Error('This account does not have a dashboard role. Contact the IT administrator.')
       }
 
       saveAuthToken(result.token)
       window.location.replace(destination)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Hindi makapag-sign in. Subukan muli.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to sign in. Please try again.')
       setIsSubmitting(false)
     }
   }

@@ -60,13 +60,13 @@ export async function apiRequest<T>(path: string, options: RequestInit & { auth?
   try {
     response = await fetch(`${apiBaseUrl}${path}`, { ...requestOptions, headers });
   } catch {
-    throw new ApiError('Hindi makakonekta sa backend. Tiyaking nakaandar ang server sa port 5000.');
+    throw new ApiError('Unable to connect to the backend. Make sure the server is running on port 5000.');
   }
 
   const envelope = await response.json().catch(() => null) as ApiEnvelope<T> | null;
   if (!response.ok || !envelope?.success || envelope.data === undefined) {
     throw new ApiError(
-      envelope?.error?.message || 'Hindi naproseso ang request. Subukan muli.',
+      envelope?.error?.message || 'The request could not be processed. Please try again.',
       response.status,
     );
   }

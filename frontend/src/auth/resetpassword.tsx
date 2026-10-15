@@ -25,7 +25,7 @@ export default function ResetPassword() {
     const password = String(formData.get('password') || '')
     const confirmPassword = String(formData.get('confirmPassword') || '')
     if (password !== confirmPassword) {
-      setErrorMessage('Hindi magkapareho ang password at confirmation.')
+      setErrorMessage('The password and confirmation do not match.')
       return
     }
 
@@ -38,7 +38,7 @@ export default function ResetPassword() {
       clearAuthSession()
       window.location.replace('/login')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Hindi na-update ang password. Subukan muli.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the password. Please try again.')
     } finally {
       setIsSubmitting(false)
     }

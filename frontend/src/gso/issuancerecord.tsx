@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 
 const initialDepartments = [
@@ -115,7 +115,16 @@ const sampleToBeRepairedItems = [
 
 export default function IssuanceRecord() {
   // Navigation tab state: 'main', 'surrender', or 'repair'
-  const [activeTab, setActiveTab] = useState<'main' | 'surrender' | 'repair'>('main')
+  const [activeTab, setActiveTab] = useState<'main' | 'surrender' | 'repair'>(() => (
+    typeof window !== 'undefined' && window.location.hash === '#returned-items' ? 'surrender' : 'main'
+  ))
+
+  useEffect(() => {
+    if (window.location.hash !== '#returned-items') return
+    window.requestAnimationFrame(() => {
+      document.getElementById('returned-items')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [])
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('')
@@ -130,7 +139,7 @@ export default function IssuanceRecord() {
   // CSV Generator Helper
   const handleGenerateCSV = (tableName: string, data: unknown[]) => {
     if (data.length === 0) {
-      alert('Walang data na mai-export sa CSV.')
+      alert('There is no data to export to CSV.')
       return
     }
     const headers = Object.keys(data[0] as Record<string, unknown>).join(',')
@@ -150,7 +159,7 @@ export default function IssuanceRecord() {
   // Word Document Generator Helper
   const handleGenerateWord = (tableName: string, data: unknown[]) => {
     if (data.length === 0) {
-      alert('Walang data na mai-export sa Word.')
+      alert('There is no data to export to Word.')
       return
     }
     let htmlTable = `<table border="1" style="border-collapse:collapse;width:100%;"><thead><tr>`
@@ -250,7 +259,7 @@ export default function IssuanceRecord() {
                 : 'bg-white/10 text-blue-100 hover:bg-white/20'
             }`}
           >
-            📋 Main Issuances ({sampleMainIssuances.length})
+            +  Main Issuances ({sampleMainIssuances.length})
           </button>
           <button
             type="button"
@@ -261,7 +270,7 @@ export default function IssuanceRecord() {
                 : 'bg-white/10 text-blue-100 hover:bg-white/20'
             }`}
           >
-            🔄 Surrendered Items ({sampleSurrenderItems.length})
+             + Surrendered Items ({sampleSurrenderItems.length})
           </button>
           <button
             type="button"
@@ -272,7 +281,7 @@ export default function IssuanceRecord() {
                 : 'bg-white/10 text-blue-100 hover:bg-white/20'
             }`}
           >
-            🛠️ To Be Repaired ({sampleToBeRepairedItems.length})
+             + To Be Repaired ({sampleToBeRepairedItems.length})
           </button>
         </div>
       </section>
@@ -410,7 +419,7 @@ export default function IssuanceRecord() {
                 {filteredMainIssuances.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">
-                      Walang issuance record na tumutugma sa iyong pinalabas na pamantayan.
+                      No issuance records match the selected filters.
                     </td>
                   </tr>
                 )}
@@ -422,7 +431,7 @@ export default function IssuanceRecord() {
 
       {/* TAB 2: SURRENDERED ITEMS TABLE */}
       {activeTab === 'surrender' && (
-        <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+        <section id="returned-items" className="mt-6 scroll-mt-24 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
             <div>
               <h2 className="text-base font-black tracking-tight text-slate-900">Surrendered &amp; Returned Items</h2>
@@ -495,7 +504,7 @@ export default function IssuanceRecord() {
                 {filteredSurrenders.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">
-                      Walang surrendered item na tumutugma sa search.
+                      No returned items match your search.
                     </td>
                   </tr>
                 )}
@@ -577,7 +586,7 @@ export default function IssuanceRecord() {
                 {filteredRepairs.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">
-                      Walang item para sa repair na tumutugma sa search.
+                      No items marked for repair match your search.
                     </td>
                   </tr>
                 )}

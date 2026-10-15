@@ -1,15 +1,19 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { clearAuthSession } from '../../auth/authApi'
+import GsoNotif from '../notifbell/gsonotif'
 
 export type GsoNavigationItem =
   | 'Overview'
   | 'Item Master Data'
   | 'Employee Master Data'
   | 'Issuance Records'
+  | 'Returned Items'
+  | 'Notifications'
   | 'Requests & Borrowing'
   | 'Maintenance'
 
 type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Maintenance'>
-type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'grid' | 'menu' | 'search' | 'settings' | 'truck' | 'users'
+type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'grid' | 'menu' | 'return' | 'search' | 'truck' | 'users'
 
 const iconPaths: Record<NavigationIconName, ReactNode> = {
   archive: (
@@ -44,16 +48,16 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
     </>
   ),
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  return: (
+    <>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10a6 6 0 1 1 0 12h-2" />
+    </>
+  ),
   search: (
     <>
       <circle cx="10.75" cy="10.75" r="5.75" />
       <path d="m15.1 15.1 4.15 4.15" />
-    </>
-  ),
-  settings: (
-    <>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.01 2.01-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56v.09h-2.84v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06L7 16.94l.06-.06A1.7 1.7 0 0 0 7.4 15a1.7 1.7 0 0 0-1.56-1.03h-.09v-2.84h.09A1.7 1.7 0 0 0 7.4 10.1a1.7 1.7 0 0 0-.34-1.88L7 8.16l2.01-2.01.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56V4.9h2.84v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.01 2.01-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.09v2.84h-.09A1.7 1.7 0 0 0 19.4 15Z" />
     </>
   ),
   truck: (
@@ -80,22 +84,26 @@ function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconN
   )
 }
 
-const navigation: { name: VisibleNavigationItem; icon: NavigationIconName; href: string; badge?: string }[] = [
+const navigation: { name: VisibleNavigationItem; icon: NavigationIconName; href?: string; badge?: string; action?: 'notifications' }[] = [
   { name: 'Overview', icon: 'grid', href: '/gso' },
   { name: 'Item Master Data', icon: 'archive', href: '/gso/items', badge: '1,248' },
   { name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
   { name: 'Issuance Records', icon: 'truck', href: '/gso/issuance' },
+  { name: 'Returned Items', icon: 'return', href: '/gso/issuance#returned-items' },
   { name: 'Requests & Borrowing', icon: 'clipboard', href: '/gso/requests-borrowing' },
+  { name: 'Notifications', icon: 'bell', action: 'notifications' },
 ]
 
 type GsoNavbarProps = {
   currentPage: GsoNavigationItem
   mobileMenuOpen: boolean
+  notificationsOpen: boolean
   onClose: () => void
   onAction: (label: string) => void
+  onOpenNotifications: () => void
 }
 
-export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose, onAction }: GsoNavbarProps) {
+export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOpen, onClose, onOpenNotifications }: GsoNavbarProps) {
   return (
     <>
       <aside
@@ -127,7 +135,26 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose, onActi
         <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
         <nav className="mt-3 space-y-1.5" aria-label="Primary navigation">
           {navigation.map((item) => {
-            const isActive = currentPage === item.name
+            const isReturnedItemsPage = item.name === 'Returned Items'
+              && currentPage === 'Issuance Records'
+              && typeof window !== 'undefined'
+              && window.location.hash === '#returned-items'
+            const isActive = currentPage === item.name || isReturnedItemsPage
+            if (item.action === 'notifications') {
+              return (
+                <button
+                  key={item.name}
+                  type="button"
+                  onClick={() => { onOpenNotifications(); onClose() }}
+                  className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-bold transition ${isActive ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35' : 'text-slate-300 hover:bg-white/8 hover:text-white'}`}
+                  aria-haspopup="dialog"
+                  aria-expanded={notificationsOpen}
+                >
+                  <NavigationIcon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
+                  <span className="flex-1">{item.name}</span>
+                </button>
+              )
+            }
             return (
               <a
                 key={item.name}
@@ -152,29 +179,19 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose, onActi
           })}
         </nav>
 
-        <div className="mt-auto rounded-2xl border border-white/10 bg-white/6 p-4">
+        <div className="mt-auto rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/80 to-slate-900/70 p-4">
           <div className="flex items-center gap-2 text-blue-200">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(52,211,153,0.1)]" />
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">System status</span>
+            <NavigationIcon name="archive" className="h-4 w-4" />
+            <span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">GSO Operations</span>
           </div>
-          <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">All asset services are running normally.</p>
-          <button
-            type="button"
-            onClick={() => onAction('Support center')}
-            className="mt-3 text-xs font-extrabold text-white transition hover:text-blue-200"
-          >
-            Contact support <span aria-hidden="true">→</span>
-          </button>
+          <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">
+            Manage inventory, staff, requests, and returns from one workspace.
+          </p>
+          <a href="/gso" className="mt-3 inline-block text-xs font-extrabold text-white transition hover:text-blue-200">
+            Open workspace overview <span aria-hidden="true">→</span>
+          </a>
         </div>
 
-        <button
-          type="button"
-          onClick={() => onAction('Settings')}
-          className="mt-5 flex items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-bold text-slate-300 transition hover:bg-white/8 hover:text-white"
-        >
-          <NavigationIcon name="settings" className="h-[1.15rem] w-[1.15rem] text-blue-200" />
-          Settings
-        </button>
       </aside>
 
       {mobileMenuOpen && (
@@ -205,16 +222,38 @@ export function GsoMenuButton({ onClick }: { onClick: () => void }) {
 export function GsoPageHeader({
   pageName,
   today,
-  searchPlaceholder,
+  notificationsOpen,
+  onNotificationsOpenChange,
   onOpenMenu,
-  onAction,
 }: {
   pageName: string
   today: string
-  searchPlaceholder: string
+  notificationsOpen: boolean
+  onNotificationsOpenChange: (open: boolean) => void
   onOpenMenu: () => void
   onAction: (label: string) => void
 }) {
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  const accountMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!accountMenuOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) setAccountMenuOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAccountMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [accountMenuOpen])
+
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
@@ -227,37 +266,54 @@ export function GsoPageHeader({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          <label className="relative hidden md:block">
-            <span className="sr-only">{searchPlaceholder}</span>
-            <NavigationIcon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="search"
-              placeholder={searchPlaceholder}
-              className="h-10 w-56 rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-xs font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => onAction('Notifications')}
-            className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-600"
-            aria-label="View notifications"
-          >
-            <NavigationIcon name="bell" className="h-[1.1rem] w-[1.1rem]" />
-            <span className="absolute right-2.5 top-2 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onAction('Profile')}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition hover:border-blue-200"
-            aria-label="Open profile menu"
-          >
-            <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">GO</span>
-            <span className="hidden text-left sm:block">
-              <span className="block text-[0.68rem] font-extrabold leading-none text-slate-800">GSO Officer</span>
-              <span className="mt-1 block text-[0.58rem] font-bold leading-none text-slate-400">Administrator</span>
-            </span>
-            <NavigationIcon name="chevron-down" className="hidden h-3.5 w-3.5 text-slate-400 sm:block" />
-          </button>
+          <GsoNotif
+            open={notificationsOpen}
+            onOpenChange={(open) => {
+              setAccountMenuOpen(false)
+              onNotificationsOpenChange(open)
+            }}
+          />
+          <div ref={accountMenuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                setAccountMenuOpen((isOpen) => !isOpen)
+                onNotificationsOpenChange(false)
+              }}
+              className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition hover:border-blue-200 focus:outline-none focus:ring-4 focus:ring-blue-100"
+              aria-label="Open account menu"
+              aria-haspopup="menu"
+              aria-expanded={accountMenuOpen}
+            >
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">GO</span>
+              <span className="hidden text-left sm:block">
+                <span className="block text-[0.68rem] font-extrabold leading-none text-slate-800">GSO Officer</span>
+                <span className="mt-1 block text-[0.58rem] font-bold leading-none text-slate-400">Administrator</span>
+              </span>
+              <NavigationIcon name="chevron-down" className={`h-3.5 w-3.5 text-slate-400 transition ${accountMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {accountMenuOpen && (
+              <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/20">
+                <div className="border-b border-slate-100 px-3 py-3">
+                  <p className="text-xs font-extrabold text-slate-800">GSO Officer</p>
+                  <p className="mt-1 text-[0.65rem] font-semibold text-slate-500">Administrator</p>
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setAccountMenuOpen(false)
+                    clearAuthSession()
+                    window.location.replace('/login')
+                  }}
+                  className="mt-1 flex w-full items-center rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                >
+                  Log out
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </header>
@@ -266,7 +322,6 @@ export function GsoPageHeader({
 
 export function GsoPageFrame({
   activePage,
-  searchPlaceholder,
   children,
 }: {
   activePage: VisibleNavigationItem
@@ -274,6 +329,7 @@ export function GsoPageFrame({
   children: ReactNode
 }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const today = new Intl.DateTimeFormat('en-PH', {
     weekday: 'long',
@@ -291,14 +347,17 @@ export function GsoPageFrame({
       <GsoNavbar
         currentPage={activePage}
         mobileMenuOpen={mobileMenuOpen}
+        notificationsOpen={notificationsOpen}
         onClose={() => setMobileMenuOpen(false)}
         onAction={handleAction}
+        onOpenNotifications={() => setNotificationsOpen(true)}
       />
       <section className="min-h-screen lg:pl-72">
         <GsoPageHeader
           pageName={activePage}
           today={today}
-          searchPlaceholder={searchPlaceholder}
+          notificationsOpen={notificationsOpen}
+          onNotificationsOpenChange={setNotificationsOpen}
           onOpenMenu={() => setMobileMenuOpen(true)}
           onAction={handleAction}
         />

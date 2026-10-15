@@ -39,7 +39,7 @@ export default function ResetOtp() {
       savePasswordResetToken(result.resetToken)
       window.location.replace('/reset-password')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Hindi tama o expired ang code. Subukan muli.')
+      setErrorMessage(error instanceof Error ? error.message : 'The code is invalid or has expired. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -58,9 +58,9 @@ export default function ResetOtp() {
       savePendingPasswordReset(updatedPending)
       setPendingReset(updatedPending)
       setResendSeconds(65)
-      setNoticeMessage('Kung may active account na tugma sa email na ito, nagpadala kami ng bagong code. Tingnan din ang Spam folder.')
+      setNoticeMessage('If an active account matches this email address, a new code has been sent. Check your spam folder as well.')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Hindi naipadala ang request. Subukan muli.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to send the request. Please try again.')
     } finally {
       setIsResending(false)
     }

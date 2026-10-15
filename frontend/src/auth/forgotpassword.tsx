@@ -18,7 +18,7 @@ export default function ForgotPassword() {
       savePendingPasswordReset({ challengeId: result.challengeId, email })
       window.location.replace('/reset-otp')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Hindi naipadala ang request. Subukan muli.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to send the request. Please try again.')
     } finally {
       setIsSubmitting(false)
     }

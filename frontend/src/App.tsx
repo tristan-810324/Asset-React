@@ -1,11 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import AdminDashboard from './admin/admindashboard'
 import UserManagement from './admin/usermanagement'
+import AuditLogs from './admin/auditlogs'
+
+
+
 import GsoDashboard from './gso/gsodashboard'
 import BorrowingPage from './gso/borrowing'
 import EmployeeMasterData from './gso/employemasterdata'
 import IssuanceRecord from './gso/issuancerecord'
 import ItemsMasterData from './gso/itemsmasterdata'
+import IssuanceApproval from './gso/issuanceapproval'
 
 
 
@@ -62,9 +67,9 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
     <main className="grid min-h-screen place-items-center bg-slate-50 px-6 font-['Plus_Jakarta_Sans'] text-slate-900">
       <div className="max-w-md text-center">
         <p className="text-sm font-semibold text-slate-600">
-          {status === 'checking' ? 'Sinusuri ang iyong account…' : 'Hindi makakonekta sa backend para ma-verify ang account.'}
+          {status === 'checking' ? 'Checking your account…' : 'Unable to connect to the backend to verify your account.'}
         </p>
-        {status === 'error' && <a href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600 hover:underline">Bumalik sa sign in</a>}
+        {status === 'error' && <a href="/login" className="mt-3 inline-block text-sm font-bold text-blue-600 hover:underline">Return to sign in</a>}
       </div>
     </main>
   )
@@ -73,11 +78,16 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
 export default function App() {
   const path = window.location.pathname
 
+  if (path === '/issuance-approval') return <IssuanceApproval />
+
   if (path === '/admin' || path === '/admin/dashboard') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminDashboard /></ProtectedDashboard>
   }
   if (path === '/admin/users') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><UserManagement /></ProtectedDashboard>
+  }
+  if (path === '/admin/audit-logs') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><AuditLogs /></ProtectedDashboard>
   }
   if (path === '/gso/items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ItemsMasterData /></ProtectedDashboard>

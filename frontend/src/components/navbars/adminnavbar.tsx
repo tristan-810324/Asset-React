@@ -54,7 +54,7 @@ const navigation: { name: string; icon: AdminNavIcon; href?: string }[] = [
   { name: 'Overview', icon: 'grid', href: '/admin' },
   { name: 'User management', icon: 'users', href: '/admin/users' },
   { name: 'Roles & permissions', icon: 'shield' },
-  { name: 'Audit logs', icon: 'activity' },
+  { name: 'Audit logs', icon: 'activity', href: '/admin/audit-logs' },
   { name: 'Security logs', icon: 'shield' },
   { name: 'System configuration', icon: 'settings' },
   { name: 'Email monitoring', icon: 'mail' },

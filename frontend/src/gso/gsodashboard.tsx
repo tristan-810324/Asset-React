@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import GsoNavbar, { type GsoNavigationItem } from '../components/navbars/gsonavbar'
+import GsoNavbar, { GsoPageHeader, type GsoNavigationItem } from '../components/navbars/gsonavbar'
 
 type IconName =
   | 'archive'
@@ -155,16 +155,10 @@ const conditionBreakdown = [
   { condition: 'Unserviceable', count: 26, percent: '2.1%', tone: 'bg-slate-100 text-slate-600' },
 ]
 
-const recentTransactions = [
-  { id: 'AST-LTP-0142', asset: 'Lenovo ThinkPad E14', type: 'Issuance', recipient: 'Ana Santos (Registrar)', date: 'Oct 08, 2026', status: 'Confirmed', statusTone: 'bg-emerald-50 text-emerald-700' },
-  { id: 'AST-PRJ-0031', asset: 'Epson EB-X06 Projector', type: 'Maintenance Request', recipient: 'Marco Villanueva (IT)', date: 'Oct 07, 2026', status: 'Under Repair', statusTone: 'bg-amber-50 text-amber-700' },
-  { id: 'AST-CHR-0112', asset: 'Ergonomic Office Chair', type: 'Surrender / Return', recipient: 'Ana Santos (Registrar)', date: 'Sep 18, 2026', status: 'In Storage', statusTone: 'bg-blue-50 text-blue-700' },
-  { id: 'AST-MON-0084', asset: 'Dell 24-inch Monitor', type: 'Issuance', recipient: 'Liza Mendoza (Science)', date: 'Oct 06, 2026', status: 'Confirmed', statusTone: 'bg-emerald-50 text-emerald-700' },
-]
-
 export default function GsoDashboard() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [activePage] = useState<GsoNavigationItem>('Overview')
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notice, setNotice] = useState('')
 
   const today = new Intl.DateTimeFormat('en-PH', {
@@ -183,56 +177,21 @@ export default function GsoDashboard() {
       <GsoNavbar
         currentPage={activePage}
         mobileMenuOpen={mobileMenuOpen}
+        notificationsOpen={notificationsOpen}
         onClose={() => setMobileMenuOpen(false)}
         onAction={handleAction}
+        onOpenNotifications={() => setNotificationsOpen(true)}
       />
 
       <section className="min-h-screen lg:pl-72">
-        {/* TOP BAR */}
-        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen(true)}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden"
-                aria-label="Open navigation menu"
-              >
-                <Icon name="menu" />
-              </button>
-              <div className="min-w-0">
-                <p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">
-                  General Services Office / <span className="text-slate-700 font-extrabold">Executive Analytics</span>
-                </p>
-                <p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 sm:gap-3">
-              <button
-                type="button"
-                onClick={() => handleAction('Notifications')}
-                className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-600"
-                aria-label="View notifications"
-              >
-                <Icon name="bell" className="h-[1.1rem] w-[1.1rem]" />
-                <span className="absolute right-2.5 top-2 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" />
-              </button>
-              <button
-                type="button"
-                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm"
-              >
-                <span className="grid h-7 w-7 place-items-center rounded-lg bg-blue-900 text-[0.62rem] font-black text-white">
-                  GO
-                </span>
-                <span className="hidden text-left sm:block">
-                  <span className="block text-[0.68rem] font-extrabold leading-none text-slate-800">GSO Officer</span>
-                  <span className="mt-1 block text-[0.58rem] font-bold leading-none text-slate-400">Administrator</span>
-                </span>
-              </button>
-            </div>
-          </div>
-        </header>
+        <GsoPageHeader
+          pageName="Executive Analytics"
+          today={today}
+          notificationsOpen={notificationsOpen}
+          onNotificationsOpenChange={setNotificationsOpen}
+          onOpenMenu={() => setMobileMenuOpen(true)}
+          onAction={handleAction}
+        />
 
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-9">
           {/* DASHBOARD HERO BANNER */}
@@ -385,65 +344,9 @@ export default function GsoDashboard() {
               </div>
 
               <div className="mt-5 rounded-xl border border-blue-100 bg-blue-50/45 p-3.5 text-xs font-medium text-slate-600">
-                📌 <span className="font-extrabold text-blue-900">GSO System Summary:</span> 83% of physical assets are fully functional. Maintenance records are tracked under Issuances module.
+                 <span className="font-extrabold text-blue-900">GSO System Summary:</span> 83% of physical assets are fully functional. Maintenance records are tracked under Issuances module.
               </div>
             </article>
-          </section>
-
-          {/* RECENT CRITICAL TRANSACTIONS LOG */}
-          <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
-            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
-              <div>
-                <h2 className="text-base font-black tracking-tight text-slate-900">Recent Inventory Transactions</h2>
-                <p className="mt-1 text-xs font-medium text-slate-500">
-                  Latest activity across issuances, returns, and maintenance tickets.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700">
-                  Audit Stream
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleAction('View All Records')}
-                  className="rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-extrabold text-white transition hover:bg-blue-700 shadow-md shadow-blue-600/20"
-                >
-                  View All Records →
-                </button>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto border-t border-slate-100">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
-                  <tr>
-                    <th className="px-5 py-3.5 sm:px-6">Asset &amp; Code</th>
-                    <th className="px-5 py-3.5">Transaction Type</th>
-                    <th className="px-5 py-3.5">Recipient / Custodian</th>
-                    <th className="px-5 py-3.5">Date Recorded</th>
-                    <th className="px-5 py-3.5 sm:px-6">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {recentTransactions.map((tx) => (
-                    <tr key={tx.id} className="border-t border-slate-100 transition hover:bg-blue-50/40">
-                      <td className="px-5 py-4 sm:px-6">
-                        <span className="block font-extrabold text-slate-800">{tx.asset}</span>
-                        <span className="text-[0.62rem] font-bold text-slate-400">{tx.id}</span>
-                      </td>
-                      <td className="px-5 py-4 font-bold text-slate-700">{tx.type}</td>
-                      <td className="px-5 py-4 text-slate-600 font-medium">{tx.recipient}</td>
-                      <td className="px-5 py-4 text-slate-500 font-semibold">{tx.date}</td>
-                      <td className="px-5 py-4 sm:px-6">
-                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${tx.statusTone}`}>
-                          {tx.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </section>
         </div>
       </section>

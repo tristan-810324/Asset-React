@@ -19,12 +19,21 @@ SELECT r.id, p.id
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Local development accounts for the requested direct-to-dashboard login flow.
--- Passwords are stored as bcrypt hashes; email is pre-verified so no activation OTP is needed.
+-- Default password for both seed accounts is Admin123 (stored as a bcrypt hash).
+-- Email is pre-verified so no activation OTP is needed.
 INSERT INTO users (name, email, password_hash, email_verified_at)
 VALUES
-    ('DYCI IT Admin', 'admin@dyci.edu.ph', '$2b$12$B9Xn6SVhM53HDqjmuS2ipeFxx2GXiWjZ85wQ8Rs4fVrweT2BjsgBa', NOW()),
-    ('DYCI GSO Staff', 'gso@dyci.edu.ph', '$2b$12$B9Xn6SVhM53HDqjmuS2ipeFxx2GXiWjZ85wQ8Rs4fVrweT2BjsgBa', NOW())
+    ('DYCI IT Admin', 'admin@dyci.edu.ph', '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.', NOW()),
+    ('DYCI GSO Staff', 'gso@dyci.edu.ph', '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.', NOW())
 ON CONFLICT DO NOTHING;
+
+-- Refresh the seeded credentials on reruns so existing local accounts also use Admin123.
+UPDATE users
+   SET password_hash = '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.',
+       is_active = TRUE,
+       email_verified_at = COALESCE(email_verified_at, NOW()),
+       updated_at = NOW()
+ WHERE lower(email) IN ('admin@dyci.edu.ph', 'gso@dyci.edu.ph');
 
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id

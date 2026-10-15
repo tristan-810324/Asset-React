@@ -35,7 +35,7 @@ export default function UserManagement() {
     try {
       setAccounts(await listGsoAccounts())
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Hindi makuha ang GSO accounts.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to load GSO accounts.')
     } finally {
       setIsLoading(false)
     }
@@ -70,7 +70,7 @@ export default function UserManagement() {
       form.reset()
       await loadAccounts()
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Hindi nagawa ang account. Subukan muli.')
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to create the account. Please try again.')
     } finally {
       setIsCreating(false)
     }
@@ -123,7 +123,7 @@ export default function UserManagement() {
               <form className="mt-5 space-y-4" onSubmit={handleCreateAccount}>
                 <div><label htmlFor="gso-name" className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-700">Staff name</label><input id="gso-name" name="name" type="text" autoComplete="name" maxLength={200} placeholder="e.g. Juan Dela Cruz" required className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-3 focus:ring-blue-500/15" /></div>
                 <div><label htmlFor="gso-email" className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-700">Staff email</label><input id="gso-email" name="email" type="email" autoComplete="email" maxLength={254} placeholder="staff@gmail.com" required className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm font-medium outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-3 focus:ring-blue-500/15" /></div>
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3"><p className="text-[0.65rem] font-extrabold uppercase tracking-wide text-amber-800">Initial password</p><p className="mt-1 text-lg font-black tracking-wide text-amber-950">Admin123</p><p className="mt-1 text-[0.68rem] leading-relaxed text-amber-800">Sa unang successful sign-in, magpapadala ng OTP sa email na ito. Pag na-verify na, hindi na hihingi ng OTP sa mga susunod na login.</p></div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3"><p className="text-[0.65rem] font-extrabold uppercase tracking-wide text-amber-800">Initial password</p><p className="mt-1 text-lg font-black tracking-wide text-amber-950">Admin123</p><p className="mt-1 text-[0.68rem] leading-relaxed text-amber-800">An OTP will be sent to this email address during the first successful sign-in. Once the email is verified, an OTP will not be required for future sign-ins.</p></div>
                 {errorMessage && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{errorMessage}</p>}
                 {successMessage && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold leading-relaxed text-emerald-800">{successMessage}</p>}
                 <button type="submit" disabled={isCreating} aria-busy={isCreating} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-blue-600 px-4 text-xs font-black uppercase tracking-[0.12em] text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-500 disabled:cursor-wait disabled:opacity-60"><Icon name="plus" className="h-4 w-4" />{isCreating ? 'Creating account…' : 'Create GSO account'}</button>
