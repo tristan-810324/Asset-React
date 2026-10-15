@@ -123,11 +123,151 @@ async function createPendingReturn({
   }
 }
 
+async function confirmReturnByGso({
+  employeeCode,
+  itemCode,
+  condition,
+  reason,
+  tokenHash,
+  requestedByUserId,
+}) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const issuedResult = await client.query(
+      `SELECT employee.id AS employee_id, employee.employee_code, employee.first_name,
+              employee.last_name, employee.email AS employee_email,
+              issue.id AS issuance_id, issue.status AS issuance_status,
+              inventory.id AS item_id, inventory.item_code, inventory.description,
+              inventory.inventory_status, inventory.condition AS current_condition
+         FROM employees AS employee
+         JOIN employee_issuances AS issue ON issue.employee_id = employee.id
+         JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+        WHERE lower(employee.employee_code) = lower($1)
+          AND lower(inventory.item_code) = lower($2)
+          AND issue.status = 'Issued'
+          AND inventory.inventory_status = 'Issued'
+        ORDER BY issue.decided_at DESC, issue.id DESC
+        LIMIT 1
+        FOR UPDATE OF issue, inventory`,
+      [employeeCode, itemCode],
+    );
+    const issued = issuedResult.rows[0];
+    if (!issued) {
+      throw notFound('Hindi na active at naka-issue sa employee ang item na ito. I-refresh at subukan muli.');
+    }
+
+    const decisionNote = 'Return confirmed by GSO staff.';
+    const pendingResult = await client.query(
+      `SELECT id
+         FROM employee_issuance_returns
+        WHERE issuance_id = $1 AND status = 'Pending'
+        ORDER BY requested_at DESC, id DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [issued.issuance_id],
+    );
+    const pendingReturn = pendingResult.rows[0];
+    const returnedResult = pendingReturn
+      ? await client.query(
+        `UPDATE employee_issuance_returns
+            SET requested_by_user_id = $2,
+                status = 'Returned',
+                token_expires_at = NOW(),
+                return_condition = $3,
+                reason = $4,
+                decision_note = $5,
+                requested_at = NOW(),
+                decided_at = NOW()
+          WHERE id = $1 AND status = 'Pending'
+          RETURNING id, status, requested_at AS "requestedAt", decided_at AS "decidedAt"`,
+        [pendingReturn.id, requestedByUserId, condition, reason, decisionNote],
+      )
+      : await client.query(
+        `INSERT INTO employee_issuance_returns (
+           issuance_id, requested_by_user_id, status, token_hash, token_expires_at,
+           return_condition, reason, decision_note, decided_at
+         ) VALUES ($1, $2, 'Returned', $3, NOW(), $4, $5, $6, NOW())
+         RETURNING id, status, requested_at AS "requestedAt", decided_at AS "decidedAt"`,
+        [issued.issuance_id, requestedByUserId, tokenHash, condition, reason, decisionNote],
+      );
+    const returnedRow = returnedResult.rows[0];
+    if (!returnedRow) {
+      throw conflict('May nagbago sa return request. I-refresh ang employee at subukan muli.');
+    }
+
+    const issuanceUpdate = await client.query(
+      `UPDATE employee_issuances
+          SET status = 'Returned'
+        WHERE id = $1 AND status = 'Issued'`,
+      [issued.issuance_id],
+    );
+    const itemUpdate = await client.query(
+      `UPDATE item_catalog
+          SET inventory_status = 'Available', condition = $2
+        WHERE id = $1 AND inventory_status = 'Issued'`,
+      [issued.item_id, condition],
+    );
+    if (issuanceUpdate.rowCount !== 1 || itemUpdate.rowCount !== 1) {
+      throw conflict('Hindi na active ang item issuance. I-refresh ang employee at inventory records.');
+    }
+
+    const returnRecord = {
+      employee_id: issued.employee_id,
+      employee_code: issued.employee_code,
+      employee_name: `${issued.first_name} ${issued.last_name}`,
+      item_id: issued.item_id,
+      item_code: issued.item_code,
+      description: issued.description,
+    };
+    await writeReturnAuditLog(client, returnRecord, {
+      changedByUserId: requestedByUserId,
+      reason: `Item return confirmed by GSO staff for ${issued.employee_code}.`,
+      oldValues: {
+        returnStatus: null,
+        issuanceStatus: 'Issued',
+        inventoryStatus: 'Issued',
+        condition: issued.current_condition,
+      },
+      newValues: {
+        returnStatus: 'Returned',
+        issuanceStatus: 'Returned',
+        inventoryStatus: 'Available',
+        condition,
+      },
+    });
+
+    await client.query('COMMIT');
+    return {
+      id: returnedRow.id,
+      status: returnedRow.status,
+      requestedAt: returnedRow.requestedAt,
+      decidedAt: returnedRow.decidedAt,
+      employee_id: issued.employee_id,
+      employee_code: issued.employee_code,
+      employee_name: returnRecord.employee_name,
+      employee_email: issued.employee_email,
+      issuance_id: issued.issuance_id,
+      item_id: issued.item_id,
+      item_code: issued.item_code,
+      description: issued.description,
+      current_condition: issued.current_condition,
+      return_condition: condition,
+      reason,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function markReturnEmailSent(returnId) {
   await pool.query(
     `UPDATE employee_issuance_returns
         SET email_sent_at = NOW()
-      WHERE id = $1 AND status = 'Pending'`,
+      WHERE id = $1 AND status IN ('Pending', 'Returned')`,
     [returnId],
   );
 }
@@ -390,6 +530,7 @@ async function expirePendingReturns() {
 
 module.exports = {
   createPendingReturn,
+  confirmReturnByGso,
   markReturnEmailSent,
   markReturnEmailFailed,
   lookupReturnApproval,

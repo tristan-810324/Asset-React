@@ -68,6 +68,20 @@ function toneForCondition(condition: string) {
   return tones[condition] || 'bg-slate-100 text-slate-600'
 }
 
+function assignedCustodianForList(item: Pick<InventoryItem, 'assignedTo' | 'condition'>) {
+  const hasCustodian = item.assignedTo.trim() !== ''
+    && item.assignedTo !== 'In Storage'
+    && item.assignedTo !== '—'
+
+  if (hasCustodian) return item.assignedTo
+
+  const condition = item.condition.trim().toLowerCase()
+  if (condition === 'needs repair') return 'For Repair'
+  if (condition === 'under maintenance') return 'Under Maintenance'
+  if (condition === 'unserviceable' || condition === 'retired') return '—'
+  return item.assignedTo
+}
+
 function formatAcquiredDate(value: string | null) {
   if (!value) return 'N/A'
   const date = new Date(`${value.slice(0, 10)}T00:00:00`)
@@ -98,6 +112,109 @@ function formatCreatedAt(value: string) {
   return `${dateText} · ${timeText}`
 }
 
+const changeFieldLabels: Record<string, string> = {
+  itemCode: 'Asset Code',
+  category: 'Category',
+  description: 'Item Name',
+  dateAcquired: 'Date Acquired',
+  timeAcquired: 'Time Acquired',
+  unitCost: 'Unit Cost',
+  acquisitionCost: 'Total Cost',
+  currentValue: 'Current Value',
+  quantity: 'Quantity',
+  unitOfMeasure: 'Unit',
+  condition: 'Condition',
+  employeeCode: 'Employee Code',
+  firstName: 'First Name',
+  lastName: 'Last Name',
+  department: 'Department',
+  position: 'Position',
+  email: 'Email',
+  status: 'Employment Status',
+}
+
+function formatChangeValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return 'N/A'
+  return typeof value === 'object' ? JSON.stringify(value) : String(value)
+}
+
+function getChangeDetails(change: InventoryChangeRecord) {
+  if (change.action === 'issued') {
+    const condition = change.newValues.condition
+    return condition === undefined ? [] : [`Condition on issue: ${formatChangeValue(condition)}`]
+  }
+  if (change.action === 'returned') {
+    const condition = change.newValues.condition
+    return condition === undefined ? [] : [`Condition after return: ${formatChangeValue(condition)}`]
+  }
+
+  const fields = new Set([...Object.keys(change.oldValues), ...Object.keys(change.newValues)])
+  return [...fields]
+    .filter((field) => JSON.stringify(change.oldValues[field]) !== JSON.stringify(change.newValues[field]))
+    .map((field) => {
+      const label = changeFieldLabels[field] || field.replace(/([A-Z])/g, ' $1')
+      return `${label}: ${formatChangeValue(change.oldValues[field])} -> ${formatChangeValue(change.newValues[field])}`
+    })
+}
+
+function buildItemConditionHistory(changeHistory: InventoryChangeRecord[]): ItemHistoryEntry[] {
+  const chronologicalChanges = [...changeHistory].sort(
+    (left, right) => new Date(left.changedAt).getTime() - new Date(right.changedAt).getTime(),
+  )
+  const issuedConditionByEmployee = new Map<string, string>()
+  const history: ItemHistoryEntry[] = []
+
+  chronologicalChanges.forEach((change) => {
+    const employeeMatch = change.reason.match(/(?:Issued to|Returned by)\s+(.+?)\s+\(([^)]+)\)/)
+    const employeeName = typeof change.newValues.employeeName === 'string'
+      ? change.newValues.employeeName
+      : employeeMatch?.[1] || change.changedBy || 'Employee'
+    const employeeCode = typeof change.newValues.employeeCode === 'string'
+      ? change.newValues.employeeCode
+      : employeeMatch?.[2]
+    const employeeIdentity = (employeeCode || employeeName).trim().toLowerCase()
+    const employeeLabel = employeeCode ? `${employeeName} (${employeeCode})` : employeeName
+    const nextCondition = change.newValues.condition
+
+    if ((change.action === 'issued' || change.action === 'returned') && typeof nextCondition === 'string' && nextCondition) {
+      const previousCondition = change.action === 'returned'
+        ? issuedConditionByEmployee.get(employeeIdentity) || 'Before return'
+        : 'At issuance'
+
+      history.push({
+        previous: previousCondition,
+        next: nextCondition,
+        changedAt: formatCreatedAt(change.changedAt),
+        by: change.changedBy || 'GSO Staff',
+        note: `${change.action === 'issued' ? 'Issued to' : 'Returned by'} ${employeeLabel}.`,
+        tone: toneForCondition(nextCondition),
+      })
+
+      if (employeeIdentity) {
+        if (change.action === 'issued') issuedConditionByEmployee.set(employeeIdentity, nextCondition)
+        else issuedConditionByEmployee.delete(employeeIdentity)
+      }
+      return
+    }
+
+    if (change.action === 'updated'
+      && JSON.stringify(change.oldValues.condition) !== JSON.stringify(change.newValues.condition)
+      && typeof nextCondition === 'string'
+      && nextCondition) {
+      history.push({
+        previous: formatChangeValue(change.oldValues.condition),
+        next: nextCondition,
+        changedAt: formatCreatedAt(change.changedAt),
+        by: change.changedBy || 'GSO Staff',
+        note: change.reason,
+        tone: toneForCondition(nextCondition),
+      })
+    }
+  })
+
+  return history.reverse()
+}
+
 function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
   const conditionTone = toneForCondition(record.condition)
   const statusTone = record.status === 'Available'
@@ -107,6 +224,8 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
       : record.status === 'Reserved'
         ? 'bg-violet-50 text-violet-700'
         : 'bg-amber-50 text-amber-700'
+
+  const changeHistory = record.changeHistory || []
 
   return {
     id: record.id,
@@ -135,8 +254,8 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
     currentValueValue: record.currentValue,
     quantityValue: record.quantity,
     unitOfMeasureValue: record.unitOfMeasure,
-    changeHistory: record.changeHistory || [],
-    history: [],
+    changeHistory,
+    history: buildItemConditionHistory(changeHistory),
   }
 }
 
@@ -159,6 +278,8 @@ export default function ItemsMasterData() {
 
   // Selected item modal state
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
+  const [showItemHistoryModal, setShowItemHistoryModal] = useState(false)
+  const [itemHistoryTab, setItemHistoryTab] = useState<'condition' | 'changes'>('condition')
   const [showItemEditModal, setShowItemEditModal] = useState(false)
   const [isUpdatingItem, setIsUpdatingItem] = useState(false)
   const [itemEditError, setItemEditError] = useState('')
@@ -1026,7 +1147,7 @@ export default function ItemsMasterData() {
                       {item.condition}
                     </span>
                   </td>
-                  <td className="px-5 py-4 text-xs font-semibold text-slate-600">{item.assignedTo}</td>
+                  <td className="px-5 py-4 text-xs font-semibold text-slate-600">{assignedCustodianForList(item)}</td>
                   <td className="px-5 py-4 sm:px-6">
                     <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${item.statusTone}`}>
                       {item.status}
@@ -1101,52 +1222,22 @@ export default function ItemsMasterData() {
               </span>
             </div>
 
-            {/* Embedded Condition History Section */}
-            <div className="mt-6 border-t border-slate-100 pt-4">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Item Condition History</h4>
-              <p className="mt-0.5 text-[0.7rem] text-slate-400">Audit logs of previous condition updates for this specific asset.</p>
-
-              <div className="mt-3 space-y-2.5 max-h-48 overflow-y-auto pr-1">
-                {selectedItem.history && selectedItem.history.length > 0 ? (
-                  selectedItem.history.map((log, idx) => (
-                    <div key={idx} className="flex items-start justify-between rounded-xl border border-slate-100 bg-white p-3 shadow-xs">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[0.65rem] font-bold text-slate-400">{log.previous}</span>
-                          <span className="text-[0.65rem] text-slate-300">→</span>
-                          <span className={`rounded-md px-2 py-0.5 text-[0.62rem] font-extrabold ${log.tone}`}>
-                            {log.next}
-                          </span>
-                        </div>
-                        <p className="mt-1.5 text-xs text-slate-600 font-medium">{log.note}</p>
-                        <p className="mt-1 text-[0.62rem] font-bold text-slate-400">By {log.by}</p>
-                      </div>
-                      <span className="text-[0.62rem] font-semibold text-slate-400 whitespace-nowrap">{log.changedAt}</span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-slate-400 italic">No condition history recorded yet.</p>
-                )}
+            <div className="mt-6 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+              <div>
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Item History</h4>
+                <p className="mt-0.5 text-[0.7rem] text-slate-400">View condition, issuance, return, and item change history.</p>
               </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setItemHistoryTab('condition')
+                  setShowItemHistoryModal(true)
+                }}
+                className="shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-100"
+              >
+                View History
+              </button>
             </div>
-
-            {selectedItem.changeHistory && selectedItem.changeHistory.length > 0 && (
-              <div className="mt-6 border-t border-slate-100 pt-4">
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Item Change History</h4>
-                <p className="mt-0.5 text-[0.7rem] text-slate-400">Recorded reasons for edits to this inventory item.</p>
-                <div className="mt-3 max-h-40 space-y-2 overflow-y-auto pr-1">
-                  {selectedItem.changeHistory.map((change, index) => (
-                    <div key={`${change.changedAt}-${index}`} className="rounded-xl border border-slate-100 bg-white p-3">
-                      <p className="text-xs font-semibold text-slate-700">{change.reason}</p>
-                      <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
-                        By {change.changedBy || 'GSO Staff'} · {formatCreatedAt(change.changedAt)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div className="mt-6 flex justify-between gap-3">
               {selectedItem.id ? (
                 <button
@@ -1166,6 +1257,105 @@ export default function ItemsMasterData() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {showItemHistoryModal && selectedItem && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="item-history-dialog-title"
+            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+              <div>
+                <h3 id="item-history-dialog-title" className="text-base font-black text-slate-900">
+                  Item History
+                </h3>
+                <p className="mt-1 text-xs font-semibold text-slate-500">
+                  {selectedItem.name} · {selectedItem.code}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowItemHistoryModal(false)}
+                className="shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
+              <button
+                type="button"
+                aria-pressed={itemHistoryTab === 'changes'}
+                onClick={() => setItemHistoryTab('changes')}
+                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${itemHistoryTab === 'changes' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Item Change History
+              </button>
+              <button
+                type="button"
+                aria-pressed={itemHistoryTab === 'condition'}
+                onClick={() => setItemHistoryTab('condition')}
+                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${itemHistoryTab === 'condition' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                Item Condition History
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-5 sm:p-6">
+              {itemHistoryTab === 'condition' ? (
+                selectedItem.history.length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedItem.history.map((log, index) => (
+                      <div key={`${log.changedAt}-${index}`} className="flex items-start justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-slate-500">{log.previous}</span>
+                            <span className="text-xs text-slate-300">→</span>
+                            <span className={`rounded-md px-2 py-0.5 text-[0.62rem] font-extrabold ${log.tone}`}>
+                              {log.next}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[0.68rem] text-slate-500">{log.note}</p>
+                          <p className="mt-1 text-[0.62rem] font-bold text-slate-400">By {log.by}</p>
+                        </div>
+                        <span className="shrink-0 text-[0.62rem] font-bold text-slate-400">{log.changedAt}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
+                    No condition history recorded yet.
+                  </p>
+                )
+              ) : selectedItem.changeHistory && selectedItem.changeHistory.length > 0 ? (
+                <div className="space-y-2">
+                  {selectedItem.changeHistory.map((change, index) => (
+                    <div key={`${change.changedAt}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                      <p className="text-xs font-semibold text-slate-700">{change.reason}</p>
+                      {getChangeDetails(change).length > 0 && (
+                        <ul className="mt-1 space-y-0.5 text-[0.68rem] text-slate-500">
+                          {getChangeDetails(change).map((detail) => (
+                            <li key={detail}>{detail}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
+                        By {change.changedBy || 'GSO Staff'} · {formatCreatedAt(change.changedAt)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
+                  No item change history recorded yet.
+                </p>
+              )}
+            </div>
+          </section>
         </div>
       )}
 

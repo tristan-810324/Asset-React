@@ -6,7 +6,7 @@ export type InventoryCategory = {
 }
 
 export type InventoryChangeRecord = {
-  action: 'updated' | 'renamed' | 'deleted'
+  action: 'updated' | 'issued' | 'returned' | 'employee_profile_updated'
   reason: string
   oldValues: Record<string, unknown>
   newValues: Record<string, unknown>

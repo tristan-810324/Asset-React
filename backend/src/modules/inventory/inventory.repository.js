@@ -21,17 +21,88 @@ const itemColumns = `
   to_char(current_issuance.decided_at, 'HH12:MI AM') AS "timeIssued",
   COALESCE((
     SELECT json_agg(json_build_object(
-      'action', change.action,
-      'reason', change.reason,
-      'oldValues', change.old_values,
-      'newValues', change.new_values,
-      'changedAt', change.changed_at,
-      'changedBy', editor.name
-    ) ORDER BY change.changed_at DESC, change.id DESC)
-      FROM inventory_change_logs AS change
-      LEFT JOIN users AS editor ON editor.id = change.changed_by_user_id
-     WHERE change.entity_type = 'item'
-       AND change.item_id = i.id
+      'action', history.action,
+      'reason', history.reason,
+      'oldValues', history.old_values,
+      'newValues', history.new_values,
+      'changedAt', history.changed_at,
+      'changedBy', history.changed_by
+    ) ORDER BY history.changed_at DESC, history.sort_id DESC)
+      FROM (
+        SELECT change.action,
+               change.reason,
+               change.old_values,
+               change.new_values,
+               change.changed_at,
+               editor.name AS changed_by,
+               change.id AS sort_id
+          FROM inventory_change_logs AS change
+          LEFT JOIN users AS editor ON editor.id = change.changed_by_user_id
+         WHERE change.entity_type = 'item'
+           AND change.item_id = i.id
+           AND change.action = 'updated'
+           AND (change.old_values ? 'itemCode' OR change.new_values ? 'itemCode')
+
+        UNION ALL
+
+        SELECT 'issued'::TEXT AS action,
+               'Issued to ' || employee.first_name || ' ' || employee.last_name || ' (' || employee.employee_code || ').' AS reason,
+               '{}'::JSONB AS old_values,
+               jsonb_build_object(
+                 'employeeCode', employee.employee_code,
+                 'employeeName', employee.first_name || ' ' || employee.last_name,
+                 'condition', issue.item_condition
+               ) AS new_values,
+               issue.decided_at AS changed_at,
+               employee.first_name || ' ' || employee.last_name AS changed_by,
+               issue.id AS sort_id
+          FROM employee_issuances AS issue
+          JOIN employees AS employee ON employee.id = issue.employee_id
+         WHERE issue.item_id = i.id
+           AND issue.status IN ('Issued', 'Returned')
+           AND issue.decided_at IS NOT NULL
+
+        UNION ALL
+
+        SELECT 'returned'::TEXT AS action,
+               'Returned by ' || employee.first_name || ' ' || employee.last_name || ' (' || employee.employee_code || ').' AS reason,
+               jsonb_build_object('inventoryStatus', 'Issued') AS old_values,
+               jsonb_build_object(
+                 'inventoryStatus', 'Available',
+                 'condition', return_request.return_condition
+               ) AS new_values,
+               return_request.decided_at AS changed_at,
+               employee.first_name || ' ' || employee.last_name AS changed_by,
+               return_request.id AS sort_id
+          FROM employee_issuance_returns AS return_request
+          JOIN employee_issuances AS issue ON issue.id = return_request.issuance_id
+          JOIN employees AS employee ON employee.id = issue.employee_id
+         WHERE issue.item_id = i.id
+           AND return_request.status = 'Returned'
+           AND return_request.decided_at IS NOT NULL
+
+        UNION ALL
+
+        SELECT 'employee_profile_updated'::TEXT AS action,
+               'Profile update for ' || employee.first_name || ' ' || employee.last_name || ' (' || employee.employee_code || '): ' || change.reason AS reason,
+               change.old_values,
+               change.new_values,
+               change.changed_at,
+               editor.name AS changed_by,
+               change.id AS sort_id
+          FROM inventory_change_logs AS change
+          JOIN employees AS employee ON employee.id = change.employee_id
+          LEFT JOIN users AS editor ON editor.id = change.changed_by_user_id
+         WHERE change.entity_type = 'employee'
+           AND change.action = 'updated'
+           AND EXISTS (
+             SELECT 1
+               FROM employee_issuances AS issue
+              WHERE issue.item_id = i.id
+                AND issue.employee_id = employee.id
+                AND issue.status IN ('Issued', 'Returned')
+           )
+      ) AS history
   ), '[]'::JSON) AS "changeHistory"
 `;
 

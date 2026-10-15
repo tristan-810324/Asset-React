@@ -40,7 +40,8 @@ export type EmployeeReturnRequest = {
   condition: string
   reason: string
   requestedAt: string
-  expiresAt: string
+  expiresAt?: string | null
+  emailSent: boolean
 }
 
 export async function createEmployeeIssuance(employeeCode: string, itemId: string, notes: string) {

@@ -579,22 +579,26 @@ export default function EmployeeMasterData() {
       }).format(Number.isNaN(requestedAt.getTime()) ? new Date() : requestedAt)
       const newHistoryEntry: EmployeeHistoryLog = {
         date: formattedDate,
-        event: 'Return Pending Approval',
+        event: 'Returned',
         item: targetItem.name,
         code: targetItem.code,
-        note: `Awaiting employee email approval. Condition after return: ${returnCondition}. GSO notes: ${surrenderReason.trim()}`,
+        note: `Return confirmed by GSO staff. Condition after return: ${returnCondition}. GSO notes: ${surrenderReason.trim()}`,
       }
       const updatedEmp: EmployeeRecord = {
         ...selectedEmployee,
+        assigned: Math.max(0, selectedEmployee.assigned - 1),
+        assignedItems: selectedEmployee.assignedItems.filter((item) => item.code !== targetItem.code),
         history: [newHistoryEntry, ...selectedEmployee.history],
       }
       setEmployees((current) => current.map((emp) => (emp.id === selectedEmployee.id ? updatedEmp : emp)))
       setSelectedEmployee(updatedEmp)
       setSurrenderReason('')
       setShowHandleIssuanceModal(false)
-      alert(`A return approval request for ${targetItem.code} was sent to ${selectedEmployee.email}. The item stays issued until the employee confirms.`)
+      alert(request.emailSent
+        ? `The return of ${targetItem.code} is complete. An appreciation email was sent to ${selectedEmployee.email}.`
+        : `The return of ${targetItem.code} is complete, but the appreciation email could not be sent. Check the Gmail SMTP settings.`)
     } catch (error) {
-      setReturnSubmitError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Unable to send the return approval email.')
+      setReturnSubmitError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Unable to complete the item return.')
     } finally {
       setIsSubmittingReturn(false)
     }

@@ -8,6 +8,7 @@ export type GsoNavigationItem =
   | 'Employee Master Data'
   | 'Issuance Records'
   | 'Returned Items'
+  | 'To Be Repaired'
   | 'Notifications'
   | 'Requests & Borrowing'
   | 'Maintenance'
@@ -89,7 +90,8 @@ const navigation: { name: VisibleNavigationItem; icon: NavigationIconName; href?
   { name: 'Item Master Data', icon: 'archive', href: '/gso/items', badge: '1,248' },
   { name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
   { name: 'Issuance Records', icon: 'truck', href: '/gso/issuance' },
-  { name: 'Returned Items', icon: 'return', href: '/gso/issuance#returned-items' },
+  { name: 'Returned Items', icon: 'return', href: '/gso/return-items' },
+  { name: 'To Be Repaired', icon: 'clipboard', href: '/gso/to-be-repaired' },
   { name: 'Requests & Borrowing', icon: 'clipboard', href: '/gso/requests-borrowing' },
   { name: 'Notifications', icon: 'bell', action: 'notifications' },
 ]
@@ -135,11 +137,7 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOp
         <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
         <nav className="mt-3 space-y-1.5" aria-label="Primary navigation">
           {navigation.map((item) => {
-            const isReturnedItemsPage = item.name === 'Returned Items'
-              && currentPage === 'Issuance Records'
-              && typeof window !== 'undefined'
-              && window.location.hash === '#returned-items'
-            const isActive = currentPage === item.name || isReturnedItemsPage
+            const isActive = currentPage === item.name
             if (item.action === 'notifications') {
               return (
                 <button

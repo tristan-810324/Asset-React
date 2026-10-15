@@ -9,6 +9,8 @@ import GsoDashboard from './gso/gsodashboard'
 import BorrowingPage from './gso/borrowing'
 import EmployeeMasterData from './gso/employemasterdata'
 import IssuanceRecord from './gso/issuancerecord'
+import ReturnItems from './gso/returnitems'
+import ToRepaired from './gso/torepaired'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
 
@@ -97,6 +99,12 @@ export default function App() {
   }
   if (path === '/gso/issuance') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><IssuanceRecord /></ProtectedDashboard>
+  }
+  if (path === '/gso/return-items') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><ReturnItems /></ProtectedDashboard>
+  }
+  if (path === '/gso/to-be-repaired') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><ToRepaired /></ProtectedDashboard>
   }
   if (path === '/gso/requests-borrowing') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><BorrowingPage /></ProtectedDashboard>
