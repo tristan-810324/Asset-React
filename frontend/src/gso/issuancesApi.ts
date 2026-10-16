@@ -16,6 +16,12 @@ export type EmployeeIssuanceRecord = {
   }>
 }
 
+export type ApprovalIssuanceItem = {
+  itemCode: string
+  itemName: string
+  condition: string
+}
+
 export type ApprovalIssuance = {
   status: string
   expiresAt: string
@@ -25,6 +31,7 @@ export type ApprovalIssuance = {
   employeeCode: string
   itemCode: string
   itemName: string
+  items?: ApprovalIssuanceItem[]
 }
 
 export type ApprovalReturn = ApprovalIssuance & { reason: string }
@@ -66,6 +73,32 @@ export async function createEmployeeIssuance(employeeCode: string, itemId: strin
   return result.issuance
 }
 
+export async function createEmployeeIssuanceBatch(employeeCode: string, itemIds: string[], notes: string) {
+  const result = await apiRequest<{
+    batch: {
+      id: string
+      status: string
+      employeeCode: string
+      employeeName: string
+      employeeEmail: string
+      items: Array<{
+        id: string
+        itemId: string
+        itemCode: string
+        itemName: string
+        condition: string
+      }>
+      notes: string
+      requestedAt: string
+      expiresAt: string
+    }
+  }>('/issuances/batch', {
+    method: 'POST',
+    body: JSON.stringify({ employeeCode, itemIds, notes }),
+  })
+  return result.batch
+}
+
 export async function createEmployeeReturn(employeeCode: string, itemCode: string, condition: string, reason: string) {
   const result = await apiRequest<{ request: EmployeeReturnRequest }>('/issuances/returns', {
     method: 'POST',
@@ -94,6 +127,7 @@ export async function submitIssuanceDecision(token: string, action: 'approve' | 
       employeeCode?: string
       itemName: string
       itemCode?: string
+      items?: ApprovalIssuanceItem[]
       alreadyDecided?: boolean
     }
   }>('/issuances/approval', {

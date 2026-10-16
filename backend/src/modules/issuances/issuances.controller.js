@@ -9,6 +9,11 @@ const createIssuance = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: { issuance } });
 });
 
+const createIssuanceBatch = asyncHandler(async (req, res) => {
+  const batch = await issuancesService.createIssuanceBatch(req.body, req.user);
+  res.status(201).json({ success: true, data: { batch } });
+});
+
 const listEmployeeIssuances = asyncHandler(async (req, res) => {
   const result = await issuancesService.listEmployeeIssuances(req.params.employeeCode);
   res.json({ success: true, data: result });
@@ -24,4 +29,4 @@ const decideApproval = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { issuance } });
 });
 
-module.exports = { createIssuance, listEmployeeIssuances, lookupApproval, decideApproval };
+module.exports = { createIssuance, createIssuanceBatch, listEmployeeIssuances, lookupApproval, decideApproval };

@@ -221,7 +221,7 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
     ? 'bg-emerald-50 text-emerald-700'
     : record.status === 'Issued'
       ? 'bg-blue-50 text-blue-700'
-      : record.status === 'Reserved'
+      : record.status === 'Reserved' || record.status === 'Pending Approval'
         ? 'bg-violet-50 text-violet-700'
         : 'bg-amber-50 text-amber-700'
 
@@ -885,6 +885,7 @@ export default function ItemsMasterData() {
               <option value="all">All Statuses</option>
               <option value="Available">Available</option>
               <option value="Issued">Issued</option>
+              <option value="Pending Approval">Pending Approval</option>
               <option value="Reserved">Reserved</option>
               <option value="Borrowed">Borrowed</option>
             </select>
@@ -1200,7 +1201,7 @@ export default function ItemsMasterData() {
                 <p className="mt-1 text-xs font-bold text-slate-700">Custodian: {selectedItem.assignedTo}</p>
                 {/* SEPARATE FIELD FOR ISSUANCE DATE AND TIME */}
                 <p className="mt-1.5 border-t border-slate-200/60 pt-1.5 text-xs font-bold text-blue-800">
-                  Date Issued: {selectedItem.dateIssued !== '—' ? `${selectedItem.dateIssued} (${selectedItem.timeIssued})` : 'Not Issued (In Storage)'}
+                  Date Issued: {selectedItem.dateIssued !== '—' ? `${selectedItem.dateIssued} (${selectedItem.timeIssued})` : selectedItem.status === 'Pending Approval' ? 'Pending employee approval' : 'Not Issued (In Storage)'}
                 </p>
               </div>
 

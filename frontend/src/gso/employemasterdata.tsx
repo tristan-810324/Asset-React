@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { ApiError } from '../auth/authApi'
 import { createDepartment, createEmployee, listDepartments, listEmployees, updateEmployee, type EmployeeProfile, type EmployeeProfileInput } from './employeesApi'
-import { createEmployeeIssuance, createEmployeeReturn, listEmployeeIssuances } from './issuancesApi'
+import { createEmployeeIssuanceBatch, createEmployeeReturn, listEmployeeIssuances } from './issuancesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 
 interface DepartmentItem {
@@ -20,7 +20,13 @@ const initialDepartments: DepartmentItem[] = [
   { id: 'dept-7', name: 'Human Resources' },
 ]
 
-const returnConditionOptions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']
+const returnConditionOptions = ['New', 'Good', 'Fair', 'Needs Repair', 'Unserviceable', 'Retired']
+
+function returnConditionForInspection(condition?: string) {
+  if (!condition) return 'Good'
+  if (returnConditionOptions.includes(condition)) return condition
+  return condition === 'Under Maintenance' ? 'Needs Repair' : 'Good'
+}
 
 interface EmployeeHistoryLog {
   date: string
@@ -57,85 +63,6 @@ interface EmployeeRecord {
   history: EmployeeHistoryLog[]
   changeHistory?: ChangeHistoryRecord[]
 }
-
-const sampleEmployees: EmployeeRecord[] = [
-  {
-    id: 'EMP-1042',
-    firstName: 'Ana',
-    lastName: 'Santos',
-    initials: 'AS',
-    department: 'Registrar Office',
-    position: 'Records Officer',
-    email: 'ana.santos@dyci.edu.ph',
-    assigned: 2,
-    status: 'Active',
-    statusTone: 'bg-emerald-50 text-emerald-700',
-    assignedItems: [
-      { code: 'AST-LTP-0142', name: 'Lenovo ThinkPad E14', condition: 'Good', tone: 'bg-emerald-50 text-emerald-700', assignedOn: 'Oct 08, 2026 · 10:30 AM' },
-      { code: 'AST-MON-0084', name: 'Dell 24-inch Monitor', condition: 'Good', tone: 'bg-emerald-50 text-emerald-700', assignedOn: 'Sep 18, 2026 · 02:15 PM' },
-    ],
-    history: [
-      { date: 'Oct 08, 2026', event: 'Issued', item: 'Lenovo ThinkPad E14', code: 'AST-LTP-0142', note: 'Acknowledged by employee' },
-      { date: 'Sep 18, 2026', event: 'Issued', item: 'Dell 24-inch Monitor', code: 'AST-MON-0084', note: 'Acknowledged by employee' },
-      { date: 'Aug 30, 2026', event: 'Returned', item: 'Ergonomic Office Chair', code: 'AST-CHR-0112', note: 'Returned due to department transfer' },
-    ],
-    changeHistory: [],
-  },
-  {
-    id: 'EMP-1128',
-    firstName: 'Marco',
-    lastName: 'Villanueva',
-    initials: 'MV',
-    department: 'IT Services',
-    position: 'Support Technician',
-    email: 'marco.villanueva@dyci.edu.ph',
-    assigned: 2,
-    status: 'Active',
-    statusTone: 'bg-emerald-50 text-emerald-700',
-    assignedItems: [
-      { code: 'AST-TOL-0012', name: 'Network Cable Tester', condition: 'Good', tone: 'bg-emerald-50 text-emerald-700', assignedOn: 'Jul 10, 2026 · 09:00 AM' },
-      { code: 'AST-LTP-0155', name: 'ASUS ExpertBook B1', condition: 'Fair', tone: 'bg-amber-50 text-amber-700', assignedOn: 'Aug 14, 2026 · 11:20 AM' },
-    ],
-    history: [
-      { date: 'Aug 14, 2026', event: 'Issued', item: 'ASUS ExpertBook B1', code: 'AST-LTP-0155', note: 'Field technician deployment' },
-    ],
-    changeHistory: [],
-  },
-  {
-    id: 'EMP-1186',
-    firstName: 'Liza',
-    lastName: 'Mendoza',
-    initials: 'LM',
-    department: 'Science Department',
-    position: 'Lab Coordinator',
-    email: 'liza.mendoza@dyci.edu.ph',
-    assigned: 1,
-    status: 'Active',
-    statusTone: 'bg-emerald-50 text-emerald-700',
-    assignedItems: [
-      { code: 'AST-PRJ-0031', name: 'Epson EB-X06 Projector', condition: 'Good', tone: 'bg-emerald-50 text-emerald-700', assignedOn: 'Sep 01, 2026 · 08:30 AM' },
-    ],
-    history: [
-      { date: 'Sep 01, 2026', event: 'Issued', item: 'Epson EB-X06 Projector', code: 'AST-PRJ-0031', note: 'Science lab classroom setup' },
-    ],
-    changeHistory: [],
-  },
-  {
-    id: 'EMP-1214',
-    firstName: 'Rafael',
-    lastName: 'Cruz',
-    initials: 'RC',
-    department: 'Finance Office',
-    position: 'Accounting Assistant',
-    email: 'rafael.cruz@dyci.edu.ph',
-    assigned: 0,
-    status: 'Inactive',
-    statusTone: 'bg-slate-100 text-slate-600',
-    assignedItems: [],
-    history: [],
-    changeHistory: [],
-  },
-]
 
 function employeeRecordFromProfile(profile: EmployeeProfile, existing?: EmployeeRecord): EmployeeRecord {
   const firstName = profile.firstName
@@ -193,7 +120,7 @@ export default function EmployeeMasterData() {
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('all')
 
   // Employees data list
-  const [employees, setEmployees] = useState<EmployeeRecord[]>(sampleEmployees)
+  const [employees, setEmployees] = useState<EmployeeRecord[]>([])
   const [persistedEmployeeIds, setPersistedEmployeeIds] = useState<Set<string>>(() => new Set())
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(true)
   const [employeeDataError, setEmployeeDataError] = useState('')
@@ -238,12 +165,8 @@ export default function EmployeeMasterData() {
     void listEmployees()
       .then(({ employees: profiles }) => {
         if (!active) return
-        const localSamples = profiles.length === 0 ? sampleEmployees : []
-        const mappedEmployees = profiles.map((profile) => {
-          const existing = sampleEmployees.find((employee) => employee.id.toLowerCase() === profile.id.toLowerCase())
-          return employeeRecordFromProfile(profile, existing)
-        })
-        setEmployees([...mappedEmployees, ...localSamples])
+        const mappedEmployees = profiles.map((profile) => employeeRecordFromProfile(profile))
+        setEmployees(mappedEmployees)
         setPersistedEmployeeIds(new Set(profiles.map((profile) => profile.id)))
         setEmployeeDataError('')
       })
@@ -274,6 +197,7 @@ export default function EmployeeMasterData() {
   const [showHandleIssuanceModal, setShowHandleIssuanceModal] = useState(false)
   const [selectedReturnAssetCode, setSelectedReturnAssetCode] = useState('')
   const [returnCondition, setReturnCondition] = useState('Good')
+  const [returnPriority, setReturnPriority] = useState<'High' | 'Medium'>('High')
   const [surrenderReason, setSurrenderReason] = useState('')
   const [returnSubmitError, setReturnSubmitError] = useState('')
   const [isSubmittingReturn, setIsSubmittingReturn] = useState(false)
@@ -292,17 +216,13 @@ export default function EmployeeMasterData() {
 
   // Separate Pop-up Modal state for Add New Issuance (with Dropdown selection)
   const [showIssuanceModal, setShowIssuanceModal] = useState(false)
-  const [selectedAssetCode, setSelectedAssetCode] = useState('')
+  const [issuanceSelectionMode, setIssuanceSelectionMode] = useState<'single' | 'multiple'>('single')
+  const [selectedAssetCodes, setSelectedAssetCodes] = useState<string[]>([])
   const [inventorySearchQuery, setInventorySearchQuery] = useState('')
   const [isInventoryDropdownOpen, setIsInventoryDropdownOpen] = useState(false)
   const [isSubmittingIssuance, setIsSubmittingIssuance] = useState(false)
   const [issuanceSubmitError, setIssuanceSubmitError] = useState('')
-  const [issuanceData, setIssuanceData] = useState({
-    itemCode: '',
-    itemName: '',
-    condition: '',
-    notes: 'Acknowledged by employee',
-  })
+  const [issuanceNotes, setIssuanceNotes] = useState('Acknowledged by employee')
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -562,14 +482,21 @@ export default function EmployeeMasterData() {
 
     const targetItem = selectedEmployee.assignedItems.find((item) => item.code === selectedReturnAssetCode)
     if (!targetItem) return
+    if (!surrenderReason.trim()) {
+      setReturnSubmitError('Please enter a surrender or return reason in the notes field.')
+      return
+    }
     setReturnSubmitError('')
     setIsSubmittingReturn(true)
+    const returnReason = returnCondition === 'Needs Repair'
+      ? `${surrenderReason.trim()}\nRepair priority: ${returnPriority}`
+      : surrenderReason.trim()
     try {
       const request = await createEmployeeReturn(
         selectedEmployee.id,
         targetItem.code,
         returnCondition,
-        surrenderReason,
+        returnReason,
       )
       const requestedAt = new Date(request.requestedAt)
       const formattedDate = new Intl.DateTimeFormat('en-US', {
@@ -582,7 +509,7 @@ export default function EmployeeMasterData() {
         event: 'Return Pending Approval',
         item: targetItem.name,
         code: targetItem.code,
-        note: `Awaiting employee email approval. Condition after return: ${returnCondition}. GSO notes: ${surrenderReason.trim()}`,
+        note: `Awaiting employee email approval. Condition after return: ${returnCondition}. GSO notes: ${returnReason}`,
       }
       const updatedEmp: EmployeeRecord = {
         ...selectedEmployee,
@@ -591,6 +518,7 @@ export default function EmployeeMasterData() {
       setEmployees((current) => current.map((emp) => (emp.id === selectedEmployee.id ? updatedEmp : emp)))
       setSelectedEmployee(updatedEmp)
       setSurrenderReason('')
+      setReturnPriority('High')
       setShowHandleIssuanceModal(false)
       alert(`A return approval request for ${targetItem.code} was sent to ${selectedEmployee.email}. The item stays issued until the employee confirms.`)
     } catch (error) {
@@ -600,25 +528,35 @@ export default function EmployeeMasterData() {
     }
   }
 
-  // Handle Inventory Selection Change (Auto-fills Code, Name, Condition)
+  // Toggle an inventory item in the issuance batch.
   const handleSelectInventoryItem = (code: string) => {
-    setSelectedAssetCode(code)
-    const found = availableInventoryStock.find((item) => item.itemCode === code)
-    if (found) {
-      setIssuanceData({
-        itemCode: found.itemCode,
-        itemName: found.description,
-        condition: found.condition,
-        notes: 'Acknowledged by employee',
-      })
-    } else {
-      setIssuanceData({
-        itemCode: '',
-        itemName: '',
-        condition: '',
-        notes: 'Acknowledged by employee',
-      })
+    if (issuanceSelectionMode === 'single') {
+      setSelectedAssetCodes((current) => current.includes(code) ? [] : [code])
+      setIssuanceSubmitError('')
+      setIsInventoryDropdownOpen(false)
+      setInventorySearchQuery('')
+      return
     }
+    if (selectedAssetCodes.includes(code)) {
+      setSelectedAssetCodes((current) => current.filter((itemCode) => itemCode !== code))
+      setIssuanceSubmitError('')
+      return
+    }
+    if (selectedAssetCodes.length >= 100) {
+      setIssuanceSubmitError('Select up to 100 items for one approval email.')
+      return
+    }
+    setSelectedAssetCodes((current) => [...current, code])
+    setIssuanceSubmitError('')
+  }
+
+  const resetIssuanceForm = () => {
+    setIssuanceSelectionMode('single')
+    setSelectedAssetCodes([])
+    setInventorySearchQuery('')
+    setIsInventoryDropdownOpen(false)
+    setIssuanceNotes('Acknowledged by employee')
+    setIssuanceSubmitError('')
   }
 
   const handleOpenEmployeeProfile = (employee: EmployeeRecord) => {
@@ -655,44 +593,55 @@ export default function EmployeeMasterData() {
 
   const handleAddIssuanceSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!issuanceData.itemCode || !issuanceData.itemName || !selectedEmployee) {
-      alert('Select an available item from the dropdown list first.')
+    if (!selectedEmployee) return
+    if (selectedAssetCodes.length === 0) {
+      setIssuanceSubmitError('Select at least one available inventory item first.')
       return
     }
-    const selectedStock = availableInventoryStock.find((item) => item.itemCode === issuanceData.itemCode)
-    if (!selectedStock) {
-      setIssuanceSubmitError('Hindi na available ang item na ito. I-refresh ang inventory at pumili muli.')
+
+    const selectedStocks = selectedAssetCodes.map((code) =>
+      availableInventoryStock.find((item) => item.itemCode === code)
+    )
+    if (selectedStocks.some((item) => !item)) {
+      setIssuanceSubmitError('One or more selected items are no longer available. Refresh the inventory and select them again.')
       return
     }
 
     setIsSubmittingIssuance(true)
     setIssuanceSubmitError('')
     try {
-      const issuance = await createEmployeeIssuance(selectedEmployee.id, selectedStock.id, issuanceData.notes)
+      const validStocks = selectedStocks.filter((item): item is InventoryItemRecord => Boolean(item))
+      const batch = await createEmployeeIssuanceBatch(
+        selectedEmployee.id,
+        validStocks.map((stock) => stock.id),
+        issuanceNotes,
+      )
+      const requestedAt = new Date(batch.requestedAt)
       const requestDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
-        .format(new Date(issuance.requestedAt))
-      const newHistoryEntry: EmployeeHistoryLog = {
+        .format(Number.isNaN(requestedAt.getTime()) ? new Date() : requestedAt)
+      const newHistoryEntries: EmployeeHistoryLog[] = batch.items.map((item) => ({
         date: requestDate,
         event: 'Pending Approval',
-        item: issuance.itemName,
-        code: issuance.itemCode,
-        note: `Approval request sent to ${issuance.employeeEmail}.`,
-      }
-      const updatedEmployee: EmployeeRecord = {
-        ...selectedEmployee,
-        history: [newHistoryEntry, ...selectedEmployee.history],
-      }
+        item: item.itemName,
+        code: item.itemCode,
+        note: `Batch approval request sent to ${batch.employeeEmail}.`,
+      }))
+      const selectedItemIds = new Set(validStocks.map((stock) => stock.id))
 
-      setEmployees((current) => current.map((employee) => employee.id === selectedEmployee.id ? updatedEmployee : employee))
-      setSelectedEmployee(updatedEmployee)
-      setAvailableInventoryStock((current) => current.filter((item) => item.id !== selectedStock.id))
-      setSelectedAssetCode('')
-      setIssuanceData({ itemCode: '', itemName: '', condition: '', notes: 'Acknowledged by employee' })
-      setInventorySearchQuery('')
+      setEmployees((current) => current.map((employee) => employee.id === selectedEmployee.id
+        ? { ...employee, history: [...newHistoryEntries, ...employee.history] }
+        : employee
+      ))
+      setSelectedEmployee((current) => current?.id === selectedEmployee.id
+        ? { ...current, history: [...newHistoryEntries, ...current.history] }
+        : current
+      )
+      setAvailableInventoryStock((current) => current.filter((item) => !selectedItemIds.has(item.id)))
+      resetIssuanceForm()
       setShowIssuanceModal(false)
-      alert(`Approval request sent to ${issuance.employeeEmail}. The item will be marked as issued after the employee approves it.`)
+      alert(`One approval email listing all ${batch.items.length} selected item${batch.items.length === 1 ? '' : 's'} was sent to ${batch.employeeEmail}. All items remain pending until the employee approves or rejects the batch.`)
     } catch (error) {
-      setIssuanceSubmitError(error instanceof Error ? error.message : 'Unable to send the issuance approval request.')
+      setIssuanceSubmitError(error instanceof Error ? error.message : 'Unable to send the issuance batch approval request.')
     } finally {
       setIsSubmittingIssuance(false)
     }
@@ -702,7 +651,10 @@ export default function EmployeeMasterData() {
     const query = inventorySearchQuery.trim().toLowerCase()
     return !query || `${item.itemCode} ${item.description}`.toLowerCase().includes(query)
   })
-  const selectedInventoryItem = availableInventoryStock.find((item) => item.itemCode === selectedAssetCode)
+  const selectedInventoryItems = selectedAssetCodes.flatMap((code) => {
+    const item = availableInventoryStock.find((stock) => stock.itemCode === code)
+    return item ? [item] : []
+  })
 
   // Filtered employee list
   const filteredEmployees = employees.filter((emp) => {
@@ -1306,7 +1258,8 @@ export default function EmployeeMasterData() {
                   <button
                     type="button"
                     onClick={() => {
-                      setIssuanceSubmitError('')
+                      resetIssuanceForm()
+                      setInventoryLoadError('')
                       setShowIssuanceModal(true)
                       setIsLoadingInventory(true)
                       void listInventoryItems()
@@ -1447,7 +1400,8 @@ export default function EmployeeMasterData() {
                   onClick={() => {
                     const firstIssuedItem = selectedEmployee.assignedItems[0]
                     setSelectedReturnAssetCode(firstIssuedItem?.code || '')
-                    setReturnCondition(firstIssuedItem?.condition || 'Good')
+                    setReturnCondition(returnConditionForInspection(firstIssuedItem?.condition))
+                    setReturnPriority('High')
                     setSurrenderReason('')
                     setReturnSubmitError('')
                     setShowHandleIssuanceModal(true)
@@ -1669,7 +1623,8 @@ export default function EmployeeMasterData() {
                         const nextCode = e.target.value
                         setSelectedReturnAssetCode(nextCode)
                         const nextItem = selectedEmployee.assignedItems.find((item) => item.code === nextCode)
-                        if (nextItem) setReturnCondition(nextItem.condition)
+                        if (nextItem) setReturnCondition(returnConditionForInspection(nextItem.condition))
+                        setReturnPriority('High')
                       }}
                       className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                     >
@@ -1688,7 +1643,11 @@ export default function EmployeeMasterData() {
                     <select
                       required
                       value={returnCondition}
-                      onChange={(e) => setReturnCondition(e.target.value)}
+                      onChange={(e) => {
+                        const nextCondition = e.target.value
+                        setReturnCondition(nextCondition)
+                        if (nextCondition !== 'Needs Repair') setReturnPriority('High')
+                      }}
                       className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                     >
                       {returnConditionOptions.map((condition) => (
@@ -1697,13 +1656,30 @@ export default function EmployeeMasterData() {
                     </select>
                   </label>
 
+                  {returnCondition === 'Needs Repair' && (
+                    <label className="block">
+                      <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
+                        Repair Priority
+                      </span>
+                      <select
+                        required
+                        value={returnPriority}
+                        onChange={(e) => setReturnPriority(e.target.value as 'High' | 'Medium')}
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                      >
+                        <option value="High">High Priority</option>
+                        <option value="Medium">Medium Priority</option>
+                      </select>
+                    </label>
+                  )}
+
                   <label className="block">
                     <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
                       Surrender / Return Reason or Notes
                     </span>
                     <textarea
                       required
-                      maxLength={1000}
+                      maxLength={returnCondition === 'Needs Repair' ? 976 : 1000}
                       value={surrenderReason}
                       onChange={(e) => setSurrenderReason(e.target.value)}
                       placeholder="e.g. Returned item due to clearance or department transfer."
@@ -1913,20 +1889,29 @@ export default function EmployeeMasterData() {
         </div>
       )}
 
-      {/* EASY USER-FRIENDLY POP-UP MODAL FOR ISSUANCE (WITH INVENTORY DROPDOWN AUTO-FILL) */}
+      {/* MULTI-ITEM ISSUANCE MODAL */}
       {showIssuanceModal && selectedEmployee && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-sm font-black text-slate-900">Add New Issuance</h3>
+                <h3 className="text-sm font-black text-slate-900">{issuanceSelectionMode === 'single' ? 'Issue One Item' : 'Issue Multiple Items'}</h3>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Issue an item to <span className="font-bold text-blue-700">{selectedEmployee.firstName} {selectedEmployee.lastName}</span> ({selectedEmployee.id})
+                  Issue items to <span className="font-bold text-blue-700">{selectedEmployee.firstName} {selectedEmployee.lastName}</span> ({selectedEmployee.id})
+                </p>
+                <p className="mt-1 text-[0.68rem] text-slate-400">
+                  {issuanceSelectionMode === 'single'
+                    ? 'Select one item to send an approval request.'
+                    : 'All selected items will be listed in one approval email to this employee.'}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setShowIssuanceModal(false)}
+                disabled={isSubmittingIssuance}
+                onClick={() => {
+                  resetIssuanceForm()
+                  setShowIssuanceModal(false)
+                }}
                 className="rounded-xl border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50"
               >
                 ✕
@@ -1939,10 +1924,40 @@ export default function EmployeeMasterData() {
                   {issuanceSubmitError}
                 </p>
               )}
+              <div>
+                <span className="mb-1 block text-[0.65rem] font-extrabold uppercase text-slate-600">Issuance Mode</span>
+                <div className="grid grid-cols-2 gap-2" role="group" aria-label="Issuance mode">
+                  <button
+                    type="button"
+                    aria-pressed={issuanceSelectionMode === 'single'}
+                    disabled={isSubmittingIssuance}
+                    onClick={() => {
+                      setIssuanceSelectionMode('single')
+                      setSelectedAssetCodes((current) => current.slice(0, 1))
+                      setIssuanceSubmitError('')
+                    }}
+                    className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${issuanceSelectionMode === 'single' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    One item
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={issuanceSelectionMode === 'multiple'}
+                    disabled={isSubmittingIssuance}
+                    onClick={() => {
+                      setIssuanceSelectionMode('multiple')
+                      setIssuanceSubmitError('')
+                    }}
+                    className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${issuanceSelectionMode === 'multiple' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    Select multiple items
+                  </button>
+                </div>
+              </div>
               {/* SELECT AVAILABLE INVENTORY ITEM DROPDOWN */}
               <div className="block">
                 <label htmlFor="available-inventory-search" className="mb-1 block text-[0.65rem] font-extrabold uppercase text-blue-700">
-                  Select Available Asset / Item from Inventory
+                  {issuanceSelectionMode === 'single' ? 'Select an Available Asset / Item from Inventory' : 'Select Available Assets / Items from Inventory'}
                 </label>
                 <div
                   className="relative"
@@ -1963,8 +1978,8 @@ export default function EmployeeMasterData() {
                     autoComplete="off"
                     value={isInventoryDropdownOpen
                       ? inventorySearchQuery
-                      : selectedInventoryItem
-                        ? `${selectedInventoryItem.itemCode} — ${selectedInventoryItem.description} (${selectedInventoryItem.condition})`
+                      : selectedAssetCodes.length > 0
+                        ? `${selectedAssetCodes.length} ${selectedAssetCodes.length === 1 ? 'item' : 'items'} selected`
                         : ''}
                     onFocus={() => {
                       setIsInventoryDropdownOpen(true)
@@ -1973,8 +1988,6 @@ export default function EmployeeMasterData() {
                     onChange={(e) => {
                       setInventorySearchQuery(e.target.value)
                       setIsInventoryDropdownOpen(true)
-                      setSelectedAssetCode('')
-                      setIssuanceData((current) => ({ ...current, itemCode: '', itemName: '', condition: '' }))
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Escape') {
@@ -2002,14 +2015,10 @@ export default function EmployeeMasterData() {
                             key={stock.id}
                             type="button"
                             role="option"
-                            aria-selected={selectedAssetCode === stock.itemCode}
+                            aria-selected={selectedAssetCodes.includes(stock.itemCode)}
                             onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              handleSelectInventoryItem(stock.itemCode)
-                              setInventorySearchQuery('')
-                              setIsInventoryDropdownOpen(false)
-                            }}
-                            className="flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 text-left text-xs transition last:border-b-0 hover:bg-blue-50"
+                            onClick={() => handleSelectInventoryItem(stock.itemCode)}
+                            className={`flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 text-left text-xs transition last:border-b-0 hover:bg-blue-50 ${selectedAssetCodes.includes(stock.itemCode) ? 'bg-blue-50' : ''}`}
                           >
                             <span className="min-w-0 truncate font-semibold text-slate-700">
                               {stock.itemCode} — {stock.description}
@@ -2017,6 +2026,9 @@ export default function EmployeeMasterData() {
                             <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[0.62rem] font-bold text-slate-600">
                               {stock.condition}
                             </span>
+                            {selectedAssetCodes.includes(stock.itemCode) && (
+                              <span className="shrink-0 rounded-full bg-blue-100 px-2 py-1 text-[0.62rem] font-bold text-blue-700">Selected</span>
+                            )}
                           </button>
                         ))
                       ) : availableInventoryStock.length > 0 ? (
@@ -2029,43 +2041,38 @@ export default function EmployeeMasterData() {
                 </div>
               </div>
 
-              {/* AUTO-FILLED ASSET CODE */}
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Asset Code (Auto-filled)</span>
-                <input
-                  type="text"
-                  readOnly
-                  placeholder="Select item above..."
-                  value={issuanceData.itemCode}
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-xs font-semibold text-slate-700 outline-none cursor-not-allowed"
-                />
-              </label>
-
-              {/* AUTO-FILLED ITEM NAME */}
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item Name (Auto-filled)</span>
-                <input
-                  type="text"
-                  readOnly
-                  placeholder="Select item above..."
-                  value={issuanceData.itemName}
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 text-xs font-semibold text-slate-700 outline-none cursor-not-allowed"
-                />
-              </label>
-
-              {/* CONDITION UPON ISSUANCE */}
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Condition Upon Issuance</span>
-                <select
-                  value={issuanceData.condition}
-                  disabled
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs text-slate-700 outline-none disabled:cursor-not-allowed disabled:opacity-100"
-                >
-                  <option value={issuanceData.condition}>
-                    {issuanceData.condition || 'Select an inventory item first'}
-                  </option>
-                </select>
-              </label>
+              <div className="rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3.5 py-2.5">
+                  <span className="text-[0.65rem] font-extrabold uppercase text-slate-600">Selected for issuance</span>
+                  <span className="rounded-full bg-blue-50 px-2 py-1 text-[0.62rem] font-extrabold text-blue-700">
+                    {selectedInventoryItems.length} {selectedInventoryItems.length === 1 ? 'item' : 'items'}
+                  </span>
+                </div>
+                {selectedInventoryItems.length > 0 ? (
+                  <ul className="max-h-40 divide-y divide-slate-100 overflow-y-auto">
+                    {selectedInventoryItems.map((item) => (
+                      <li key={item.id} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-bold text-slate-800">{item.description}</p>
+                          <p className="mt-0.5 truncate text-[0.65rem] font-medium text-slate-500">{item.itemCode} | Condition: {item.condition}</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isSubmittingIssuance}
+                          onClick={() => handleSelectInventoryItem(item.itemCode)}
+                          className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-[0.65rem] font-bold text-slate-500 hover:bg-slate-50"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="px-3.5 py-3 text-xs font-medium text-slate-400">
+                    {issuanceSelectionMode === 'single' ? 'Choose one item above.' : 'Choose one or more items above.'}
+                  </p>
+                )}
+              </div>
 
               {/* ISSUANCE NOTES */}
               <label className="block">
@@ -2073,8 +2080,8 @@ export default function EmployeeMasterData() {
                 <input
                   type="text"
                   placeholder="e.g. Acknowledged by employee"
-                  value={issuanceData.notes}
-                  onChange={(e) => setIssuanceData({ ...issuanceData, notes: e.target.value })}
+                  value={issuanceNotes}
+                  onChange={(e) => setIssuanceNotes(e.target.value)}
                   className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                 />
               </label>
@@ -2082,9 +2089,10 @@ export default function EmployeeMasterData() {
               <div className="mt-5 flex justify-end gap-2 pt-2">
                 <button
                   type="button"
+                  disabled={isSubmittingIssuance}
                   onClick={() => {
+                    resetIssuanceForm()
                     setShowIssuanceModal(false)
-                    setIssuanceSubmitError('')
                   }}
                   className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
                 >
@@ -2092,10 +2100,16 @@ export default function EmployeeMasterData() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmittingIssuance}
+                  disabled={isSubmittingIssuance || selectedInventoryItems.length === 0}
                   className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-blue-700 shadow-md shadow-blue-600/20 disabled:cursor-wait disabled:opacity-70"
                 >
-                  {isSubmittingIssuance ? 'Sending Request…' : 'Send Approval Request'}
+                  {isSubmittingIssuance
+                    ? issuanceSelectionMode === 'single'
+                      ? 'Sending approval request...'
+                      : `Sending batch (${selectedInventoryItems.length} item${selectedInventoryItems.length === 1 ? '' : 's'})...`
+                    : issuanceSelectionMode === 'single'
+                      ? 'Send for approval'
+                      : `Send batch for approval (${selectedInventoryItems.length})`}
                 </button>
               </div>
             </form>

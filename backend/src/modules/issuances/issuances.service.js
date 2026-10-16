@@ -42,6 +42,29 @@ function validateCreateIssuance(input) {
   return { employeeCode, itemId, notes };
 }
 
+function validateCreateIssuanceBatch(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw httpError(400, 'Hindi valid ang issuance request.');
+  }
+  const employeeCode = requiredText(input.employeeCode, 'employee code', 40);
+  if (!Array.isArray(input.itemIds) || input.itemIds.length < 1 || input.itemIds.length > 100) {
+    throw httpError(400, 'Pumili ng 1 hanggang 100 inventory item.');
+  }
+  const itemIds = input.itemIds.map((value) => {
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      throw httpError(400, 'May hindi valid na inventory item sa request.');
+    }
+    const itemId = String(value);
+    if (!/^\d{1,20}$/.test(itemId)) throw httpError(400, 'May hindi valid na inventory item sa request.');
+    return itemId;
+  });
+  if (new Set(itemIds).size !== itemIds.length) {
+    throw httpError(400, 'May nadobleng inventory item sa request.');
+  }
+  const notes = requiredText(input.notes, 'issuance notes', 1000, { optional: true });
+  return { employeeCode, itemIds, notes };
+}
+
 function validateToken(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{40,128}$/.test(value)) {
     throw httpError(400, 'Hindi valid o wala na ang approval link.');
@@ -113,7 +136,7 @@ async function createIssuance(input, user) {
       html: `
         <div style="margin:0;background:#f1f5f9;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">
           <div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;padding:32px">
-            <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET · GSO</div>
+            <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET - GSO</div>
             <h1 style="margin:16px 0 8px;font-size:22px">Equipment issuance approval</h1>
             <p style="margin:0 0 24px;color:#475569">Hello ${employeeName}, please review this request sent to your employee email.</p>
             <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">
@@ -159,6 +182,104 @@ async function createIssuance(input, user) {
   };
 }
 
+async function createIssuanceBatch(input, user) {
+  if (!mailTransport) {
+    throw httpError(503, 'Hindi available ang issuance email. I-configure muna ang SMTP sa backend/.env.', true);
+  }
+
+  const { employeeCode, itemIds, notes } = validateCreateIssuanceBatch(input);
+  const token = crypto.randomBytes(32).toString('base64url');
+  const batch = await issuancesRepository.createPendingIssuanceBatch({
+    employeeCode,
+    itemIds,
+    notes,
+    tokenHash: hashToken(token),
+    requestedByUserId: user.id,
+  });
+  const approveLink = approvalUrl(token, 'approve');
+  const rejectLink = approvalUrl(token, 'reject');
+  const employeeName = escapeHtml(batch.employee_name);
+  const note = escapeHtml(notes || 'No additional notes.');
+  const textItems = batch.items.map((item, index) =>
+    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Condition: ${item.condition}`
+  );
+  const htmlItems = batch.items.map((item) => `
+    <li style="margin:0 0 12px">
+      <strong>${escapeHtml(item.itemName)}</strong>
+      <div style="margin-top:4px;color:#64748b">Asset code: ${escapeHtml(item.itemCode)}</div>
+      <div style="margin-top:4px;color:#334155">Condition: <strong>${escapeHtml(item.condition)}</strong></div>
+    </li>`).join('');
+
+  try {
+    await mailTransport.sendMail({
+      from: env.smtp.from,
+      to: batch.employee_email,
+      subject: `Please review your equipment issuance request (${batch.items.length} item${batch.items.length === 1 ? '' : 's'})`,
+      text: [
+        `Hello ${batch.employee_name},`,
+        '',
+        `GSO is requesting your approval to issue these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'} to you:`,
+        ...textItems,
+        `Notes: ${notes || 'No additional notes.'}`,
+        '',
+        `Approve all: ${approveLink}`,
+        `Reject all: ${rejectLink}`,
+        '',
+        'This one-time decision link applies to every item in this request and expires in 24 hours.',
+      ].join('\n'),
+      html: `
+        <div style="margin:0;background:#f1f5f9;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">
+          <div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;padding:32px">
+            <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET - GSO</div>
+            <h1 style="margin:16px 0 8px;font-size:22px">Equipment issuance approval</h1>
+            <p style="margin:0 0 24px;color:#475569">Hello ${employeeName}, please review all items in this request.</p>
+            <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">
+              <div style="margin-bottom:14px;font-size:16px;font-weight:700">Items requested (${batch.items.length})</div>
+              <ul style="margin:0;padding-left:20px">${htmlItems}</ul>
+              <div style="margin-top:16px;color:#334155">GSO notes: ${note}</div>
+            </div>
+            <p style="margin:24px 0 14px;color:#475569">Your decision will apply to every item listed above.</p>
+            <a href="${approveLink}" style="display:inline-block;margin:0 8px 8px 0;border-radius:9px;background:#2563eb;padding:12px 20px;color:#ffffff;font-weight:700;text-decoration:none">Review approval</a>
+            <a href="${rejectLink}" style="display:inline-block;margin:0 8px 8px 0;border-radius:9px;border:1px solid #cbd5e1;padding:11px 20px;color:#334155;font-weight:700;text-decoration:none">Review rejection</a>
+            <p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#64748b">This private, one-time decision link applies to every item in this request and expires in 24 hours.</p>
+          </div>
+        </div>`,
+    });
+  } catch (error) {
+    try {
+      await issuancesRepository.markBatchEmailFailed(batch.id);
+    } catch {
+      console.error('Issuance batch email failed and the pending items could not be released.');
+    }
+    console.error('Employee issuance batch email could not be delivered.', {
+      code: error.code,
+      responseCode: error.responseCode,
+      command: error.command,
+    });
+    throw httpError(503, 'Hindi naipadala ang batch approval email. Naibalik sa Available ang mga item; pakisuri ang Gmail SMTP App Password sa backend/.env at subukan muli.', true);
+  }
+
+  try {
+    await issuancesRepository.markBatchEmailSent(batch.id);
+  } catch (error) {
+    console.error('Issuance batch email was delivered, but its sent timestamp could not be saved.', {
+      message: error.message,
+    });
+  }
+
+  return {
+    id: batch.id,
+    status: batch.status,
+    employeeCode: batch.employee_code,
+    employeeName: batch.employee_name,
+    employeeEmail: batch.employee_email,
+    items: batch.items,
+    notes,
+    requestedAt: batch.requestedAt,
+    expiresAt: batch.expiresAt,
+  };
+}
+
 async function listEmployeeIssuances(employeeCodeValue) {
   const employeeCode = requiredText(employeeCodeValue, 'employee code', 40);
   return issuancesRepository.listEmployeeIssuances(employeeCode);
@@ -201,4 +322,4 @@ async function expirePendingIssuances() {
   return issuancesRepository.expirePendingIssuances();
 }
 
-module.exports = { createIssuance, listEmployeeIssuances, lookupApproval, decideApproval, expirePendingIssuances };
+module.exports = { createIssuance, createIssuanceBatch, listEmployeeIssuances, lookupApproval, decideApproval, expirePendingIssuances };

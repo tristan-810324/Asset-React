@@ -7,6 +7,7 @@ const returnsController = require('./returns.controller');
 const router = express.Router();
 
 router.post('/', authenticate, requireRole('GSO_STAFF'), issuancesController.createIssuance);
+router.post('/batch', authenticate, requireRole('GSO_STAFF'), issuancesController.createIssuanceBatch);
 router.get('/employee/:employeeCode', authenticate, requireRole('GSO_STAFF'), issuancesController.listEmployeeIssuances);
 router.post('/returns', authenticate, requireRole('GSO_STAFF'), returnsController.createEmployeeReturn);
 router.get('/returns/approval', returnsController.lookupReturnApproval);

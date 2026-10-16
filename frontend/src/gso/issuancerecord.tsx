@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import { listEmployees } from './employeesApi'
+import { listDepartments, listEmployees } from './employeesApi'
 import { listEmployeeIssuances } from './issuancesApi'
 import { listInventoryItems } from './inventoryApi'
 
@@ -64,10 +64,22 @@ function formatMainIssuanceDateTime(value: string) {
   }
 }
 
+function mainIssuanceDateKey(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default function IssuanceRecord() {
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('all')
+  const [selectedReportDate, setSelectedReportDate] = useState('')
+  const [departmentOptions, setDepartmentOptions] = useState<string[]>(initialDepartments)
   const [selectedAckFilter, setSelectedAckFilter] = useState('all')
   const [mainIssuances, setMainIssuances] = useState<MainIssuanceRecord[]>([])
   const [isLoadingMainIssuances, setIsLoadingMainIssuances] = useState(true)
@@ -78,6 +90,17 @@ export default function IssuanceRecord() {
 
   useEffect(() => {
     let isMounted = true
+
+    const loadDepartments = async () => {
+      try {
+        const { departments } = await listDepartments()
+        if (isMounted && departments.length > 0) {
+          setDepartmentOptions(departments.map((department) => department.name))
+        }
+      } catch {
+        if (isMounted) setDepartmentOptions(initialDepartments)
+      }
+    }
 
     const loadMainIssuances = async () => {
       setIsLoadingMainIssuances(true)
@@ -185,6 +208,7 @@ export default function IssuanceRecord() {
       }
     }
 
+    void loadDepartments()
     void loadMainIssuances()
     return () => { isMounted = false }
   }, [])
@@ -489,6 +513,12 @@ export default function IssuanceRecord() {
     document.body.removeChild(fileDownload)
   }
 
+  const exportHandlers = {
+    csv: handleGenerateCSV,
+    excel: handleGenerateExcel,
+    word: handleGenerateWord,
+  }
+
   // Main Issuance Filter
   const filteredMainIssuances = mainIssuances.filter((record) => {
     const matchesSearch =
@@ -498,8 +528,9 @@ export default function IssuanceRecord() {
 
     const matchesDept = selectedDeptFilter === 'all' || record.department === selectedDeptFilter
     const matchesAck = selectedAckFilter === 'all' || record.acknowledgment === selectedAckFilter
+    const matchesDate = !selectedReportDate || mainIssuanceDateKey(record.date) === selectedReportDate
 
-    return matchesSearch && matchesDept && matchesAck
+    return matchesSearch && matchesDept && matchesAck && matchesDate
   })
 
   return (
@@ -556,7 +587,7 @@ export default function IssuanceRecord() {
               className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
             >
               <option value="all">All Departments</option>
-              {initialDepartments.map((dept) => (
+              {departmentOptions.map((dept) => (
                 <option key={dept} value={dept}>
                   {dept}
                 </option>
@@ -591,27 +622,47 @@ export default function IssuanceRecord() {
                 Click any row to inspect complete details. Export report using CSV or Word buttons.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="block w-40">
+                <span className="mb-1 block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-500">Filter by date</span>
+                <input
+                  type="date"
+                  value={selectedReportDate}
+                  onChange={(event) => setSelectedReportDate(event.target.value)}
+                  className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                />
+              </label>
+              {selectedReportDate && (
+                <button
+                  type="button"
+                  aria-label="Clear date filter"
+                  onClick={() => setSelectedReportDate('')}
+                  className="mb-0.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[0.65rem] font-bold text-slate-600 transition hover:bg-slate-100"
+                >
+                  Clear date
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => handleGenerateCSV('Main_Issuances', filteredMainIssuances)}
-                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                onClick={() => exportHandlers.excel('Main_Issuances', filteredMainIssuances)}
+                className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#138548] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#0f7440] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2"
               >
-                📄 Generate CSV
+                <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6M8 13h2M8 17h2M14 13h2M14 17h2" />
+                </svg>
+                Generate CSV
               </button>
               <button
                 type="button"
-                onClick={() => handleGenerateExcel('Main_Issuances', filteredMainIssuances)}
-                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-extrabold text-emerald-800 hover:bg-emerald-100"
+                onClick={() => exportHandlers.word('Main_Issuances', filteredMainIssuances)}
+                className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#2d5aa3] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#264e8e] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2"
               >
-                📊 Styled Excel
-              </button>
-              <button
-                type="button"
-                onClick={() => handleGenerateWord('Main_Issuances', filteredMainIssuances)}
-                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-extrabold text-white hover:bg-blue-700"
-              >
-                📝 Generate Word
+                <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6M8 13h8M8 17h8" />
+                </svg>
+                Generate Word
               </button>
               <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700">
                 {isLoadingMainIssuances ? 'Loading…' : `${filteredMainIssuances.length} record(s)`}
@@ -619,9 +670,9 @@ export default function IssuanceRecord() {
             </div>
           </div>
 
-          <div className="overflow-x-auto border-t border-slate-100">
+          <div className="max-h-[60vh] overflow-auto border-t border-slate-100">
             <table className="min-w-235 w-full text-left">
-              <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
+              <thead className="sticky top-0 z-10 bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
                 <tr>
                   <th className="px-5 py-3.5 sm:px-6">Asset / Item</th>
                   <th className="px-5 py-3.5">Recipient</th>
@@ -671,7 +722,7 @@ export default function IssuanceRecord() {
                           ? '✓ Confirmed'
                           : record.acknowledgment === 'Rejected'
                             ? '✕ Rejected'
-                            : '⏳ Pending Acknowledgment'}
+                            : <><svg aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>Pending Acknowledgment</>}
                       </span>
                     </td>
                   </tr>

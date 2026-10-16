@@ -13,7 +13,10 @@ const itemColumns = `
   i.quantity,
   i.unit_of_measure AS "unitOfMeasure",
   i.condition,
-  i.inventory_status AS status,
+  CASE
+    WHEN current_issuance.status = 'Pending' THEN 'Pending Approval'
+    ELSE i.inventory_status
+  END AS status,
   i.created_at AS "createdAt",
   creator.name AS "createdBy",
   assignee.first_name || ' ' || assignee.last_name AS "assignedTo",
@@ -112,11 +115,11 @@ async function listItems() {
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
        LEFT JOIN LATERAL (
-         SELECT issue.employee_id, issue.decided_at
+         SELECT issue.employee_id, issue.decided_at, issue.status
            FROM employee_issuances AS issue
           WHERE issue.item_id = i.id
-            AND issue.status = 'Issued'
-          ORDER BY issue.decided_at DESC, issue.id DESC
+            AND issue.status IN ('Pending', 'Issued')
+          ORDER BY issue.requested_at DESC, issue.id DESC
           LIMIT 1
        ) AS current_issuance ON TRUE
        LEFT JOIN employees AS assignee ON assignee.id = current_issuance.employee_id
@@ -131,11 +134,11 @@ async function getItemById(queryable, id) {
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
        LEFT JOIN LATERAL (
-         SELECT issue.employee_id, issue.decided_at
+         SELECT issue.employee_id, issue.decided_at, issue.status
            FROM employee_issuances AS issue
           WHERE issue.item_id = i.id
-            AND issue.status = 'Issued'
-          ORDER BY issue.decided_at DESC, issue.id DESC
+            AND issue.status IN ('Pending', 'Issued')
+          ORDER BY issue.requested_at DESC, issue.id DESC
           LIMIT 1
        ) AS current_issuance ON TRUE
        LEFT JOIN employees AS assignee ON assignee.id = current_issuance.employee_id

@@ -67,6 +67,9 @@ export default function IssuanceApproval() {
   }
 
   const isFinal = resultStatus !== '' || requestExpired
+  const batchItems = requestType === 'issuance' && issuance?.items && issuance.items.length > 0
+    ? issuance.items
+    : null
 
   return (
     <main className="grid min-h-screen place-items-center bg-slate-100 px-4 py-10 font-['Plus_Jakarta_Sans'] text-slate-900">
@@ -89,14 +92,27 @@ export default function IssuanceApproval() {
                 <p className="mt-1 text-sm font-bold text-slate-800">{issuance.employeeName} <span className="font-medium text-slate-500">({issuance.employeeCode})</span></p>
               </div>
               <div>
-                <span className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-400">Inventory item</span>
-                <p className="mt-1 text-sm font-bold text-slate-800">{issuance.itemName}</p>
+                <span className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-400">{batchItems ? `Inventory items (${batchItems.length})` : 'Inventory item'}</span>
+                {batchItems ? (
+                  <ul className="mt-2 space-y-2">
+                    {batchItems.map((item) => (
+                      <li key={item.itemCode} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                        <p className="text-sm font-bold text-slate-800">{item.itemName}</p>
+                        <p className="mt-0.5 text-xs font-semibold text-slate-500">{item.itemCode} · Condition: {item.condition}</p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <>
+                    <p className="mt-1 text-sm font-bold text-slate-800">{issuance.itemName}</p>
+                    <p className="mt-0.5 text-xs font-semibold text-slate-500">{issuance.itemCode} · {requestType === 'return' ? 'Condition after return' : 'Condition'}: {issuance.condition}</p>
+                  </>
+                )}
                 {requestType === 'return' && (
                   <>
                     {'reason' in issuance && <p className="mt-2 text-xs leading-5 text-slate-600">GSO notes: {issuance.reason}</p>}
                   </>
                 )}
-                <p className="mt-0.5 text-xs font-semibold text-slate-500">{issuance.itemCode} · {requestType === 'return' ? 'Condition after return' : 'Condition'}: {issuance.condition}</p>
               </div>
               <div>
                 <span className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-400">Request status</span>
@@ -113,7 +129,9 @@ export default function IssuanceApproval() {
                 {requestExpired
                   ? requestType === 'return'
                     ? 'This return request has expired. The item remains assigned to you.'
-                    : 'This request has expired. The inventory item is available for GSO to issue again.'
+                    : batchItems && batchItems.length > 1
+                      ? 'This request has expired. All listed items are available for GSO to issue again.'
+                      : 'This request has expired. The inventory item is available for GSO to issue again.'
                   : requestType === 'return'
                     ? resultStatus === 'Returned'
                       ? `You confirmed the return. The item is back in GSO inventory with condition: ${issuance.condition}.`
@@ -121,9 +139,13 @@ export default function IssuanceApproval() {
                         ? 'You rejected the return request. The item remains assigned to you.'
                         : `This return request has already been resolved (${resultStatus}).`
                     : resultStatus === 'Issued'
-                      ? 'You approved the request. The item is now assigned to you.'
+                      ? batchItems && batchItems.length > 1
+                        ? 'You approved the request. All listed items are now assigned to you.'
+                        : 'You approved the request. The item is now assigned to you.'
                       : resultStatus === 'Rejected'
-                        ? 'You rejected the request. The item has been released back to GSO inventory.'
+                        ? batchItems && batchItems.length > 1
+                          ? 'You rejected the request. All listed items have been released back to GSO inventory.'
+                          : 'You rejected the request. The item has been released back to GSO inventory.'
                         : `This request has already been resolved (${resultStatus}).`}
               </div>
             ) : issuance.status === 'Pending' ? (
@@ -134,8 +156,12 @@ export default function IssuanceApproval() {
                       ? 'Confirming will complete the return and update the inventory condition selected by GSO.'
                       : 'Rejecting will keep the item assigned to you and leave its inventory record unchanged.'
                     : decision === 'approve'
-                      ? 'Approving will assign this item to you and update the inventory record.'
-                      : 'Rejecting will cancel this request and release the item back to GSO inventory.'}
+                      ? batchItems && batchItems.length > 1
+                        ? 'Approving will assign all listed items to you and update each inventory record.'
+                        : 'Approving will assign this item to you and update the inventory record.'
+                      : batchItems && batchItems.length > 1
+                        ? 'Rejecting will cancel this request and release all listed items back to GSO inventory.'
+                        : 'Rejecting will cancel this request and release the item back to GSO inventory.'}
                 </p>
                 <div className="mt-6 flex flex-col-reverse justify-end gap-2 sm:flex-row">
                   <button
