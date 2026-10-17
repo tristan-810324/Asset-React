@@ -11,15 +11,22 @@ const itemColumns = `
   i.acquisition_cost AS "acquisitionCost",
   i.current_value AS "currentValue",
   i.quantity,
+  GREATEST(i.quantity - COALESCE(stock_usage.active_quantity, 0), 0)::INTEGER AS "availableQuantity",
   i.unit_of_measure AS "unitOfMeasure",
   i.condition,
   CASE
-    WHEN current_issuance.status = 'Pending' THEN 'Pending Approval'
+    WHEN i.inventory_status = 'Borrowed' AND COALESCE(stock_usage.active_quantity, 0) = 0 THEN 'Borrowed'
+    WHEN i.quantity > COALESCE(stock_usage.active_quantity, 0) THEN 'Available'
+    WHEN COALESCE(stock_usage.pending_quantity, 0) > 0 THEN 'Pending Approval'
+    WHEN COALESCE(stock_usage.issued_quantity, 0) > 0 THEN 'Issued'
     ELSE i.inventory_status
   END AS status,
   i.created_at AS "createdAt",
   creator.name AS "createdBy",
-  assignee.first_name || ' ' || assignee.last_name AS "assignedTo",
+  CASE
+    WHEN COALESCE(stock_usage.active_employee_count, 0) > 1 THEN 'Multiple employees'
+    ELSE assignee.first_name || ' ' || assignee.last_name
+  END AS "assignedTo",
   to_char(current_issuance.decided_at, 'Mon DD, YYYY') AS "dateIssued",
   to_char(current_issuance.decided_at, 'HH12:MI AM') AS "timeIssued",
   COALESCE((
@@ -115,6 +122,16 @@ async function listItems() {
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
        LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)::INTEGER AS pending_quantity,
+                COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)::INTEGER AS issued_quantity,
+                (COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
+                  + COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0))::INTEGER AS active_quantity,
+                COUNT(DISTINCT issue.employee_id) FILTER (WHERE issue.status IN ('Pending', 'Issued'))::INTEGER AS active_employee_count
+           FROM employee_issuances AS issue
+          WHERE issue.item_id = i.id
+            AND issue.status IN ('Pending', 'Issued')
+       ) AS stock_usage ON TRUE
+       LEFT JOIN LATERAL (
          SELECT issue.employee_id, issue.decided_at, issue.status
            FROM employee_issuances AS issue
           WHERE issue.item_id = i.id
@@ -133,6 +150,16 @@ async function getItemById(queryable, id) {
     `SELECT ${itemColumns}
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)::INTEGER AS pending_quantity,
+                COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)::INTEGER AS issued_quantity,
+                (COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
+                  + COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0))::INTEGER AS active_quantity,
+                COUNT(DISTINCT issue.employee_id) FILTER (WHERE issue.status IN ('Pending', 'Issued'))::INTEGER AS active_employee_count
+           FROM employee_issuances AS issue
+          WHERE issue.item_id = i.id
+            AND issue.status IN ('Pending', 'Issued')
+       ) AS stock_usage ON TRUE
        LEFT JOIN LATERAL (
          SELECT issue.employee_id, issue.decided_at, issue.status
            FROM employee_issuances AS issue
@@ -259,6 +286,34 @@ async function updateItem(id, item, { changedByUserId }) {
       throw Object.assign(new Error('Hindi na makita ang item na ie-edit.'), { status: 404 });
     }
 
+    const activeIssuanceQuantityResult = await client.query(
+      `SELECT COALESCE(SUM(quantity) FILTER (WHERE status = 'Pending'), 0)
+              + COALESCE(SUM(quantity - returned_quantity) FILTER (WHERE status = 'Issued'), 0) AS quantity
+         FROM employee_issuances
+        WHERE item_id = $1
+          AND status IN ('Pending', 'Issued')`,
+      [id],
+    );
+    const activeIssuanceQuantity = Number(activeIssuanceQuantityResult.rows[0]?.quantity || 0);
+    if (item.quantity < activeIssuanceQuantity) {
+      throw Object.assign(new Error(`Quantity cannot be lower than ${activeIssuanceQuantity} units currently pending or issued.`), { status: 409 });
+    }
+
+    const costOrQuantityChanged = Number(previous.unit_cost) !== item.unitCost
+      || Number(previous.quantity) !== item.quantity;
+    const calculatedAcquisitionCost = Math.round((item.unitCost * item.quantity + Number.EPSILON) * 100) / 100;
+    if (!Number.isFinite(calculatedAcquisitionCost) || calculatedAcquisitionCost > 9999999999.99) {
+      throw Object.assign(new Error('Acquisition cost ay lampas sa pinapayagang halaga.'), { status: 400 });
+    }
+    const acquisitionCost = costOrQuantityChanged
+      ? calculatedAcquisitionCost
+      : Number(previous.acquisition_cost);
+    const previousCurrentValue = previous.current_value === null ? null : Number(previous.current_value);
+    const currentValueChanged = previousCurrentValue !== item.currentValue;
+    if ((costOrQuantityChanged || currentValueChanged) && item.currentValue !== null && item.currentValue > acquisitionCost) {
+      throw Object.assign(new Error('Current assessed value cannot exceed the calculated acquisition cost.'), { status: 400 });
+    }
+
     const updateResult = await client.query(
       `UPDATE item_catalog AS inventory_item
           SET item_code = $2,
@@ -285,7 +340,7 @@ async function updateItem(id, item, { changedByUserId }) {
         item.dateAcquired,
         item.timeAcquired,
         item.unitCost,
-        item.acquisitionCost,
+        acquisitionCost,
         item.currentValue,
         item.quantity,
         item.unitOfMeasure,

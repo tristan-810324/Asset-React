@@ -38,6 +38,7 @@ type InventoryItem = {
   condition: string
   conditionTone: string
   quantity: string
+  availableQuantity: string
   unit: string
   assignedTo: string
   status: string
@@ -54,6 +55,15 @@ type InventoryItem = {
 }
 
 const conditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']
+const addItemConditionOptions = ['New', 'Good', 'Fair']
+const unitOfMeasureOptions = ['piece', 'unit', 'box', 'pack', 'ream', 'set', 'pair', 'roll', 'bottle', 'carton', 'bundle']
+
+function calculateAcquisitionCost(quantity: string | number, unitCost: string | number) {
+  const normalizedQuantity = quantity === '' ? 1 : Number(quantity)
+  const normalizedUnitCost = unitCost === '' ? 0 : Number(unitCost)
+  const total = normalizedQuantity * normalizedUnitCost
+  return Number.isFinite(total) ? Math.round((total + Number.EPSILON) * 100) / 100 : 0
+}
 
 function toneForCondition(condition: string) {
   const tones: Record<string, string> = {
@@ -243,6 +253,7 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
     condition: record.condition,
     conditionTone,
     quantity: String(record.quantity),
+    availableQuantity: String(record.availableQuantity ?? record.quantity),
     unit: record.unitOfMeasure,
     assignedTo: record.assignedTo || (record.status === 'Available' ? 'In Storage' : '—'),
     status: record.status,
@@ -312,10 +323,10 @@ export default function ItemsMasterData() {
     dateAcquired: '',
     timeAcquired: '',
     unitCost: '',
-    acquisitionCost: '',
+    acquisitionCost: '0.00',
     currentValue: '',
-    quantity: '',
-    unitOfMeasure: '',
+    quantity: '1',
+    unitOfMeasure: 'piece',
     condition: '',
     picture: null as File | null,
   })
@@ -352,7 +363,19 @@ export default function ItemsMasterData() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
+    setFormData((previous) => {
+      const next = { ...previous, [name]: value }
+      if (name === 'unitCost' || name === 'quantity') {
+        next.acquisitionCost = calculateAcquisitionCost(
+          name === 'quantity' ? value : previous.quantity,
+          name === 'unitCost' ? value : previous.unitCost,
+        ).toFixed(2)
+      }
+      if (name === 'quantity' && Number(value) === 1 && !previous.unitOfMeasure.trim()) {
+        next.unitOfMeasure = 'piece'
+      }
+      return next
+    })
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -369,10 +392,10 @@ export default function ItemsMasterData() {
       dateAcquired: '',
       timeAcquired: '',
       unitCost: '',
-      acquisitionCost: '',
+      acquisitionCost: '0.00',
       currentValue: '',
-      quantity: '',
-      unitOfMeasure: '',
+      quantity: '1',
+      unitOfMeasure: 'piece',
       condition: '',
       picture: null,
     })
@@ -472,7 +495,25 @@ export default function ItemsMasterData() {
 
   const handleEditInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
-    setEditFormData((current) => ({ ...current, [name]: value }))
+    setEditFormData((current) => {
+      const next = { ...current, [name]: value }
+      if (name === 'unitCost' || name === 'quantity') {
+        const nextUnitCost = name === 'unitCost' ? value : current.unitCost
+        const nextQuantity = name === 'quantity' ? value : current.quantity
+        const normalizedNextUnitCost = nextUnitCost === '' ? 0 : Number(nextUnitCost)
+        const normalizedNextQuantity = nextQuantity === '' ? 1 : Number(nextQuantity)
+        const matchesOriginalValuation = selectedItem
+          && normalizedNextUnitCost === Number(selectedItem.unitCostValue ?? 0)
+          && normalizedNextQuantity === Number(selectedItem.quantityValue ?? 1)
+        next.acquisitionCost = matchesOriginalValuation
+          ? String(selectedItem.acquisitionCostValue ?? calculateAcquisitionCost(nextQuantity, nextUnitCost))
+          : calculateAcquisitionCost(nextQuantity, nextUnitCost).toFixed(2)
+      }
+      if (name === 'quantity' && Number(value) === 1 && !current.unitOfMeasure.trim()) {
+        next.unitOfMeasure = 'piece'
+      }
+      return next
+    })
   }
 
   const handleUpdateSelectedItem = async (e: React.FormEvent) => {
@@ -480,6 +521,23 @@ export default function ItemsMasterData() {
     if (!selectedItem?.id) return
     if (!editFormData.itemCode.trim() || !editFormData.description.trim() || !editFormData.reason.trim()) {
       setItemEditError('Enter the item code, item description, and reason for the change.')
+      return
+    }
+
+    const unitCost = editFormData.unitCost ? Number(editFormData.unitCost) : 0
+    const quantity = editFormData.quantity ? Number(editFormData.quantity) : 1
+    const acquisitionCost = editFormData.acquisitionCost
+      ? Number(editFormData.acquisitionCost)
+      : calculateAcquisitionCost(quantity, unitCost)
+    const currentValue = editFormData.currentValue ? Number(editFormData.currentValue) : null
+    const previousUnitCost = Number(selectedItem.unitCostValue ?? 0)
+    const previousQuantity = Number(selectedItem.quantityValue ?? 1)
+    const previousCurrentValue = selectedItem.currentValueValue === null || selectedItem.currentValueValue === undefined
+      ? null
+      : Number(selectedItem.currentValueValue)
+    const valuationChanged = unitCost !== previousUnitCost || quantity !== previousQuantity || currentValue !== previousCurrentValue
+    if (valuationChanged && currentValue !== null && currentValue > acquisitionCost) {
+      setItemEditError('Current assessed value cannot exceed the calculated acquisition cost.')
       return
     }
 
@@ -492,10 +550,10 @@ export default function ItemsMasterData() {
         description: editFormData.description.trim(),
         dateAcquired: editFormData.dateAcquired,
         timeAcquired: editFormData.timeAcquired,
-        unitCost: editFormData.unitCost ? Number(editFormData.unitCost) : 0,
-        acquisitionCost: editFormData.acquisitionCost ? Number(editFormData.acquisitionCost) : 0,
-        currentValue: editFormData.currentValue ? Number(editFormData.currentValue) : null,
-        quantity: editFormData.quantity ? Number(editFormData.quantity) : 1,
+        unitCost,
+        acquisitionCost,
+        currentValue,
+        quantity,
         unitOfMeasure: editFormData.unitOfMeasure.trim() || 'piece',
         condition: editFormData.condition,
         reason: editFormData.reason.trim(),
@@ -517,6 +575,15 @@ export default function ItemsMasterData() {
       return
     }
 
+    const unitCost = formData.unitCost ? Number(formData.unitCost) : 0
+    const quantity = formData.quantity ? Number(formData.quantity) : 1
+    const acquisitionCost = calculateAcquisitionCost(quantity, unitCost)
+    const currentValue = formData.currentValue ? Number(formData.currentValue) : null
+    if (currentValue !== null && currentValue > acquisitionCost) {
+      alert('Current assessed value cannot exceed the calculated acquisition cost.')
+      return
+    }
+
     setIsSavingItem(true)
     try {
       const savedRecord = await createInventoryItem({
@@ -525,10 +592,10 @@ export default function ItemsMasterData() {
         description: formData.description.trim(),
         dateAcquired: formData.dateAcquired,
         timeAcquired: formData.timeAcquired,
-        unitCost: formData.unitCost ? Number(formData.unitCost) : 0,
-        acquisitionCost: formData.acquisitionCost ? Number(formData.acquisitionCost) : 0,
-        currentValue: formData.currentValue ? Number(formData.currentValue) : null,
-        quantity: formData.quantity ? Number(formData.quantity) : 1,
+        unitCost,
+        acquisitionCost,
+        currentValue,
+        quantity,
         unitOfMeasure: formData.unitOfMeasure.trim() || 'piece',
         condition: formData.condition || 'New',
       })
@@ -705,36 +772,6 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition cost</span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                name="acquisitionCost"
-                value={formData.acquisitionCost}
-                onChange={handleInputChange}
-                placeholder="Historical total cost"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                Current assessed value (optional)
-              </span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                name="currentValue"
-                value={formData.currentValue}
-                onChange={handleInputChange}
-                placeholder="Current value"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
               <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Quantity</span>
               <input
                 type="number"
@@ -749,15 +786,49 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Unit of measure</span>
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition cost</span>
               <input
-                type="text"
+                type="number"
+                min="0"
+                step="0.01"
+                name="acquisitionCost"
+                value={formData.acquisitionCost}
+                onChange={handleInputChange}
+                readOnly
+                aria-readonly="true"
+                placeholder="Calculated from quantity and unit cost"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
+                Current assessed value (optional)
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                max={formData.acquisitionCost === '' ? undefined : Number(formData.acquisitionCost)}
+                name="currentValue"
+                value={formData.currentValue}
+                onChange={handleInputChange}
+                placeholder="Current value"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              />
+              <span className="mt-1 block text-[0.6rem] text-slate-400">Maximum: {formatMoney(formData.acquisitionCost)}</span>
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Unit of measure</span>
+              <select
                 name="unitOfMeasure"
                 value={formData.unitOfMeasure}
                 onChange={handleInputChange}
-                placeholder="Piece, box, ream, set..."
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
+              >
+                {unitOfMeasureOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+              </select>
             </label>
 
             <label className="block">
@@ -771,7 +842,7 @@ export default function ItemsMasterData() {
                 <option value="" disabled>
                   Select condition
                 </option>
-                {conditions.map((condition) => (
+                {addItemConditionOptions.map((condition) => (
                   <option key={condition} value={condition}>
                     {condition}
                   </option>
@@ -779,7 +850,7 @@ export default function ItemsMasterData() {
               </select>
             </label>
 
-            <label className="block sm:col-span-2 xl:col-span-2">
+            <label className="block">
               <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Picture (optional)</span>
               <input
                 type="file"
@@ -1142,7 +1213,7 @@ export default function ItemsMasterData() {
                   </td>
                   <td className="px-5 py-4">
                     <span className="block whitespace-nowrap text-xs font-extrabold text-slate-700">
-                      {item.quantity} <span className="font-medium text-slate-500">{item.unit}</span>
+                      {item.availableQuantity} available / {item.quantity} total <span className="font-medium text-slate-500">{item.unit}</span>
                     </span>
                     <span className={`mt-1.5 inline-flex rounded-full px-2 py-1 text-[0.6rem] font-extrabold ${item.conditionTone}`}>
                       {item.condition}
@@ -1413,11 +1484,12 @@ export default function ItemsMasterData() {
               </label>
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition Cost</span>
-                <input type="number" min="0" step="0.01" name="acquisitionCost" value={editFormData.acquisitionCost} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+                <input type="number" min="0" step="0.01" name="acquisitionCost" value={editFormData.acquisitionCost} onChange={handleEditInputChange} readOnly aria-readonly="true" className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none" />
               </label>
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Current Assessed Value</span>
-                <input type="number" min="0" step="0.01" name="currentValue" value={editFormData.currentValue} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+                <input type="number" min="0" max={editFormData.acquisitionCost === '' ? undefined : Number(editFormData.acquisitionCost)} step="0.01" name="currentValue" value={editFormData.currentValue} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+                <span className="mt-1 block text-[0.6rem] text-slate-400">Maximum: {formatMoney(editFormData.acquisitionCost)}</span>
               </label>
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Quantity</span>
@@ -1425,7 +1497,10 @@ export default function ItemsMasterData() {
               </label>
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Unit of Measure</span>
-                <input name="unitOfMeasure" maxLength={60} value={editFormData.unitOfMeasure} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+                <select name="unitOfMeasure" value={editFormData.unitOfMeasure} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
+                  {!unitOfMeasureOptions.includes(editFormData.unitOfMeasure) && <option value={editFormData.unitOfMeasure}>{editFormData.unitOfMeasure} (existing)</option>}
+                  {unitOfMeasureOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                </select>
               </label>
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Condition</span>

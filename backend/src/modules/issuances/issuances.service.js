@@ -38,8 +38,12 @@ function validateCreateIssuance(input) {
   }
   const itemId = String(input.itemId);
   if (!/^\d{1,20}$/.test(itemId)) throw httpError(400, 'Hindi valid ang inventory item.');
+  const quantity = Number(input.quantity ?? 1);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2147483647) {
+    throw httpError(400, 'Ang quantity na hihiramin ay dapat whole number na hindi bababa sa 1.');
+  }
   const notes = requiredText(input.notes, 'issuance notes', 1000, { optional: true });
-  return { employeeCode, itemId, notes };
+  return { employeeCode, itemId, quantity, notes };
 }
 
 function validateCreateIssuanceBatch(input) {
@@ -47,22 +51,37 @@ function validateCreateIssuanceBatch(input) {
     throw httpError(400, 'Hindi valid ang issuance request.');
   }
   const employeeCode = requiredText(input.employeeCode, 'employee code', 40);
-  if (!Array.isArray(input.itemIds) || input.itemIds.length < 1 || input.itemIds.length > 100) {
+  const usesDetailedItems = Array.isArray(input.items);
+  const requestedItems = usesDetailedItems
+    ? input.items
+    : Array.isArray(input.itemIds)
+      ? input.itemIds.map((itemId) => ({ itemId, quantity: 1 }))
+      : null;
+  if (!requestedItems || requestedItems.length < 1 || requestedItems.length > 100) {
     throw httpError(400, 'Pumili ng 1 hanggang 100 inventory item.');
   }
-  const itemIds = input.itemIds.map((value) => {
-    if (typeof value !== 'string' && typeof value !== 'number') {
+  const items = requestedItems.map((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw httpError(400, 'May hindi valid na inventory item sa request.');
     }
-    const itemId = String(value);
+    const rawItemId = value.itemId;
+    if (typeof rawItemId !== 'string' && typeof rawItemId !== 'number') {
+      throw httpError(400, 'May hindi valid na inventory item sa request.');
+    }
+    const itemId = String(rawItemId);
     if (!/^\d{1,20}$/.test(itemId)) throw httpError(400, 'May hindi valid na inventory item sa request.');
-    return itemId;
+    const quantity = Number(value.quantity ?? 1);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2147483647) {
+      throw httpError(400, 'Ang quantity ng bawat item ay dapat whole number na hindi bababa sa 1.');
+    }
+    return { itemId, quantity };
   });
+  const itemIds = items.map((item) => item.itemId);
   if (new Set(itemIds).size !== itemIds.length) {
     throw httpError(400, 'May nadobleng inventory item sa request.');
   }
   const notes = requiredText(input.notes, 'issuance notes', 1000, { optional: true });
-  return { employeeCode, itemIds, notes };
+  return { employeeCode, items, notes };
 }
 
 function validateToken(value) {
@@ -98,11 +117,12 @@ async function createIssuance(input, user) {
     throw httpError(503, 'Hindi available ang issuance email. I-configure muna ang SMTP sa backend/.env.', true);
   }
 
-  const { employeeCode, itemId, notes } = validateCreateIssuance(input);
+  const { employeeCode, itemId, quantity, notes } = validateCreateIssuance(input);
   const token = crypto.randomBytes(32).toString('base64url');
   const pending = await issuancesRepository.createPendingIssuance({
     employeeCode,
     itemId,
+    quantity,
     notes,
     tokenHash: hashToken(token),
     requestedByUserId: user.id,
@@ -114,6 +134,8 @@ async function createIssuance(input, user) {
   const itemName = escapeHtml(pending.description);
   const itemCode = escapeHtml(pending.item_code);
   const condition = escapeHtml(pending.item_condition);
+  const itemQuantity = Number(pending.quantity);
+  const itemUnit = escapeHtml(pending.unit_of_measure);
   const note = escapeHtml(notes || 'No additional notes.');
 
   try {
@@ -124,7 +146,8 @@ async function createIssuance(input, user) {
       text: [
         `Hello ${pending.employee_name},`,
         '',
-        `GSO is requesting your approval to issue ${pending.description} (${pending.item_code}) to you.`,
+        `GSO is requesting your approval to issue ${itemQuantity} ${pending.unit_of_measure} of ${pending.description} (${pending.item_code}) to you.`,
+        `Quantity: ${itemQuantity} ${pending.unit_of_measure}`,
         `Condition: ${pending.item_condition}`,
         `Notes: ${notes || 'No additional notes.'}`,
         '',
@@ -142,6 +165,7 @@ async function createIssuance(input, user) {
             <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">
               <div style="font-size:16px;font-weight:700">${itemName}</div>
               <div style="margin-top:6px;color:#64748b">Asset code: ${itemCode}</div>
+              <div style="margin-top:8px;color:#334155">Quantity: <strong>${itemQuantity} ${itemUnit}</strong></div>
               <div style="margin-top:12px;color:#334155">Condition: <strong>${condition}</strong></div>
               <div style="margin-top:8px;color:#334155">GSO notes: ${note}</div>
             </div>
@@ -176,6 +200,8 @@ async function createIssuance(input, user) {
     itemCode: pending.item_code,
     itemName: pending.description,
     condition: pending.item_condition,
+    quantity: itemQuantity,
+    unitOfMeasure: pending.unit_of_measure,
     notes,
     requestedAt: pending.requestedAt,
     expiresAt: pending.expiresAt,
@@ -187,11 +213,11 @@ async function createIssuanceBatch(input, user) {
     throw httpError(503, 'Hindi available ang issuance email. I-configure muna ang SMTP sa backend/.env.', true);
   }
 
-  const { employeeCode, itemIds, notes } = validateCreateIssuanceBatch(input);
+  const { employeeCode, items, notes } = validateCreateIssuanceBatch(input);
   const token = crypto.randomBytes(32).toString('base64url');
   const batch = await issuancesRepository.createPendingIssuanceBatch({
     employeeCode,
-    itemIds,
+    items,
     notes,
     tokenHash: hashToken(token),
     requestedByUserId: user.id,
@@ -201,12 +227,13 @@ async function createIssuanceBatch(input, user) {
   const employeeName = escapeHtml(batch.employee_name);
   const note = escapeHtml(notes || 'No additional notes.');
   const textItems = batch.items.map((item, index) =>
-    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Condition: ${item.condition}`
+    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Quantity: ${item.quantity} ${item.unitOfMeasure}\n   Condition: ${item.condition}`
   );
   const htmlItems = batch.items.map((item) => `
     <li style="margin:0 0 12px">
       <strong>${escapeHtml(item.itemName)}</strong>
       <div style="margin-top:4px;color:#64748b">Asset code: ${escapeHtml(item.itemCode)}</div>
+      <div style="margin-top:4px;color:#334155">Quantity: <strong>${item.quantity} ${escapeHtml(item.unitOfMeasure)}</strong></div>
       <div style="margin-top:4px;color:#334155">Condition: <strong>${escapeHtml(item.condition)}</strong></div>
     </li>`).join('');
 

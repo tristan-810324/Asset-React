@@ -33,6 +33,8 @@ interface EmployeeHistoryLog {
   event: string
   item: string
   code: string
+  quantity: number
+  unitOfMeasure: string
   note: string
 }
 
@@ -54,10 +56,13 @@ interface EmployeeRecord {
   status: string
   statusTone: string
   assignedItems: Array<{
+    id: string
     code: string
     name: string
     condition: string
     tone: string
+    quantity: number
+    unitOfMeasure: string
     assignedOn: string
   }>
   history: EmployeeHistoryLog[]
@@ -180,7 +185,7 @@ export default function EmployeeMasterData() {
     void listInventoryItems()
       .then((items) => {
         if (!active) return
-        setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.quantity > 0))
+        setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.availableQuantity > 0))
         setInventoryLoadError('')
       })
       .catch((error: unknown) => {
@@ -195,7 +200,8 @@ export default function EmployeeMasterData() {
 
   // Handle Surrender/Return Issuance Modal state
   const [showHandleIssuanceModal, setShowHandleIssuanceModal] = useState(false)
-  const [selectedReturnAssetCode, setSelectedReturnAssetCode] = useState('')
+  const [selectedReturnIssuanceId, setSelectedReturnIssuanceId] = useState('')
+  const [returnQuantity, setReturnQuantity] = useState('1')
   const [returnCondition, setReturnCondition] = useState('Good')
   const [returnPriority, setReturnPriority] = useState<'High' | 'Medium'>('High')
   const [surrenderReason, setSurrenderReason] = useState('')
@@ -218,6 +224,7 @@ export default function EmployeeMasterData() {
   const [showIssuanceModal, setShowIssuanceModal] = useState(false)
   const [issuanceSelectionMode, setIssuanceSelectionMode] = useState<'single' | 'multiple'>('single')
   const [selectedAssetCodes, setSelectedAssetCodes] = useState<string[]>([])
+  const [selectedAssetQuantities, setSelectedAssetQuantities] = useState<Record<string, string>>({})
   const [inventorySearchQuery, setInventorySearchQuery] = useState('')
   const [isInventoryDropdownOpen, setIsInventoryDropdownOpen] = useState(false)
   const [isSubmittingIssuance, setIsSubmittingIssuance] = useState(false)
@@ -475,13 +482,18 @@ export default function EmployeeMasterData() {
   // Handle Surrender/Return Form Submission
   const handleConfirmSurrender = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selectedEmployee || !selectedReturnAssetCode) {
+    if (!selectedEmployee || !selectedReturnIssuanceId) {
       alert('Select an issued item to process surrender.')
       return
     }
 
-    const targetItem = selectedEmployee.assignedItems.find((item) => item.code === selectedReturnAssetCode)
+    const targetItem = selectedEmployee.assignedItems.find((item) => item.id === selectedReturnIssuanceId)
     if (!targetItem) return
+    const requestedQuantity = Number(returnQuantity)
+    if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1 || requestedQuantity > targetItem.quantity) {
+      setReturnSubmitError(`Enter a whole number from 1 to ${targetItem.quantity} ${targetItem.unitOfMeasure}.`)
+      return
+    }
     if (!surrenderReason.trim()) {
       setReturnSubmitError('Please enter a surrender or return reason in the notes field.')
       return
@@ -497,6 +509,8 @@ export default function EmployeeMasterData() {
         targetItem.code,
         returnCondition,
         returnReason,
+        targetItem.id,
+        requestedQuantity,
       )
       const requestedAt = new Date(request.requestedAt)
       const formattedDate = new Intl.DateTimeFormat('en-US', {
@@ -504,25 +518,37 @@ export default function EmployeeMasterData() {
         day: '2-digit',
         year: 'numeric',
       }).format(Number.isNaN(requestedAt.getTime()) ? new Date() : requestedAt)
+      const remainingQuantity = Math.max(0, request.remainingQuantity ?? (targetItem.quantity - request.quantity))
+      const assignedItems = selectedEmployee.assignedItems
+        .map((item) => item.id === targetItem.id ? { ...item, quantity: remainingQuantity } : item)
+        .filter((item) => item.quantity > 0)
       const newHistoryEntry: EmployeeHistoryLog = {
         date: formattedDate,
-        event: 'Return Pending Approval',
+        event: 'Returned',
         item: targetItem.name,
         code: targetItem.code,
-        note: `Awaiting employee email approval. Condition after return: ${returnCondition}. GSO notes: ${returnReason}`,
+        quantity: request.quantity,
+        unitOfMeasure: targetItem.unitOfMeasure,
+        note: `Returned ${request.quantity} ${targetItem.unitOfMeasure}. ${remainingQuantity > 0 ? `${remainingQuantity} ${targetItem.unitOfMeasure} remain assigned. ` : ''}Condition after GSO inspection: ${returnCondition}. GSO notes: ${returnReason}`,
       }
       const updatedEmp: EmployeeRecord = {
         ...selectedEmployee,
+        assigned: assignedItems.reduce((total, item) => total + item.quantity, 0),
+        assignedItems,
         history: [newHistoryEntry, ...selectedEmployee.history],
       }
       setEmployees((current) => current.map((emp) => (emp.id === selectedEmployee.id ? updatedEmp : emp)))
       setSelectedEmployee(updatedEmp)
       setSurrenderReason('')
+      setReturnQuantity('1')
       setReturnPriority('High')
       setShowHandleIssuanceModal(false)
-      alert(`A return approval request for ${targetItem.code} was sent to ${selectedEmployee.email}. The item stays issued until the employee confirms.`)
+      void listInventoryItems()
+        .then((items) => setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.availableQuantity > 0)))
+        .catch((error: unknown) => setInventoryLoadError(error instanceof Error ? error.message : 'Unable to refresh inventory availability.'))
+      alert(`Processed return of ${request.quantity} ${targetItem.unitOfMeasure} for ${targetItem.code}. ${remainingQuantity > 0 ? `${remainingQuantity} ${targetItem.unitOfMeasure} remain assigned to ${selectedEmployee.firstName}.` : 'No units remain assigned to this employee.'} ${request.emailSent ? `A confirmation email was sent to ${selectedEmployee.email}.` : 'The return was recorded, but the confirmation email could not be sent.'}`)
     } catch (error) {
-      setReturnSubmitError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Unable to send the return approval email.')
+      setReturnSubmitError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Unable to process item return.')
     } finally {
       setIsSubmittingReturn(false)
     }
@@ -531,7 +557,13 @@ export default function EmployeeMasterData() {
   // Toggle an inventory item in the issuance batch.
   const handleSelectInventoryItem = (code: string) => {
     if (issuanceSelectionMode === 'single') {
-      setSelectedAssetCodes((current) => current.includes(code) ? [] : [code])
+      if (selectedAssetCodes.includes(code)) {
+        setSelectedAssetCodes([])
+        setSelectedAssetQuantities({})
+      } else {
+        setSelectedAssetCodes([code])
+        setSelectedAssetQuantities({ [code]: '1' })
+      }
       setIssuanceSubmitError('')
       setIsInventoryDropdownOpen(false)
       setInventorySearchQuery('')
@@ -539,6 +571,11 @@ export default function EmployeeMasterData() {
     }
     if (selectedAssetCodes.includes(code)) {
       setSelectedAssetCodes((current) => current.filter((itemCode) => itemCode !== code))
+      setSelectedAssetQuantities((current) => {
+        const next = { ...current }
+        delete next[code]
+        return next
+      })
       setIssuanceSubmitError('')
       return
     }
@@ -547,12 +584,14 @@ export default function EmployeeMasterData() {
       return
     }
     setSelectedAssetCodes((current) => [...current, code])
+    setSelectedAssetQuantities((current) => ({ ...current, [code]: '1' }))
     setIssuanceSubmitError('')
   }
 
   const resetIssuanceForm = () => {
     setIssuanceSelectionMode('single')
     setSelectedAssetCodes([])
+    setSelectedAssetQuantities({})
     setInventorySearchQuery('')
     setIsInventoryDropdownOpen(false)
     setIssuanceNotes('Acknowledged by employee')
@@ -572,7 +611,7 @@ export default function EmployeeMasterData() {
       .then(({ assignedItems, history }) => {
         const updatedEmployee: EmployeeRecord = {
           ...employee,
-          assigned: assignedItems.length,
+          assigned: assignedItems.reduce((total, item) => total + item.quantity, 0),
           assignedItems: assignedItems.map((item) => ({
             ...item,
             tone: item.condition === 'Good' || item.condition === 'New'
@@ -606,14 +645,25 @@ export default function EmployeeMasterData() {
       setIssuanceSubmitError('One or more selected items are no longer available. Refresh the inventory and select them again.')
       return
     }
+    const validStocks = selectedStocks.filter((item): item is InventoryItemRecord => Boolean(item))
+    const requestedItems = validStocks.map((stock) => ({
+      stock,
+      quantity: Number(selectedAssetQuantities[stock.itemCode] || 0),
+    }))
+    const invalidQuantity = requestedItems.find(({ stock, quantity }) =>
+      !Number.isInteger(quantity) || quantity < 1 || quantity > stock.availableQuantity
+    )
+    if (invalidQuantity) {
+      setIssuanceSubmitError(`Enter a whole quantity from 1 to ${invalidQuantity.stock.availableQuantity} for ${invalidQuantity.stock.itemCode}.`)
+      return
+    }
 
     setIsSubmittingIssuance(true)
     setIssuanceSubmitError('')
     try {
-      const validStocks = selectedStocks.filter((item): item is InventoryItemRecord => Boolean(item))
       const batch = await createEmployeeIssuanceBatch(
         selectedEmployee.id,
-        validStocks.map((stock) => stock.id),
+        requestedItems.map(({ stock, quantity }) => ({ itemId: stock.id, quantity })),
         issuanceNotes,
       )
       const requestedAt = new Date(batch.requestedAt)
@@ -624,9 +674,11 @@ export default function EmployeeMasterData() {
         event: 'Pending Approval',
         item: item.itemName,
         code: item.itemCode,
+        quantity: item.quantity,
+        unitOfMeasure: item.unitOfMeasure,
         note: `Batch approval request sent to ${batch.employeeEmail}.`,
       }))
-      const selectedItemIds = new Set(validStocks.map((stock) => stock.id))
+      const batchItemsById = new Map(batch.items.map((item) => [item.itemId, item]))
 
       setEmployees((current) => current.map((employee) => employee.id === selectedEmployee.id
         ? { ...employee, history: [...newHistoryEntries, ...employee.history] }
@@ -636,10 +688,16 @@ export default function EmployeeMasterData() {
         ? { ...current, history: [...newHistoryEntries, ...current.history] }
         : current
       )
-      setAvailableInventoryStock((current) => current.filter((item) => !selectedItemIds.has(item.id)))
+      setAvailableInventoryStock((current) => current.flatMap((item) => {
+        const requested = batchItemsById.get(item.id)
+        if (!requested) return [item]
+        return requested.availableQuantity > 0
+          ? [{ ...item, availableQuantity: requested.availableQuantity, status: 'Available' }]
+          : []
+      }))
       resetIssuanceForm()
       setShowIssuanceModal(false)
-      alert(`One approval email listing all ${batch.items.length} selected item${batch.items.length === 1 ? '' : 's'} was sent to ${batch.employeeEmail}. All items remain pending until the employee approves or rejects the batch.`)
+      alert(`One approval email listing all ${batch.items.length} selected item${batch.items.length === 1 ? '' : 's'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'}) was sent to ${batch.employeeEmail}. All requested quantities remain pending until the employee approves or rejects the batch.`)
     } catch (error) {
       setIssuanceSubmitError(error instanceof Error ? error.message : 'Unable to send the issuance batch approval request.')
     } finally {
@@ -655,6 +713,10 @@ export default function EmployeeMasterData() {
     const item = availableInventoryStock.find((stock) => stock.itemCode === code)
     return item ? [item] : []
   })
+  const selectedUnitCount = selectedInventoryItems.reduce(
+    (total, item) => total + (Number(selectedAssetQuantities[item.itemCode]) || 0),
+    0,
+  )
 
   // Filtered employee list
   const filteredEmployees = employees.filter((emp) => {
@@ -1221,7 +1283,7 @@ export default function EmployeeMasterData() {
               </div>
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                 <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Total Issued Items</span>
-                <p className="mt-1 text-xs font-bold text-blue-700">{selectedEmployee.assigned} item(s) active</p>
+                <p className="mt-1 text-xs font-bold text-blue-700">{selectedEmployee.assigned} unit(s) active</p>
               </div>
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
                 <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Employment Status</span>
@@ -1264,7 +1326,7 @@ export default function EmployeeMasterData() {
                       setIsLoadingInventory(true)
                       void listInventoryItems()
                         .then((items) => {
-                          setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.quantity > 0))
+                          setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.availableQuantity > 0))
                           setInventoryLoadError('')
                         })
                         .catch((error: unknown) => {
@@ -1286,15 +1348,17 @@ export default function EmployeeMasterData() {
                     <tr>
                       <th className="px-3.5 py-2.5">Asset Code</th>
                       <th className="px-3.5 py-2.5">Item Name</th>
+                      <th className="px-3.5 py-2.5">Quantity</th>
                       <th className="px-3.5 py-2.5">Condition</th>
                       <th className="px-3.5 py-2.5">Assigned Date</th>
                     </tr>
                   </thead>
                   <tbody>
                     {selectedEmployee.assignedItems.slice(0, 2).map((item) => (
-                      <tr key={item.code} className="border-t border-slate-100">
+                      <tr key={item.id} className="border-t border-slate-100">
                         <td className="px-3.5 py-2.5 font-bold text-slate-500">{item.code}</td>
                         <td className="px-3.5 py-2.5 font-extrabold text-slate-800">{item.name}</td>
+                        <td className="px-3.5 py-2.5 font-bold text-slate-600">{item.quantity} {item.unitOfMeasure}</td>
                         <td className="px-3.5 py-2.5">
                           <span className={`rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
                             {item.condition}
@@ -1305,7 +1369,7 @@ export default function EmployeeMasterData() {
                     ))}
                     {selectedEmployee.assignedItems.length === 0 && (
                       <tr>
-                        <td colSpan={4} className="px-3.5 py-4 text-center text-slate-400 italic">
+                        <td colSpan={5} className="px-3.5 py-4 text-center text-slate-400 italic">
                           No items currently issued to this employee.
                         </td>
                       </tr>
@@ -1353,6 +1417,7 @@ export default function EmployeeMasterData() {
                         </span>
                         <span className="text-xs font-bold text-slate-700">{log.item}</span>
                         <span className="text-[0.62rem] text-slate-400">({log.code})</span>
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[0.58rem] font-bold text-slate-600">{log.quantity} {log.unitOfMeasure}</span>
                       </div>
                       <p className="mt-1 text-[0.65rem] text-slate-500">{log.note}</p>
                     </div>
@@ -1399,7 +1464,8 @@ export default function EmployeeMasterData() {
                   type="button"
                   onClick={() => {
                     const firstIssuedItem = selectedEmployee.assignedItems[0]
-                    setSelectedReturnAssetCode(firstIssuedItem?.code || '')
+                    setSelectedReturnIssuanceId(firstIssuedItem?.id || '')
+                    setReturnQuantity(String(firstIssuedItem?.quantity || 1))
                     setReturnCondition(returnConditionForInspection(firstIssuedItem?.condition))
                     setReturnPriority('High')
                     setSurrenderReason('')
@@ -1440,7 +1506,7 @@ export default function EmployeeMasterData() {
                   {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
                 </p>
                 <p className="mt-1 text-[0.68rem] text-slate-400">
-                  {selectedEmployee.assignedItems.length} active item(s) assigned to this employee.
+                  {selectedEmployee.assigned} active unit(s) assigned to this employee.
                 </p>
               </div>
               <button
@@ -1460,15 +1526,17 @@ export default function EmployeeMasterData() {
                       <tr>
                         <th className="px-3.5 py-3">Asset Code</th>
                         <th className="px-3.5 py-3">Item Name</th>
+                        <th className="px-3.5 py-3">Quantity</th>
                         <th className="px-3.5 py-3">Condition</th>
                         <th className="px-3.5 py-3">Assigned Date</th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedEmployee.assignedItems.map((item) => (
-                        <tr key={item.code} className="border-t border-slate-100">
+                        <tr key={item.id} className="border-t border-slate-100">
                           <td className="px-3.5 py-3 font-bold text-slate-600">{item.code}</td>
                           <td className="px-3.5 py-3 font-extrabold text-slate-800">{item.name}</td>
+                          <td className="px-3.5 py-3 font-bold text-slate-600">{item.quantity} {item.unitOfMeasure}</td>
                           <td className="px-3.5 py-3">
                             <span className={`rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
                               {item.condition}
@@ -1556,6 +1624,7 @@ export default function EmployeeMasterData() {
                             </span>
                             <span className="text-xs font-bold text-slate-700">{log.item}</span>
                             <span className="text-[0.62rem] text-slate-400">({log.code})</span>
+                            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[0.58rem] font-bold text-slate-600">{log.quantity} {log.unitOfMeasure}</span>
                           </div>
                           <p className="mt-1 text-[0.68rem] text-slate-500">{log.note}</p>
                         </div>
@@ -1618,22 +1687,46 @@ export default function EmployeeMasterData() {
                     </span>
                     <select
                       required
-                      value={selectedReturnAssetCode}
+                      value={selectedReturnIssuanceId}
                       onChange={(e) => {
-                        const nextCode = e.target.value
-                        setSelectedReturnAssetCode(nextCode)
-                        const nextItem = selectedEmployee.assignedItems.find((item) => item.code === nextCode)
-                        if (nextItem) setReturnCondition(returnConditionForInspection(nextItem.condition))
+                        const nextId = e.target.value
+                        setSelectedReturnIssuanceId(nextId)
+                        const nextItem = selectedEmployee.assignedItems.find((item) => item.id === nextId)
+                        if (nextItem) {
+                          setReturnQuantity(String(nextItem.quantity))
+                          setReturnCondition(returnConditionForInspection(nextItem.condition))
+                        }
                         setReturnPriority('High')
                       }}
                       className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                     >
                       {selectedEmployee.assignedItems.map((item) => (
-                        <option key={item.code} value={item.code}>
-                          {item.code} — {item.name} ({item.condition})
+                        <option key={item.id} value={item.id}>
+                          {item.code} — {item.name} · {item.quantity} {item.unitOfMeasure} ({item.condition})
                         </option>
                       ))}
                     </select>
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
+                      Quantity to Surrender / Return
+                    </span>
+                    <input
+                      type="number"
+                      required
+                      min={1}
+                      max={selectedEmployee.assignedItems.find((item) => item.id === selectedReturnIssuanceId)?.quantity ?? 1}
+                      step={1}
+                      value={returnQuantity}
+                      onChange={(e) => setReturnQuantity(e.target.value)}
+                      disabled={isSubmittingReturn}
+                      aria-label="Quantity to surrender or return"
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
+                    />
+                    <span className="mt-1 block text-[0.62rem] font-medium text-slate-400">
+                      Enter a whole number up to the currently assigned quantity.
+                    </span>
                   </label>
 
                   <label className="block">
@@ -1707,7 +1800,7 @@ export default function EmployeeMasterData() {
                       disabled={isSubmittingReturn}
                       className="rounded-xl bg-amber-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-amber-700 shadow-md shadow-amber-600/20 disabled:cursor-wait disabled:opacity-60"
                     >
-                      {isSubmittingReturn ? 'Sending Approval Request…' : 'Send Return Approval Request'}
+                      {isSubmittingReturn ? 'Processing Return…' : 'Confirm Return'}
                     </button>
                   </div>
                 </>
@@ -1891,8 +1984,8 @@ export default function EmployeeMasterData() {
 
       {/* MULTI-ITEM ISSUANCE MODAL */}
       {showIssuanceModal && selectedEmployee && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-slate-950/70 p-4 backdrop-blur-sm overscroll-contain">
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto overscroll-contain rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-sm font-black text-slate-900">{issuanceSelectionMode === 'single' ? 'Issue One Item' : 'Issue Multiple Items'}</h3>
@@ -1933,7 +2026,12 @@ export default function EmployeeMasterData() {
                     disabled={isSubmittingIssuance}
                     onClick={() => {
                       setIssuanceSelectionMode('single')
-                      setSelectedAssetCodes((current) => current.slice(0, 1))
+                      const firstSelected = selectedAssetCodes.slice(0, 1)
+                      setSelectedAssetCodes(firstSelected)
+                      setSelectedAssetQuantities((current) => firstSelected.length > 0
+                        ? { [firstSelected[0]]: current[firstSelected[0]] || '1' }
+                        : {}
+                      )
                       setIssuanceSubmitError('')
                     }}
                     className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${issuanceSelectionMode === 'single' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
@@ -1979,7 +2077,7 @@ export default function EmployeeMasterData() {
                     value={isInventoryDropdownOpen
                       ? inventorySearchQuery
                       : selectedAssetCodes.length > 0
-                        ? `${selectedAssetCodes.length} ${selectedAssetCodes.length === 1 ? 'item' : 'items'} selected`
+                        ? `${selectedAssetCodes.length} ${selectedAssetCodes.length === 1 ? 'item' : 'items'} selected · ${selectedUnitCount} ${selectedUnitCount === 1 ? 'unit' : 'units'}`
                         : ''}
                     onFocus={() => {
                       setIsInventoryDropdownOpen(true)
@@ -2003,7 +2101,7 @@ export default function EmployeeMasterData() {
                       id="available-inventory-options"
                       role="listbox"
                       aria-label="Available inventory items"
-                      className="absolute z-30 max-h-52 w-full overflow-y-auto rounded-b-xl border border-t-0 border-blue-300 bg-white shadow-lg"
+                      className="absolute z-30 max-h-64 w-full overflow-y-auto overscroll-contain rounded-b-xl border border-t-0 border-blue-300 bg-white shadow-lg"
                     >
                       {inventoryLoadError ? (
                         <p role="alert" className="px-3.5 py-3 text-xs font-semibold text-rose-600">{inventoryLoadError}</p>
@@ -2022,6 +2120,7 @@ export default function EmployeeMasterData() {
                           >
                             <span className="min-w-0 truncate font-semibold text-slate-700">
                               {stock.itemCode} — {stock.description}
+                              <span className="mt-1 block text-[0.62rem] font-medium text-slate-400">Available: {stock.availableQuantity} {stock.unitOfMeasure}</span>
                             </span>
                             <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[0.62rem] font-bold text-slate-600">
                               {stock.condition}
@@ -2039,31 +2138,76 @@ export default function EmployeeMasterData() {
                     </div>
                   )}
                 </div>
+                {issuanceSelectionMode === 'multiple' && (
+                  <p className="mt-1.5 text-[0.65rem] font-medium text-slate-500">
+                    Click a selected item again to unselect it, or use the Unselect all button below.
+                  </p>
+                )}
               </div>
 
               <div className="rounded-xl border border-slate-200">
-                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3.5 py-2.5">
-                  <span className="text-[0.65rem] font-extrabold uppercase text-slate-600">Selected for issuance</span>
-                  <span className="rounded-full bg-blue-50 px-2 py-1 text-[0.62rem] font-extrabold text-blue-700">
-                    {selectedInventoryItems.length} {selectedInventoryItems.length === 1 ? 'item' : 'items'}
-                  </span>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3.5 py-2.5">
+                  <div>
+                    <span className="block text-[0.65rem] font-extrabold uppercase text-slate-700">Selected for issuance</span>
+                    <span className="mt-0.5 block text-[0.62rem] font-medium text-slate-500">Review quantities and unselect items before sending.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-blue-50 px-2 py-1 text-[0.62rem] font-extrabold text-blue-700">
+                      {selectedInventoryItems.length} {selectedInventoryItems.length === 1 ? 'item' : 'items'} · {selectedUnitCount} {selectedUnitCount === 1 ? 'unit' : 'units'}
+                    </span>
+                    {issuanceSelectionMode === 'multiple' && selectedAssetCodes.length > 0 && (
+                      <button
+                        type="button"
+                        disabled={isSubmittingIssuance}
+                        onClick={() => {
+                          setSelectedAssetCodes([])
+                          setSelectedAssetQuantities({})
+                          setIssuanceSubmitError('')
+                        }}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[0.62rem] font-bold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
+                      >
+                        Unselect all
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {selectedInventoryItems.length > 0 ? (
-                  <ul className="max-h-40 divide-y divide-slate-100 overflow-y-auto">
+                  <ul className="max-h-64 divide-y divide-slate-100 overflow-y-auto overscroll-contain">
                     {selectedInventoryItems.map((item) => (
-                      <li key={item.id} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
-                        <div className="min-w-0">
+                      <li key={item.id} className="flex flex-col gap-2 px-3.5 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0 sm:flex-1">
                           <p className="truncate text-xs font-bold text-slate-800">{item.description}</p>
-                          <p className="mt-0.5 truncate text-[0.65rem] font-medium text-slate-500">{item.itemCode} | Condition: {item.condition}</p>
+                          <p className="mt-0.5 truncate text-[0.65rem] font-medium text-slate-500">{item.itemCode} · Available: {item.availableQuantity} {item.unitOfMeasure} · Condition: {item.condition}</p>
                         </div>
-                        <button
-                          type="button"
-                          disabled={isSubmittingIssuance}
-                          onClick={() => handleSelectInventoryItem(item.itemCode)}
-                          className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-1 text-[0.65rem] font-bold text-slate-500 hover:bg-slate-50"
-                        >
-                          Remove
-                        </button>
+                        <div className="flex items-end gap-2">
+                          <label className="block w-28 shrink-0">
+                            <span className="mb-1 block text-[0.58rem] font-bold text-slate-500">Borrow quantity</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max={item.availableQuantity}
+                              step="1"
+                              required
+                              disabled={isSubmittingIssuance}
+                              value={selectedAssetQuantities[item.itemCode] ?? '1'}
+                              onChange={(event) => setSelectedAssetQuantities((current) => ({
+                                ...current,
+                                [item.itemCode]: event.target.value,
+                              }))}
+                              aria-label={`Borrow quantity for ${item.description}`}
+                              className="h-9 w-full rounded-lg border border-slate-200 px-2.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            disabled={isSubmittingIssuance}
+                            onClick={() => handleSelectInventoryItem(item.itemCode)}
+                            aria-label={`Unselect ${item.description}`}
+                            className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-2 text-[0.65rem] font-bold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
+                          >
+                            Unselect
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -2100,16 +2244,19 @@ export default function EmployeeMasterData() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmittingIssuance || selectedInventoryItems.length === 0}
+                  disabled={isSubmittingIssuance || selectedInventoryItems.length === 0 || selectedInventoryItems.some((item) => {
+                    const quantity = Number(selectedAssetQuantities[item.itemCode])
+                    return !Number.isInteger(quantity) || quantity < 1 || quantity > item.availableQuantity
+                  })}
                   className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-blue-700 shadow-md shadow-blue-600/20 disabled:cursor-wait disabled:opacity-70"
                 >
                   {isSubmittingIssuance
                     ? issuanceSelectionMode === 'single'
                       ? 'Sending approval request...'
-                      : `Sending batch (${selectedInventoryItems.length} item${selectedInventoryItems.length === 1 ? '' : 's'})...`
+                      : `Sending batch (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})...`
                     : issuanceSelectionMode === 'single'
                       ? 'Send for approval'
-                      : `Send batch for approval (${selectedInventoryItems.length})`}
+                      : `Send batch for approval (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
                 </button>
               </div>
             </form>

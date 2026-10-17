@@ -99,6 +99,7 @@ export default function IssuanceApproval() {
                       <li key={item.itemCode} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                         <p className="text-sm font-bold text-slate-800">{item.itemName}</p>
                         <p className="mt-0.5 text-xs font-semibold text-slate-500">{item.itemCode} · Condition: {item.condition}</p>
+                        <p className="mt-1 text-xs font-semibold text-slate-600">Quantity: {item.quantity} {item.unitOfMeasure}</p>
                       </li>
                     ))}
                   </ul>
@@ -106,6 +107,9 @@ export default function IssuanceApproval() {
                   <>
                     <p className="mt-1 text-sm font-bold text-slate-800">{issuance.itemName}</p>
                     <p className="mt-0.5 text-xs font-semibold text-slate-500">{issuance.itemCode} · {requestType === 'return' ? 'Condition after return' : 'Condition'}: {issuance.condition}</p>
+                    {issuance.quantity !== undefined && (
+                      <p className="mt-1 text-xs font-semibold text-slate-600">{requestType === 'return' ? 'Quantity to return' : 'Quantity'}: {issuance.quantity} {issuance.unitOfMeasure}</p>
+                    )}
                   </>
                 )}
                 {requestType === 'return' && (
@@ -129,23 +133,17 @@ export default function IssuanceApproval() {
                 {requestExpired
                   ? requestType === 'return'
                     ? 'This return request has expired. The item remains assigned to you.'
-                    : batchItems && batchItems.length > 1
-                      ? 'This request has expired. All listed items are available for GSO to issue again.'
-                      : 'This request has expired. The inventory item is available for GSO to issue again.'
+                    : 'This request has expired. The requested quantities are available for GSO to issue again.'
                   : requestType === 'return'
                     ? resultStatus === 'Returned'
-                      ? `You confirmed the return. The item is back in GSO inventory with condition: ${issuance.condition}.`
+                      ? `You confirmed the return of ${issuance.quantity ?? 1} ${issuance.unitOfMeasure ?? 'unit'}. Any remaining quantity stays assigned to you. GSO recorded condition: ${issuance.condition}.`
                       : resultStatus === 'Rejected'
                         ? 'You rejected the return request. The item remains assigned to you.'
                         : `This return request has already been resolved (${resultStatus}).`
                     : resultStatus === 'Issued'
-                      ? batchItems && batchItems.length > 1
-                        ? 'You approved the request. All listed items are now assigned to you.'
-                        : 'You approved the request. The item is now assigned to you.'
+                      ? 'You approved the request. The requested quantities are now assigned to you.'
                       : resultStatus === 'Rejected'
-                        ? batchItems && batchItems.length > 1
-                          ? 'You rejected the request. All listed items have been released back to GSO inventory.'
-                          : 'You rejected the request. The item has been released back to GSO inventory.'
+                        ? 'You rejected the request. The requested quantities have been released back to GSO inventory.'
                         : `This request has already been resolved (${resultStatus}).`}
               </div>
             ) : issuance.status === 'Pending' ? (
@@ -156,12 +154,8 @@ export default function IssuanceApproval() {
                       ? 'Confirming will complete the return and update the inventory condition selected by GSO.'
                       : 'Rejecting will keep the item assigned to you and leave its inventory record unchanged.'
                     : decision === 'approve'
-                      ? batchItems && batchItems.length > 1
-                        ? 'Approving will assign all listed items to you and update each inventory record.'
-                        : 'Approving will assign this item to you and update the inventory record.'
-                      : batchItems && batchItems.length > 1
-                        ? 'Rejecting will cancel this request and release all listed items back to GSO inventory.'
-                        : 'Rejecting will cancel this request and release the item back to GSO inventory.'}
+                      ? 'Approving will assign all requested quantities to you and update each inventory record.'
+                      : 'Rejecting will cancel this request and release all requested quantities back to GSO inventory.'}
                 </p>
                 <div className="mt-6 flex flex-col-reverse justify-end gap-2 sm:flex-row">
                   <button

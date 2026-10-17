@@ -83,6 +83,18 @@ function validateInventoryItem(input, includeReason) {
   const unit = input.unitOfMeasure === undefined || input.unitOfMeasure === null || input.unitOfMeasure === ''
     ? 'piece'
     : requiredText(input.unitOfMeasure, 'Unit of measure', 60);
+  const unitCost = nonnegativeAmount(input.unitCost, 'Cost per unit');
+  const quantity = nonnegativeInteger(input.quantity, 'Quantity', 1);
+  const acquisitionCost = includeReason
+    ? nonnegativeAmount(input.acquisitionCost, 'Acquisition cost')
+    : nonnegativeAmount(quantity * unitCost, 'Acquisition cost');
+  const currentValue = input.currentValue === undefined || input.currentValue === null || input.currentValue === ''
+    ? null
+    : nonnegativeAmount(input.currentValue, 'Current assessed value');
+
+  if (!includeReason && currentValue !== null && currentValue > acquisitionCost) {
+    invalid('Current assessed value cannot exceed the calculated acquisition cost.');
+  }
 
   const item = {
     itemCode: requiredText(input.itemCode, 'Item Code', 100),
@@ -90,12 +102,10 @@ function validateInventoryItem(input, includeReason) {
     description: requiredText(input.description, 'Item Description', 500),
     dateAcquired: optionalDate(input.dateAcquired),
     timeAcquired: optionalTime(input.timeAcquired),
-    unitCost: nonnegativeAmount(input.unitCost, 'Cost per unit'),
-    acquisitionCost: nonnegativeAmount(input.acquisitionCost, 'Acquisition cost'),
-    currentValue: input.currentValue === undefined || input.currentValue === null || input.currentValue === ''
-      ? null
-      : nonnegativeAmount(input.currentValue, 'Current assessed value'),
-    quantity: nonnegativeInteger(input.quantity, 'Quantity', 1),
+    unitCost,
+    acquisitionCost,
+    currentValue,
+    quantity,
     unitOfMeasure: unit,
     condition,
   };

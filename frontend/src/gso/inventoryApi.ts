@@ -25,6 +25,7 @@ export type InventoryItemRecord = {
   acquisitionCost: number | string
   currentValue: number | string | null
   quantity: number
+  availableQuantity: number
   unitOfMeasure: string
   condition: string
   status: string

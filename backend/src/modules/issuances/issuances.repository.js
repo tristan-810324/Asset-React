@@ -1,4 +1,5 @@
 const pool = require('../../config/db');
+const { getAvailableQuantity, refreshInventoryStatus } = require('../inventory/inventory.stock');
 
 function notFound(message) {
   return Object.assign(new Error(message), { status: 404 });
@@ -32,7 +33,7 @@ async function writeAuditLog(client, issuance, {
   );
 }
 
-async function createPendingIssuance({ employeeCode, itemId, notes, tokenHash, requestedByUserId }) {
+async function createPendingIssuance({ employeeCode, itemId, quantity, notes, tokenHash, requestedByUserId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -49,7 +50,7 @@ async function createPendingIssuance({ employeeCode, itemId, notes, tokenHash, r
     if (employee.status !== 'Active') throw conflict('Hindi puwedeng mag-request ng issuance para sa inactive na employee.');
 
     const itemResult = await client.query(
-      `SELECT id, item_code, description, condition, inventory_status, quantity
+      `SELECT id, item_code, description, condition, inventory_status, quantity, unit_of_measure
          FROM item_catalog
         WHERE id = $1
         FOR UPDATE`,
@@ -57,25 +58,21 @@ async function createPendingIssuance({ employeeCode, itemId, notes, tokenHash, r
     );
     const item = itemResult.rows[0];
     if (!item) throw notFound('Hindi na makita ang inventory item. I-refresh ang inventory at pumili muli.');
-    if (item.inventory_status !== 'Available' || item.quantity < 1) {
-      throw conflict('Hindi na available ang item na ito. I-refresh ang inventory at pumili muli.');
+    if (item.inventory_status === 'Borrowed') throw conflict('Hindi available ang item na ito para i-issue muli.');
+    const availableQuantity = await getAvailableQuantity(client, item);
+    if (availableQuantity < quantity) {
+      throw conflict(`Hindi sapat ang available stock. ${item.item_code} ay may ${availableQuantity} ${item.unit_of_measure} na available.`);
     }
-
-    await client.query(
-      `UPDATE item_catalog
-          SET inventory_status = 'Reserved'
-        WHERE id = $1`,
-      [item.id],
-    );
 
     const inserted = await client.query(
       `INSERT INTO employee_issuances (
          employee_id, item_id, requested_by_user_id, status, token_hash,
-         token_expires_at, item_condition, notes
-       ) VALUES ($1, $2, $3, 'Pending', $4, NOW() + INTERVAL '24 hours', $5, $6)
+         token_expires_at, item_condition, notes, quantity, unit_of_measure
+       ) VALUES ($1, $2, $3, 'Pending', $4, NOW() + INTERVAL '24 hours', $5, $6, $7, $8)
        RETURNING id, status, token_expires_at AS "expiresAt", requested_at AS "requestedAt"`,
-      [employee.id, item.id, requestedByUserId, tokenHash, item.condition, notes],
+      [employee.id, item.id, requestedByUserId, tokenHash, item.condition, notes, quantity, item.unit_of_measure],
     );
+    await refreshInventoryStatus(client, item.id);
     const issuance = {
       id: inserted.rows[0].id,
       status: inserted.rows[0].status,
@@ -89,14 +86,17 @@ async function createPendingIssuance({ employeeCode, itemId, notes, tokenHash, r
       item_code: item.item_code,
       description: item.description,
       item_condition: item.condition,
+      quantity,
+      unit_of_measure: item.unit_of_measure,
     };
 
     await writeAuditLog(client, issuance, {
       changedByUserId: requestedByUserId,
-      reason: `Issuance request for ${issuance.employee_name} is awaiting employee email approval.`,
-      oldValues: { inventoryStatus: 'Available' },
+      reason: `Issuance request for ${quantity} ${item.unit_of_measure} of ${issuance.description} is awaiting employee email approval.`,
+      oldValues: { inventoryStatus: item.inventory_status, availableQuantity },
       newValues: {
-        inventoryStatus: 'Reserved',
+        inventoryStatus: quantity === availableQuantity ? 'Reserved' : 'Available',
+        reservedQuantity: quantity,
         issuanceStatus: 'Pending',
         employeeCode: employee.employee_code,
         employeeEmail: employee.email,
@@ -107,7 +107,7 @@ async function createPendingIssuance({ employeeCode, itemId, notes, tokenHash, r
     return issuance;
   } catch (error) {
     await client.query('ROLLBACK');
-    if (error.code === '23505' && error.constraint === 'employee_issuances_one_active_item_idx') {
+    if (error.code === '23505' && ['employee_issuances_one_active_employee_item_idx', 'employee_issuances_one_active_item_idx'].includes(error.constraint)) {
       throw conflict('May pending o active issuance na ang item na ito.');
     }
     throw error;
@@ -130,7 +130,7 @@ async function markEmailFailed(issuanceId) {
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `SELECT issue.id, issue.employee_id, issue.item_id, inventory.item_code,
+      `SELECT issue.id, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure, inventory.item_code,
               inventory.description, employee.employee_code, employee.first_name,
               employee.last_name
          FROM employee_issuances AS issue
@@ -150,16 +150,11 @@ async function markEmailFailed(issuanceId) {
           WHERE id = $1`,
         [issuanceId],
       );
-      await client.query(
-        `UPDATE item_catalog
-            SET inventory_status = 'Available'
-          WHERE id = $1 AND inventory_status = 'Reserved'`,
-        [issuance.item_id],
-      );
+      await refreshInventoryStatus(client, issuance.item_id);
       await writeAuditLog(client, issuance, {
-        reason: `Issuance approval email could not be delivered to ${issuance.employee_code}; the item was released.`,
-        oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-        newValues: { issuanceStatus: 'Email Failed', inventoryStatus: 'Available' },
+        reason: `Issuance approval email could not be delivered to ${issuance.employee_code}; ${issuance.quantity} ${issuance.unit_of_measure} were released.`,
+        oldValues: { issuanceStatus: 'Pending', quantity: issuance.quantity, unitOfMeasure: issuance.unit_of_measure },
+        newValues: { issuanceStatus: 'Email Failed' },
       });
     }
     await client.query('COMMIT');
@@ -171,7 +166,7 @@ async function markEmailFailed(issuanceId) {
   }
 }
 
-async function createPendingIssuanceBatch({ employeeCode, itemIds, notes, tokenHash, requestedByUserId }) {
+async function createPendingIssuanceBatch({ employeeCode, items: requestedItems, notes, tokenHash, requestedByUserId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -188,21 +183,28 @@ async function createPendingIssuanceBatch({ employeeCode, itemIds, notes, tokenH
     if (employee.status !== 'Active') throw conflict('Hindi puwedeng mag-request ng issuance para sa inactive na employee.');
 
     const itemResult = await client.query(
-      `SELECT id, item_code, description, condition, inventory_status, quantity
+      `SELECT id, item_code, description, condition, inventory_status, quantity, unit_of_measure
          FROM item_catalog
         WHERE id = ANY($1::BIGINT[])
         ORDER BY id
         FOR UPDATE`,
-      [itemIds],
+      [requestedItems.map((item) => item.itemId)],
     );
-    if (itemResult.rows.length !== itemIds.length) {
+    if (itemResult.rows.length !== requestedItems.length) {
       throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
     }
     const itemsById = new Map(itemResult.rows.map((item) => [String(item.id), item]));
-    const items = itemIds.map((id) => itemsById.get(String(id)));
-    const unavailableItem = items.find((item) => !item || item.inventory_status !== 'Available' || item.quantity < 1);
-    if (unavailableItem) {
-      throw conflict('May isa o higit pang item na hindi na available. I-refresh ang inventory at piliin muli ang mga item.');
+    const items = requestedItems.map((requested) => ({
+      ...itemsById.get(String(requested.itemId)),
+      requestedQuantity: requested.quantity,
+    }));
+    for (const item of items) {
+      if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
+      const availableQuantity = await getAvailableQuantity(client, item);
+      if (item.inventory_status === 'Borrowed' || availableQuantity < item.requestedQuantity) {
+        throw conflict(`Hindi sapat ang available stock para sa ${item.item_code || 'napiling item'}. ${availableQuantity} ${item.unit_of_measure || 'unit'} na lang ang available.`);
+      }
+      item.availableQuantityBefore = availableQuantity;
     }
 
     const batchResult = await client.query(
@@ -214,23 +216,17 @@ async function createPendingIssuanceBatch({ employeeCode, itemIds, notes, tokenH
     );
     const batch = batchResult.rows[0];
 
-    await client.query(
-      `UPDATE item_catalog
-          SET inventory_status = 'Reserved'
-        WHERE id = ANY($1::BIGINT[])`,
-      [itemIds],
-    );
-
     const issuanceItems = [];
     for (const item of items) {
       const inserted = await client.query(
         `INSERT INTO employee_issuances (
            batch_id, employee_id, item_id, requested_by_user_id, status, token_hash,
-           token_expires_at, item_condition, notes
-         ) VALUES ($1, $2, $3, $4, 'Pending', NULL, $5, $6, $7)
+           token_expires_at, item_condition, notes, quantity, unit_of_measure
+         ) VALUES ($1, $2, $3, $4, 'Pending', NULL, $5, $6, $7, $8, $9)
          RETURNING id`,
-        [batch.id, employee.id, item.id, requestedByUserId, batch.expiresAt, item.condition, notes],
+        [batch.id, employee.id, item.id, requestedByUserId, batch.expiresAt, item.condition, notes, item.requestedQuantity, item.unit_of_measure],
       );
+      await refreshInventoryStatus(client, item.id);
       const issuance = {
         id: inserted.rows[0].id,
         employee_id: employee.id,
@@ -241,6 +237,8 @@ async function createPendingIssuanceBatch({ employeeCode, itemIds, notes, tokenH
         item_code: item.item_code,
         description: item.description,
         item_condition: item.condition,
+        quantity: item.requestedQuantity,
+        unit_of_measure: item.unit_of_measure,
       };
       issuanceItems.push({
         id: issuance.id,
@@ -248,14 +246,18 @@ async function createPendingIssuanceBatch({ employeeCode, itemIds, notes, tokenH
         itemCode: item.item_code,
         itemName: item.description,
         condition: item.condition,
+        quantity: item.requestedQuantity,
+        unitOfMeasure: item.unit_of_measure,
+        availableQuantity: item.availableQuantityBefore - item.requestedQuantity,
       });
 
       await writeAuditLog(client, issuance, {
         changedByUserId: requestedByUserId,
-        reason: `Issuance request for ${issuance.employee_name} is awaiting employee batch email approval.`,
-        oldValues: { inventoryStatus: 'Available' },
+        reason: `Issuance request for ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} is awaiting employee batch email approval.`,
+        oldValues: { inventoryStatus: item.inventory_status, availableQuantity: item.availableQuantityBefore },
         newValues: {
-          inventoryStatus: 'Reserved',
+          inventoryStatus: item.requestedQuantity === item.availableQuantityBefore ? 'Reserved' : 'Available',
+          reservedQuantity: item.requestedQuantity,
           issuanceStatus: 'Pending',
           issuanceBatchId: batch.id,
           employeeCode: employee.employee_code,
@@ -277,7 +279,7 @@ async function createPendingIssuanceBatch({ employeeCode, itemIds, notes, tokenH
     };
   } catch (error) {
     await client.query('ROLLBACK');
-    if (error.code === '23505' && error.constraint === 'employee_issuances_one_active_item_idx') {
+    if (error.code === '23505' && ['employee_issuances_one_active_employee_item_idx', 'employee_issuances_one_active_item_idx'].includes(error.constraint)) {
       throw conflict('May pending o active issuance na ang isa o higit pang item. I-refresh ang inventory at piliin muli.');
     }
     throw error;
@@ -330,7 +332,7 @@ async function markBatchEmailFailed(batchId) {
     }
 
     const itemsResult = await client.query(
-      `SELECT issue.id, issue.employee_id, issue.item_id, employee.employee_code,
+      `SELECT issue.id, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure, employee.employee_code,
               employee.first_name, employee.last_name, inventory.item_code,
               inventory.description
          FROM employee_issuances AS issue
@@ -358,19 +360,12 @@ async function markBatchEmailFailed(batchId) {
       [batchId],
     );
     const itemIds = itemsResult.rows.map((item) => item.item_id);
-    if (itemIds.length > 0) {
-      await client.query(
-        `UPDATE item_catalog
-            SET inventory_status = 'Available'
-          WHERE id = ANY($1::BIGINT[]) AND inventory_status = 'Reserved'`,
-        [itemIds],
-      );
-    }
+    for (const itemId of new Set(itemIds.map(String))) await refreshInventoryStatus(client, itemId);
     for (const issuance of itemsResult.rows) {
       await writeAuditLog(client, issuance, {
-        reason: `Issuance approval email could not be delivered to ${issuance.employee_code}; the item was released.`,
-        oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-        newValues: { issuanceStatus: 'Email Failed', inventoryStatus: 'Available' },
+        reason: `Issuance approval email could not be delivered to ${issuance.employee_code}; ${issuance.quantity} ${issuance.unit_of_measure} were released.`,
+        oldValues: { issuanceStatus: 'Pending', quantity: issuance.quantity, unitOfMeasure: issuance.unit_of_measure },
+        newValues: { issuanceStatus: 'Email Failed' },
       });
     }
     await client.query('COMMIT');
@@ -393,7 +388,9 @@ async function lookupApproval(tokenHash) {
               json_agg(json_build_object(
                 'itemCode', inventory.item_code,
                 'itemName', inventory.description,
-                'condition', issue.item_condition
+                'condition', issue.item_condition,
+                'quantity', issue.quantity,
+                'unitOfMeasure', issue.unit_of_measure
               ) ORDER BY issue.id) FILTER (WHERE issue.id IS NOT NULL),
               '[]'::JSON
             ) AS items
@@ -420,6 +417,8 @@ async function lookupApproval(tokenHash) {
     `SELECT issue.status,
             issue.token_expires_at AS "expiresAt",
             issue.item_condition AS condition,
+            issue.quantity,
+            issue.unit_of_measure AS "unitOfMeasure",
             issue.requested_at AS "requestedAt",
             employee.first_name || ' ' || employee.last_name AS "employeeName",
             employee.employee_code AS "employeeCode",
@@ -450,7 +449,7 @@ async function resolveApproval({ tokenHash, action }) {
     const batch = batchResult.rows[0];
     if (batch) {
       const itemsResult = await client.query(
-        `SELECT issue.id, issue.status, issue.employee_id, issue.item_id,
+        `SELECT issue.id, issue.status, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure,
                 issue.item_condition, issue.notes, employee.employee_code,
                 employee.first_name, employee.last_name, inventory.item_code,
                 inventory.description, inventory.inventory_status
@@ -468,6 +467,8 @@ async function resolveApproval({ tokenHash, action }) {
         itemCode: item.item_code,
         itemName: item.description,
         condition: item.item_condition,
+        quantity: item.quantity,
+        unitOfMeasure: item.unit_of_measure,
       }));
       const firstItem = itemSummaries[0] || {};
 
@@ -502,14 +503,7 @@ async function resolveApproval({ tokenHash, action }) {
           [batch.id],
         );
         const itemIds = items.map((item) => item.item_id);
-        if (itemIds.length > 0) {
-          await client.query(
-            `UPDATE item_catalog
-                SET inventory_status = 'Available'
-              WHERE id = ANY($1::BIGINT[]) AND inventory_status = 'Reserved'`,
-            [itemIds],
-          );
-        }
+        for (const itemId of new Set(itemIds.map(String))) await refreshInventoryStatus(client, itemId);
         for (const item of items) {
           const issuance = {
             employee_id: item.employee_id,
@@ -520,24 +514,23 @@ async function resolveApproval({ tokenHash, action }) {
             description: item.description,
           };
           await writeAuditLog(client, issuance, {
-            reason: `Employee batch approval link expired for ${item.employee_code}; the item was released.`,
-            oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-            newValues: { issuanceStatus: 'Expired', inventoryStatus: 'Available' },
+            reason: `Employee batch approval link expired for ${item.employee_code}; ${item.quantity} ${item.unit_of_measure} were released.`,
+            oldValues: { issuanceStatus: 'Pending', quantity: item.quantity, unitOfMeasure: item.unit_of_measure },
+            newValues: { issuanceStatus: 'Expired' },
           });
         }
         await client.query('COMMIT');
         return { expired: true };
       }
 
-      if (items.length === 0 || items.some((item) => item.status !== 'Pending' || item.inventory_status !== 'Reserved')) {
-        throw conflict('May item sa issuance batch na hindi na pending o reserved. Makipag-ugnayan sa GSO para ma-check ang request.');
+      if (items.length === 0 || items.some((item) => item.status !== 'Pending')) {
+        throw conflict('May item sa issuance batch na hindi na pending. Makipag-ugnayan sa GSO para ma-check ang request.');
       }
 
       const nextStatus = action === 'approve' ? 'Issued' : 'Rejected';
       const decisionNote = action === 'approve'
         ? 'Approved by employee using the batch email approval link.'
         : 'Rejected by employee using the batch email approval link.';
-      const nextInventoryStatus = action === 'approve' ? 'Issued' : 'Available';
       const itemIds = items.map((item) => item.item_id);
 
       await client.query(
@@ -552,12 +545,10 @@ async function resolveApproval({ tokenHash, action }) {
           WHERE batch_id = $1 AND status = 'Pending'`,
         [batch.id, nextStatus, decisionNote],
       );
-      await client.query(
-        `UPDATE item_catalog
-            SET inventory_status = $2
-          WHERE id = ANY($1::BIGINT[]) AND inventory_status = 'Reserved'`,
-        [itemIds, nextInventoryStatus],
-      );
+      const inventoryStatuses = new Map();
+      for (const itemId of new Set(itemIds.map(String))) {
+        inventoryStatuses.set(itemId, await refreshInventoryStatus(client, itemId));
+      }
       for (const item of items) {
         const issuance = {
           employee_id: item.employee_id,
@@ -568,9 +559,9 @@ async function resolveApproval({ tokenHash, action }) {
           description: item.description,
         };
         await writeAuditLog(client, issuance, {
-          reason: `${nextStatus} by employee ${item.employee_code} via batch email approval link.`,
-          oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-          newValues: { issuanceStatus: nextStatus, inventoryStatus: nextInventoryStatus },
+          reason: `${nextStatus} by employee ${item.employee_code} via batch email approval link for ${item.quantity} ${item.unit_of_measure}.`,
+          oldValues: { issuanceStatus: 'Pending', quantity: item.quantity, unitOfMeasure: item.unit_of_measure },
+          newValues: { issuanceStatus: nextStatus, inventoryStatus: inventoryStatuses.get(String(item.item_id)) },
         });
       }
 
@@ -587,7 +578,7 @@ async function resolveApproval({ tokenHash, action }) {
 
     const result = await client.query(
       `SELECT issue.id, issue.status, issue.token_expires_at, issue.employee_id,
-              issue.item_id, issue.item_condition, issue.notes, employee.employee_code,
+              issue.item_id, issue.item_condition, issue.notes, issue.quantity, issue.unit_of_measure, employee.employee_code,
               employee.first_name, employee.last_name, inventory.item_code,
               inventory.description, inventory.inventory_status
          FROM employee_issuances AS issue
@@ -611,6 +602,8 @@ async function resolveApproval({ tokenHash, action }) {
       item_id: row.item_id,
       item_code: row.item_code,
       description: row.description,
+      quantity: row.quantity,
+      unit_of_measure: row.unit_of_measure,
     };
 
     if (row.status !== 'Pending') {
@@ -627,16 +620,11 @@ async function resolveApproval({ tokenHash, action }) {
           WHERE id = $1`,
         [row.id],
       );
-      await client.query(
-        `UPDATE item_catalog
-            SET inventory_status = 'Available'
-          WHERE id = $1 AND inventory_status = 'Reserved'`,
-        [row.item_id],
-      );
+      await refreshInventoryStatus(client, row.item_id);
       await writeAuditLog(client, issuance, {
-        reason: `Employee approval link expired for ${row.employee_code}; the item was released.`,
-        oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-        newValues: { issuanceStatus: 'Expired', inventoryStatus: 'Available' },
+        reason: `Employee approval link expired for ${row.employee_code}; ${row.quantity} ${row.unit_of_measure} were released.`,
+        oldValues: { issuanceStatus: 'Pending', quantity: row.quantity, unitOfMeasure: row.unit_of_measure },
+        newValues: { issuanceStatus: 'Expired' },
       });
       await client.query('COMMIT');
       return { expired: true };
@@ -646,28 +634,17 @@ async function resolveApproval({ tokenHash, action }) {
     const decisionNote = action === 'approve'
       ? 'Approved by employee using the email approval link.'
       : 'Rejected by employee using the email approval link.';
-    const nextInventoryStatus = action === 'approve' ? 'Issued' : 'Available';
-
-    if (row.inventory_status !== 'Reserved') {
-      throw conflict('Hindi na reserved ang inventory item. Makipag-ugnayan sa GSO para ma-check ang request.');
-    }
-
     await client.query(
       `UPDATE employee_issuances
           SET status = $2, decision_note = $3, decided_at = NOW()
         WHERE id = $1 AND status = 'Pending'`,
       [row.id, nextStatus, decisionNote],
     );
-    await client.query(
-      `UPDATE item_catalog
-          SET inventory_status = $2
-        WHERE id = $1 AND inventory_status = 'Reserved'`,
-      [row.item_id, nextInventoryStatus],
-    );
+    const inventoryStatus = await refreshInventoryStatus(client, row.item_id);
     await writeAuditLog(client, issuance, {
-      reason: `${nextStatus} by employee ${row.employee_code} via emailed approval link.`,
-      oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-      newValues: { issuanceStatus: nextStatus, inventoryStatus: nextInventoryStatus },
+      reason: `${nextStatus} by employee ${row.employee_code} via emailed approval link for ${row.quantity} ${row.unit_of_measure}.`,
+      oldValues: { issuanceStatus: 'Pending', quantity: row.quantity, unitOfMeasure: row.unit_of_measure },
+      newValues: { issuanceStatus: nextStatus, inventoryStatus },
     });
 
     await client.query('COMMIT');
@@ -677,6 +654,8 @@ async function resolveApproval({ tokenHash, action }) {
       employeeCode: row.employee_code,
       itemName: row.description,
       itemCode: row.item_code,
+      quantity: row.quantity,
+      unitOfMeasure: row.unit_of_measure,
     };
   } catch (error) {
     await client.query('ROLLBACK');
@@ -698,9 +677,12 @@ async function listEmployeeIssuances(employeeCode) {
 
   const [itemsResult, historyResult] = await Promise.all([
     pool.query(
-      `SELECT inventory.item_code AS code,
+      `SELECT issue.id::TEXT AS id,
+              inventory.item_code AS code,
               inventory.description AS name,
               issue.item_condition AS condition,
+              issue.quantity - issue.returned_quantity AS quantity,
+              issue.unit_of_measure AS "unitOfMeasure",
               to_char(issue.decided_at, 'Mon DD, YYYY · HH12:MI AM') AS "assignedOn"
          FROM employee_issuances AS issue
          JOIN item_catalog AS inventory ON inventory.id = issue.item_id
@@ -712,6 +694,8 @@ async function listEmployeeIssuances(employeeCode) {
       `SELECT history.event,
               history.item,
               history.code,
+              history.quantity,
+              history."unitOfMeasure",
               history.note,
               to_char(history.event_at, 'Mon DD, YYYY') AS date
          FROM (
@@ -722,6 +706,8 @@ async function listEmployeeIssuances(employeeCode) {
                   END AS event,
                   inventory.description AS item,
                   inventory.item_code AS code,
+                  issue.quantity,
+                  issue.unit_of_measure AS "unitOfMeasure",
                   COALESCE(issue.decision_note, issue.notes, '') AS note,
                   COALESCE(issue.decided_at, issue.requested_at) AS event_at,
                   issue.id AS sort_id
@@ -740,6 +726,8 @@ async function listEmployeeIssuances(employeeCode) {
                   END AS event,
                   inventory.description AS item,
                   inventory.item_code AS code,
+                  return_request.quantity,
+                  issue.unit_of_measure AS "unitOfMeasure",
                   CASE return_request.status
                     WHEN 'Pending' THEN 'Awaiting employee email approval. Condition after return: ' || return_request.return_condition || '. GSO notes: ' || return_request.reason
                     WHEN 'Returned' THEN COALESCE(return_request.decision_note, 'Return confirmed by employee.') || ' Condition after return: ' || return_request.return_condition || '. GSO notes: ' || return_request.reason
@@ -776,7 +764,7 @@ async function expirePendingIssuances() {
     let expiredBatchItemCount = 0;
     for (const batch of expiredBatches.rows) {
       const itemsResult = await client.query(
-        `SELECT issue.id, issue.employee_id, issue.item_id, employee.employee_code,
+        `SELECT issue.id, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure, employee.employee_code,
                 employee.first_name, employee.last_name, inventory.item_code,
                 inventory.description
            FROM employee_issuances AS issue
@@ -804,26 +792,19 @@ async function expirePendingIssuances() {
         [batch.id],
       );
       const itemIds = itemsResult.rows.map((item) => item.item_id);
-      if (itemIds.length > 0) {
-        await client.query(
-          `UPDATE item_catalog
-              SET inventory_status = 'Available'
-            WHERE id = ANY($1::BIGINT[]) AND inventory_status = 'Reserved'`,
-          [itemIds],
-        );
-      }
+      for (const itemId of new Set(itemIds.map(String))) await refreshInventoryStatus(client, itemId);
       for (const issuance of itemsResult.rows) {
         await writeAuditLog(client, issuance, {
-          reason: `Employee batch approval link expired for ${issuance.employee_code}; the item was released.`,
-          oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-          newValues: { issuanceStatus: 'Expired', inventoryStatus: 'Available' },
+          reason: `Employee batch approval link expired for ${issuance.employee_code}; ${issuance.quantity} ${issuance.unit_of_measure} were released.`,
+          oldValues: { issuanceStatus: 'Pending', quantity: issuance.quantity, unitOfMeasure: issuance.unit_of_measure },
+          newValues: { issuanceStatus: 'Expired' },
         });
       }
       expiredBatchItemCount += itemsResult.rowCount;
     }
 
     const expiredResult = await client.query(
-      `SELECT issue.id, issue.employee_id, issue.item_id, employee.employee_code,
+      `SELECT issue.id, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure, employee.employee_code,
               employee.first_name, employee.last_name, inventory.item_code,
               inventory.description
          FROM employee_issuances AS issue
@@ -846,16 +827,11 @@ async function expirePendingIssuances() {
           WHERE id = $1 AND status = 'Pending'`,
         [issuance.id],
       );
-      await client.query(
-        `UPDATE item_catalog
-            SET inventory_status = 'Available'
-          WHERE id = $1 AND inventory_status = 'Reserved'`,
-        [issuance.item_id],
-      );
+      await refreshInventoryStatus(client, issuance.item_id);
       await writeAuditLog(client, issuance, {
-        reason: `Employee approval link expired for ${issuance.employee_code}; the item was released.`,
-        oldValues: { issuanceStatus: 'Pending', inventoryStatus: 'Reserved' },
-        newValues: { issuanceStatus: 'Expired', inventoryStatus: 'Available' },
+        reason: `Employee approval link expired for ${issuance.employee_code}; ${issuance.quantity} ${issuance.unit_of_measure} were released.`,
+        oldValues: { issuanceStatus: 'Pending', quantity: issuance.quantity, unitOfMeasure: issuance.unit_of_measure },
+        newValues: { issuanceStatus: 'Expired' },
       });
     }
 

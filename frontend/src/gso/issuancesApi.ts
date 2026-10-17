@@ -2,9 +2,12 @@ import { apiRequest } from '../auth/authApi'
 
 export type EmployeeIssuanceRecord = {
   assignedItems: Array<{
+    id: string
     code: string
     name: string
     condition: string
+    quantity: number
+    unitOfMeasure: string
     assignedOn: string
   }>
   history: Array<{
@@ -12,6 +15,8 @@ export type EmployeeIssuanceRecord = {
     event: string
     item: string
     code: string
+    quantity: number
+    unitOfMeasure: string
     note: string
   }>
 }
@@ -20,6 +25,8 @@ export type ApprovalIssuanceItem = {
   itemCode: string
   itemName: string
   condition: string
+  quantity: number
+  unitOfMeasure: string
 }
 
 export type ApprovalIssuance = {
@@ -31,6 +38,8 @@ export type ApprovalIssuance = {
   employeeCode: string
   itemCode: string
   itemName: string
+  quantity?: number
+  unitOfMeasure?: string
   items?: ApprovalIssuanceItem[]
 }
 
@@ -44,6 +53,9 @@ export type EmployeeReturnRequest = {
   employeeEmail: string
   itemCode: string
   itemName: string
+  quantity: number
+  remainingQuantity?: number
+  unitOfMeasure: string
   condition: string
   reason: string
   requestedAt: string
@@ -51,7 +63,7 @@ export type EmployeeReturnRequest = {
   emailSent: boolean
 }
 
-export async function createEmployeeIssuance(employeeCode: string, itemId: string, notes: string) {
+export async function createEmployeeIssuance(employeeCode: string, itemId: string, notes: string, quantity = 1) {
   const result = await apiRequest<{
     issuance: {
       id: string
@@ -62,18 +74,24 @@ export async function createEmployeeIssuance(employeeCode: string, itemId: strin
       itemCode: string
       itemName: string
       condition: string
+      quantity: number
+      unitOfMeasure: string
       notes: string
       requestedAt: string
       expiresAt: string
     }
   }>('/issuances', {
     method: 'POST',
-    body: JSON.stringify({ employeeCode, itemId, notes }),
+    body: JSON.stringify({ employeeCode, itemId, quantity, notes }),
   })
   return result.issuance
 }
 
-export async function createEmployeeIssuanceBatch(employeeCode: string, itemIds: string[], notes: string) {
+export async function createEmployeeIssuanceBatch(
+  employeeCode: string,
+  items: Array<{ itemId: string; quantity: number }>,
+  notes: string,
+) {
   const result = await apiRequest<{
     batch: {
       id: string
@@ -87,6 +105,9 @@ export async function createEmployeeIssuanceBatch(employeeCode: string, itemIds:
         itemCode: string
         itemName: string
         condition: string
+        quantity: number
+        unitOfMeasure: string
+        availableQuantity: number
       }>
       notes: string
       requestedAt: string
@@ -94,15 +115,22 @@ export async function createEmployeeIssuanceBatch(employeeCode: string, itemIds:
     }
   }>('/issuances/batch', {
     method: 'POST',
-    body: JSON.stringify({ employeeCode, itemIds, notes }),
+    body: JSON.stringify({ employeeCode, items, notes }),
   })
   return result.batch
 }
 
-export async function createEmployeeReturn(employeeCode: string, itemCode: string, condition: string, reason: string) {
+export async function createEmployeeReturn(
+  employeeCode: string,
+  itemCode: string,
+  condition: string,
+  reason: string,
+  issuanceId?: string,
+  quantity?: number,
+) {
   const result = await apiRequest<{ request: EmployeeReturnRequest }>('/issuances/returns', {
     method: 'POST',
-    body: JSON.stringify({ employeeCode, itemCode, condition, reason }),
+    body: JSON.stringify({ employeeCode, itemCode, condition, reason, issuanceId, quantity }),
   })
   return result.request
 }

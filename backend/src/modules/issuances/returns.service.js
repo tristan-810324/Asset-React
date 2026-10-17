@@ -48,7 +48,19 @@ function validateCreateReturn(input) {
     throw httpError(400, 'Pumili ng valid na condition pagkatapos ng GSO inspection.');
   }
   const reason = requiredText(input.reason, 'return reason o notes', 1000);
-  return { employeeCode, itemCode, condition, reason };
+  let quantity = null;
+  if (input.quantity !== undefined && input.quantity !== null && input.quantity !== '') {
+    quantity = Number(input.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2147483647) {
+      throw httpError(400, 'Ang quantity na isosoli ay dapat whole number na hindi bababa sa 1.');
+    }
+  }
+  let issuanceId = null;
+  if (input.issuanceId !== undefined && input.issuanceId !== null && input.issuanceId !== '') {
+    issuanceId = String(input.issuanceId);
+    if (!/^\d{1,20}$/.test(issuanceId)) throw httpError(400, 'Hindi valid ang issued item record.');
+  }
+  return { employeeCode, itemCode, condition, reason, issuanceId, quantity };
 }
 
 function validateToken(value) {
@@ -73,11 +85,13 @@ function escapeHtml(value) {
 }
 
 async function createEmployeeReturn(input, user) {
-  const { employeeCode, itemCode, condition, reason } = validateCreateReturn(input);
+  const { employeeCode, itemCode, condition, reason, issuanceId, quantity } = validateCreateReturn(input);
   const token = crypto.randomBytes(32).toString('base64url');
   const returned = await returnsRepository.confirmReturnByGso({
     employeeCode,
     itemCode,
+    issuanceId,
+    quantity,
     condition,
     reason,
     tokenHash: hashToken(token),
@@ -87,6 +101,8 @@ async function createEmployeeReturn(input, user) {
   const employeeName = escapeHtml(returned.employee_name);
   const itemName = escapeHtml(returned.description);
   const safeItemCode = escapeHtml(returned.item_code);
+  const safeQuantity = `${returned.quantity} ${escapeHtml(returned.unit_of_measure)}`;
+  const safeRemainingQuantity = `${returned.remaining_quantity} ${escapeHtml(returned.unit_of_measure)}`;
   const safeCondition = escapeHtml(condition);
   const safeReason = escapeHtml(reason);
   let emailSent = false;
@@ -100,7 +116,9 @@ async function createEmployeeReturn(input, user) {
         text: [
           'Dear ' + returned.employee_name + ',',
           '',
-          'Thank you for returning ' + returned.description + ' (' + returned.item_code + ') to the General Services Office.',
+          'Thank you for returning ' + returned.quantity + ' ' + returned.unit_of_measure + ' of ' + returned.description + ' (' + returned.item_code + ') to the General Services Office.',
+          'Quantity returned: ' + returned.quantity + ' ' + returned.unit_of_measure,
+          'Quantity still assigned to you: ' + returned.remaining_quantity + ' ' + returned.unit_of_measure,
           'Return condition recorded by GSO: ' + condition,
           'GSO notes: ' + reason,
           '',
@@ -118,6 +136,8 @@ async function createEmployeeReturn(input, user) {
           '<div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">',
           '<div style="font-size:16px;font-weight:700">' + itemName + '</div>',
           '<div style="margin-top:6px;color:#64748b">Asset code: ' + safeItemCode + '</div>',
+          '<div style="margin-top:8px;color:#334155">Quantity returned: <strong>' + safeQuantity + '</strong></div>',
+          '<div style="margin-top:8px;color:#334155">Quantity still assigned to you: <strong>' + safeRemainingQuantity + '</strong></div>',
           '<div style="margin-top:12px;color:#334155">Return condition recorded by GSO: <strong>' + safeCondition + '</strong></div>',
           '<div style="margin-top:8px;color:#334155">GSO notes: ' + safeReason + '</div>',
           '</div>',
@@ -150,6 +170,9 @@ async function createEmployeeReturn(input, user) {
     employeeEmail: returned.employee_email,
     itemCode: returned.item_code,
     itemName: returned.description,
+    quantity: returned.quantity,
+    remainingQuantity: returned.remaining_quantity,
+    unitOfMeasure: returned.unit_of_measure,
     condition,
     reason,
     requestedAt: returned.requestedAt,

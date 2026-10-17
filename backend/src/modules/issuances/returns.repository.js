@@ -1,4 +1,5 @@
 const pool = require('../../config/db');
+const { refreshInventoryStatus } = require('../inventory/inventory.stock');
 
 function notFound(message) {
   return Object.assign(new Error(message), { status: 404 });
@@ -35,6 +36,8 @@ async function writeReturnAuditLog(client, record, {
 async function createPendingReturn({
   employeeCode,
   itemCode,
+  issuanceId = null,
+  quantity = null,
   condition,
   reason,
   tokenHash,
@@ -47,6 +50,7 @@ async function createPendingReturn({
       `SELECT employee.id AS employee_id, employee.employee_code, employee.first_name,
               employee.last_name, employee.email AS employee_email,
               issue.id AS issuance_id, issue.status AS issuance_status,
+              issue.quantity, issue.returned_quantity, issue.unit_of_measure,
               inventory.id AS item_id, inventory.item_code, inventory.description,
               inventory.inventory_status, inventory.condition AS current_condition
          FROM employees AS employee
@@ -55,24 +59,39 @@ async function createPendingReturn({
         WHERE lower(employee.employee_code) = lower($1)
           AND lower(inventory.item_code) = lower($2)
           AND issue.status = 'Issued'
-          AND inventory.inventory_status = 'Issued'
+          AND ($3::BIGINT IS NULL OR issue.id = $3::BIGINT)
         ORDER BY issue.decided_at DESC, issue.id DESC
         LIMIT 1
         FOR UPDATE OF issue, inventory`,
-      [employeeCode, itemCode],
+      [employeeCode, itemCode, issuanceId],
     );
     const issued = issuedResult.rows[0];
     if (!issued) {
       throw notFound('Hindi na active at naka-issue sa employee ang item na ito. I-refresh at subukan muli.');
     }
 
+    const pendingQuantityResult = await client.query(
+      `SELECT COALESCE(SUM(quantity), 0)::INTEGER AS quantity
+         FROM employee_issuance_returns
+        WHERE issuance_id = $1 AND status = 'Pending'`,
+      [issued.issuance_id],
+    );
+    const outstandingQuantity = Number(issued.quantity) - Number(issued.returned_quantity);
+    const alreadyPendingQuantity = Number(pendingQuantityResult.rows[0]?.quantity || 0);
+    const returnQuantity = quantity === null
+      ? outstandingQuantity - alreadyPendingQuantity
+      : Number(quantity);
+    if (!Number.isInteger(returnQuantity) || returnQuantity < 1 || returnQuantity > outstandingQuantity - alreadyPendingQuantity) {
+      throw conflict(`Return quantity must be from 1 to ${Math.max(0, outstandingQuantity - alreadyPendingQuantity)} ${issued.unit_of_measure}.`);
+    }
+
     const inserted = await client.query(
       `INSERT INTO employee_issuance_returns (
          issuance_id, requested_by_user_id, status, token_hash, token_expires_at,
-         return_condition, reason
-       ) VALUES ($1, $2, 'Pending', $3, NOW() + INTERVAL '24 hours', $4, $5)
+         return_condition, reason, quantity
+       ) VALUES ($1, $2, 'Pending', $3, NOW() + INTERVAL '24 hours', $4, $5, $6)
        RETURNING id, status, token_expires_at AS "expiresAt", requested_at AS "requestedAt"`,
-      [issued.issuance_id, requestedByUserId, tokenHash, condition, reason],
+      [issued.issuance_id, requestedByUserId, tokenHash, condition, reason, returnQuantity],
     );
     const returnRequest = {
       id: inserted.rows[0].id,
@@ -84,6 +103,8 @@ async function createPendingReturn({
       employee_name: `${issued.first_name} ${issued.last_name}`,
       employee_email: issued.employee_email,
       issuance_id: issued.issuance_id,
+      quantity: returnQuantity,
+      unit_of_measure: issued.unit_of_measure,
       issuance_status: issued.issuance_status,
       item_id: issued.item_id,
       item_code: issued.item_code,
@@ -95,7 +116,7 @@ async function createPendingReturn({
 
     await writeReturnAuditLog(client, returnRequest, {
       changedByUserId: requestedByUserId,
-      reason: `Return request for ${returnRequest.employee_name} is awaiting employee email approval.`,
+      reason: `Return request for ${returnQuantity} ${issued.unit_of_measure} from ${returnRequest.employee_name} is awaiting employee email approval.`,
       oldValues: {
         issuanceStatus: 'Issued',
         inventoryStatus: 'Issued',
@@ -105,6 +126,7 @@ async function createPendingReturn({
         issuanceStatus: 'Issued',
         inventoryStatus: 'Issued',
         returnStatus: 'Pending',
+        returnQuantity,
         returnCondition: condition,
         returnReason: reason,
       },
@@ -126,6 +148,8 @@ async function createPendingReturn({
 async function confirmReturnByGso({
   employeeCode,
   itemCode,
+  issuanceId = null,
+  quantity = null,
   condition,
   reason,
   tokenHash,
@@ -138,6 +162,7 @@ async function confirmReturnByGso({
       `SELECT employee.id AS employee_id, employee.employee_code, employee.first_name,
               employee.last_name, employee.email AS employee_email,
               issue.id AS issuance_id, issue.status AS issuance_status,
+              issue.quantity, issue.returned_quantity, issue.unit_of_measure,
               inventory.id AS item_id, inventory.item_code, inventory.description,
               inventory.inventory_status, inventory.condition AS current_condition
          FROM employees AS employee
@@ -146,11 +171,11 @@ async function confirmReturnByGso({
         WHERE lower(employee.employee_code) = lower($1)
           AND lower(inventory.item_code) = lower($2)
           AND issue.status = 'Issued'
-          AND inventory.inventory_status = 'Issued'
+          AND ($3::BIGINT IS NULL OR issue.id = $3::BIGINT)
         ORDER BY issue.decided_at DESC, issue.id DESC
         LIMIT 1
         FOR UPDATE OF issue, inventory`,
-      [employeeCode, itemCode],
+      [employeeCode, itemCode, issuanceId],
     );
     const issued = issuedResult.rows[0];
     if (!issued) {
@@ -159,7 +184,7 @@ async function confirmReturnByGso({
 
     const decisionNote = 'Return confirmed by GSO staff.';
     const pendingResult = await client.query(
-      `SELECT id
+      `SELECT id, quantity
          FROM employee_issuance_returns
         WHERE issuance_id = $1 AND status = 'Pending'
         ORDER BY requested_at DESC, id DESC
@@ -168,6 +193,15 @@ async function confirmReturnByGso({
       [issued.issuance_id],
     );
     const pendingReturn = pendingResult.rows[0];
+    const outstandingQuantity = Number(issued.quantity) - Number(issued.returned_quantity);
+    const returnQuantity = pendingReturn
+      ? Number(pendingReturn.quantity)
+      : quantity === null
+        ? outstandingQuantity
+        : Number(quantity);
+    if (!Number.isInteger(returnQuantity) || returnQuantity < 1 || returnQuantity > outstandingQuantity) {
+      throw conflict(`Return quantity must be from 1 to ${outstandingQuantity} ${issued.unit_of_measure}.`);
+    }
     const returnedResult = pendingReturn
       ? await client.query(
         `UPDATE employee_issuance_returns
@@ -186,10 +220,10 @@ async function confirmReturnByGso({
       : await client.query(
         `INSERT INTO employee_issuance_returns (
            issuance_id, requested_by_user_id, status, token_hash, token_expires_at,
-           return_condition, reason, decision_note, decided_at
-         ) VALUES ($1, $2, 'Returned', $3, NOW(), $4, $5, $6, NOW())
+           return_condition, reason, decision_note, decided_at, quantity
+         ) VALUES ($1, $2, 'Returned', $3, NOW(), $4, $5, $6, NOW(), $7)
          RETURNING id, status, requested_at AS "requestedAt", decided_at AS "decidedAt"`,
-        [issued.issuance_id, requestedByUserId, tokenHash, condition, reason, decisionNote],
+        [issued.issuance_id, requestedByUserId, tokenHash, condition, reason, decisionNote, returnQuantity],
       );
     const returnedRow = returnedResult.rows[0];
     if (!returnedRow) {
@@ -198,19 +232,21 @@ async function confirmReturnByGso({
 
     const issuanceUpdate = await client.query(
       `UPDATE employee_issuances
-          SET status = 'Returned'
-        WHERE id = $1 AND status = 'Issued'`,
-      [issued.issuance_id],
+          SET returned_quantity = returned_quantity + $2,
+              status = CASE WHEN returned_quantity + $2 >= quantity THEN 'Returned' ELSE 'Issued' END
+        WHERE id = $1 AND status = 'Issued' AND returned_quantity + $2 <= quantity`,
+      [issued.issuance_id, returnQuantity],
     );
     const itemUpdate = await client.query(
       `UPDATE item_catalog
-          SET inventory_status = 'Available', condition = $2
-        WHERE id = $1 AND inventory_status = 'Issued'`,
+          SET condition = $2
+        WHERE id = $1`,
       [issued.item_id, condition],
     );
     if (issuanceUpdate.rowCount !== 1 || itemUpdate.rowCount !== 1) {
       throw conflict('Hindi na active ang item issuance. I-refresh ang employee at inventory records.');
     }
+    const inventoryStatus = await refreshInventoryStatus(client, issued.item_id);
 
     const returnRecord = {
       employee_id: issued.employee_id,
@@ -219,10 +255,11 @@ async function confirmReturnByGso({
       item_id: issued.item_id,
       item_code: issued.item_code,
       description: issued.description,
+      quantity: returnQuantity,
     };
     await writeReturnAuditLog(client, returnRecord, {
       changedByUserId: requestedByUserId,
-      reason: `Item return confirmed by GSO staff for ${issued.employee_code}.`,
+      reason: `Return of ${returnQuantity} ${issued.unit_of_measure} confirmed by GSO staff for ${issued.employee_code}.`,
       oldValues: {
         returnStatus: null,
         issuanceStatus: 'Issued',
@@ -231,8 +268,9 @@ async function confirmReturnByGso({
       },
       newValues: {
         returnStatus: 'Returned',
-        issuanceStatus: 'Returned',
-        inventoryStatus: 'Available',
+        issuanceStatus: returnQuantity === outstandingQuantity ? 'Returned' : 'Issued',
+        returnedQuantity: Number(issued.returned_quantity) + returnQuantity,
+        inventoryStatus,
         condition,
       },
     });
@@ -248,6 +286,9 @@ async function confirmReturnByGso({
       employee_name: returnRecord.employee_name,
       employee_email: issued.employee_email,
       issuance_id: issued.issuance_id,
+      quantity: returnQuantity,
+      unit_of_measure: issued.unit_of_measure,
+      remaining_quantity: outstandingQuantity - returnQuantity,
       item_id: issued.item_id,
       item_code: issued.item_code,
       description: issued.description,
@@ -321,6 +362,8 @@ async function lookupReturnApproval(tokenHash) {
             return_request.token_expires_at AS "expiresAt",
             return_request.return_condition AS condition,
             return_request.reason,
+            return_request.quantity,
+            issue.unit_of_measure AS "unitOfMeasure",
             return_request.requested_at AS "requestedAt",
             employee.first_name || ' ' || employee.last_name AS "employeeName",
             employee.employee_code AS "employeeCode",
@@ -342,8 +385,9 @@ async function resolveReturnApproval({ tokenHash, action }) {
     await client.query('BEGIN');
     const result = await client.query(
       `SELECT return_request.id, return_request.status, return_request.token_expires_at,
-              return_request.return_condition, return_request.reason,
+              return_request.return_condition, return_request.reason, return_request.quantity,
               issue.id AS issuance_id, issue.status AS issuance_status,
+              issue.quantity AS issued_quantity, issue.returned_quantity, issue.unit_of_measure,
               issue.employee_id, inventory.id AS item_id, inventory.inventory_status,
               inventory.condition AS current_condition, employee.employee_code,
               employee.first_name, employee.last_name, inventory.item_code,
@@ -369,6 +413,8 @@ async function resolveReturnApproval({ tokenHash, action }) {
       item_id: row.item_id,
       item_code: row.item_code,
       description: row.description,
+      quantity: row.quantity,
+      unit_of_measure: row.unit_of_measure,
     };
 
     if (row.status !== 'Pending') {
@@ -419,10 +465,12 @@ async function resolveReturnApproval({ tokenHash, action }) {
         employeeCode: row.employee_code,
         itemName: row.description,
         itemCode: row.item_code,
+        quantity: row.quantity,
+        unitOfMeasure: row.unit_of_measure,
       };
     }
 
-    if (row.issuance_status !== 'Issued' || row.inventory_status !== 'Issued') {
+    if (row.issuance_status !== 'Issued') {
       throw conflict('Hindi na active ang item issuance. Makipag-ugnayan sa GSO para ma-check ang return request.');
     }
 
@@ -435,32 +483,38 @@ async function resolveReturnApproval({ tokenHash, action }) {
     );
     const issuanceUpdate = await client.query(
       `UPDATE employee_issuances
-          SET status = 'Returned'
-        WHERE id = $1 AND status = 'Issued'`,
-      [row.issuance_id],
+          SET returned_quantity = returned_quantity + $2,
+              status = CASE WHEN returned_quantity + $2 >= quantity THEN 'Returned' ELSE 'Issued' END
+        WHERE id = $1 AND status = 'Issued' AND returned_quantity + $2 <= quantity`,
+      [row.issuance_id, row.quantity],
     );
     const itemUpdate = await client.query(
       `UPDATE item_catalog
-          SET inventory_status = 'Available', condition = $2
-        WHERE id = $1 AND inventory_status = 'Issued'`,
+          SET condition = $2
+        WHERE id = $1`,
       [row.item_id, row.return_condition],
     );
     if (issuanceUpdate.rowCount !== 1 || itemUpdate.rowCount !== 1) {
       throw conflict('Hindi na active ang item issuance. Makipag-ugnayan sa GSO para ma-check ang return request.');
     }
+    const inventoryStatus = await refreshInventoryStatus(client, row.item_id);
+    const nextIssuanceStatus = Number(row.returned_quantity) + Number(row.quantity) >= Number(row.issued_quantity)
+      ? 'Returned'
+      : 'Issued';
 
     await writeReturnAuditLog(client, record, {
       reason: `Item return confirmed by employee ${row.employee_code} via emailed approval link.`,
       oldValues: {
         returnStatus: 'Pending',
         issuanceStatus: 'Issued',
-        inventoryStatus: 'Issued',
+        inventoryStatus: row.inventory_status,
         condition: row.current_condition,
       },
       newValues: {
         returnStatus: 'Returned',
-        issuanceStatus: 'Returned',
-        inventoryStatus: 'Available',
+        issuanceStatus: nextIssuanceStatus,
+        returnedQuantity: Number(row.returned_quantity) + Number(row.quantity),
+        inventoryStatus,
         condition: row.return_condition,
       },
     });
@@ -472,6 +526,8 @@ async function resolveReturnApproval({ tokenHash, action }) {
       employeeCode: row.employee_code,
       itemName: row.description,
       itemCode: row.item_code,
+      quantity: row.quantity,
+      unitOfMeasure: row.unit_of_measure,
       condition: row.return_condition,
     };
   } catch (error) {

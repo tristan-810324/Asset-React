@@ -9,7 +9,7 @@ const employeeColumns = `
   employee.email,
   employee.status,
   COALESCE((
-    SELECT COUNT(*)::INTEGER
+    SELECT COALESCE(SUM(issuance.quantity - issuance.returned_quantity), 0)::INTEGER
       FROM employee_issuances AS issuance
      WHERE issuance.employee_id = employee.id
        AND issuance.status = 'Issued'

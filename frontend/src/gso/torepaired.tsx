@@ -79,6 +79,7 @@ function escapeReportHTML(value: string) {
 }
 
 export default function ToRepaired() {
+  const [activeRepairSection, setActiveRepairSection] = useState<'queue' | 'history'>('queue')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedReportDate, setSelectedReportDate] = useState('')
   const [repairItems, setRepairItems] = useState<RepairQueueItem[]>([])
@@ -488,7 +489,7 @@ export default function ToRepaired() {
     <GsoPageFrame activePage="To Be Repaired" searchPlaceholder="Search asset, code, or reporter...">
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
-        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="relative">
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
               Asset Maintenance
@@ -498,9 +499,24 @@ export default function ToRepaired() {
               Review equipment reported for inspection, maintenance, or repair.
             </p>
           </div>
-          <span className="rounded-xl border border-white/10 bg-white/8 px-3.5 py-2 text-xs font-bold text-blue-100">
-            {isLoadingRepairs ? 'Loading repair queue…' : `${repairItems.length} item(s) in queue`}
-          </span>
+          <div className="mt-5 flex flex-wrap gap-2 border-t border-white/10 pt-4" role="group" aria-label="Repair records view">
+            <button
+              type="button"
+              aria-pressed={activeRepairSection === 'queue'}
+              onClick={() => setActiveRepairSection('queue')}
+              className={`rounded-xl px-4 py-2 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${activeRepairSection === 'queue' ? 'bg-white text-[#09244a]' : 'border border-white/10 bg-white/8 text-white hover:bg-white/15'}`}
+            >
+              Items To Be Repaired ({isLoadingRepairs ? '…' : repairItems.length})
+            </button>
+            <button
+              type="button"
+              aria-pressed={activeRepairSection === 'history'}
+              onClick={() => setActiveRepairSection('history')}
+              className={`rounded-xl px-4 py-2 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${activeRepairSection === 'history' ? 'bg-white text-[#09244a]' : 'border border-white/10 bg-white/8 text-white hover:bg-white/15'}`}
+            >
+              Complete Repair History ({isLoadingRepairs ? '…' : repairHistoryItems.length})
+            </button>
+          </div>
         </div>
       </section>
 
@@ -555,6 +571,7 @@ export default function ToRepaired() {
         </div>
       )}
 
+      {activeRepairSection === 'queue' && (
       <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
@@ -674,7 +691,9 @@ export default function ToRepaired() {
           </table>
         </div>
       </section>
+      )}
 
+      {activeRepairSection === 'history' && (
       <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
@@ -732,6 +751,7 @@ export default function ToRepaired() {
           </table>
         </div>
       </section>
+      )}
 
       {selectedRepairItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
@@ -794,7 +814,7 @@ export default function ToRepaired() {
       )}
 
       {repairCompletionItem && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
           <section role="dialog" aria-modal="true" aria-labelledby="repair-completion-title" className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
