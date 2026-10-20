@@ -1486,7 +1486,7 @@ export default function ItemsMasterData() {
           </div>
         </div>
 
-        <div className="inventory-list-scrollbar max-h-[36rem] overflow-auto border-t border-slate-100">
+        <div className="inventory-list-scrollbar max-h-144 overflow-auto border-t border-slate-100">
           <table className="min-w-245 w-full text-left">
             <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
               <tr>
