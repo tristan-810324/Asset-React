@@ -114,6 +114,272 @@ function formatMoney(value: number | string | null, emptyValue = 'PHP 0.00') {
   return Number.isFinite(amount) ? `PHP ${new Intl.NumberFormat('en-PH', { maximumFractionDigits: 2 }).format(amount)}` : emptyValue
 }
 
+function downloadInventoryFile(fileName: string, content: BlobPart[], mimeType: string) {
+  const file = new Blob(content, { type: mimeType })
+  const fileUrl = URL.createObjectURL(file)
+  const link = document.createElement('a')
+  link.href = fileUrl
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.setTimeout(() => URL.revokeObjectURL(fileUrl), 0)
+}
+
+function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: string) {
+  if (data.length === 0) {
+    alert('There is no inventory data to export to Excel.')
+    return
+  }
+
+  const escapeHTML = (value: string) => value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character] || character)
+  const totalQuantity = data.reduce((total, item) => total + (Number(item.quantityValue ?? item.quantity) || 0), 0)
+  const availableQuantity = data.reduce((total, item) => total + (Number(item.availableQuantity) || 0), 0)
+  const needsAttentionCount = data.filter((item) => {
+    const condition = item.condition.toLowerCase()
+    return condition.includes('repair') || condition.includes('maintenance') || condition === 'unserviceable'
+  }).length
+  const generatedAt = new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'long',
+    timeStyle: 'short',
+    timeZone: 'Asia/Manila',
+  }).format(new Date())
+
+  const reportRows = data.map((item, index) => {
+    const rowBackground = index % 2 === 0 ? '#ffffff' : '#f1f5f9'
+    const conditionColor = item.conditionTone.includes('emerald')
+      ? '#047857'
+      : item.conditionTone.includes('sky')
+        ? '#0369a1'
+        : item.conditionTone.includes('amber')
+          ? '#b45309'
+          : item.conditionTone.includes('rose')
+            ? '#be123c'
+            : '#475569'
+    const conditionBackground = item.conditionTone.includes('emerald')
+      ? '#ecfdf5'
+      : item.conditionTone.includes('sky')
+        ? '#f0f9ff'
+        : item.conditionTone.includes('amber')
+          ? '#fffbeb'
+          : item.conditionTone.includes('rose')
+            ? '#fff1f2'
+            : '#f1f5f9'
+    const statusStyle = item.statusTone.includes('emerald')
+      ? 'background:#ecfdf5;color:#047857;'
+      : item.statusTone.includes('blue')
+        ? 'background:#eff6ff;color:#1d4ed8;'
+        : item.statusTone.includes('violet')
+          ? 'background:#f5f3ff;color:#6d28d9;'
+          : 'background:#fffbeb;color:#b45309;'
+
+    return `<tr style="background:${rowBackground};">
+      <td style="width:250px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
+        <strong style="color:#0f172a;">${escapeHTML(item.name)}</strong><br>
+        <span style="font-size:10pt;color:#475569;">${escapeHTML(item.code)}</span><br>
+        <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span>
+      </td>
+      <td style="width:150px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
+        <strong>${escapeHTML(item.acquired)}</strong><br>
+        <span style="font-size:10pt;color:#64748b;">${escapeHTML(item.time)}</span>
+      </td>
+      <td style="width:180px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
+        <strong style="color:#0f172a;">Unit ${escapeHTML(item.unitCost)}</strong><br>
+        <span style="font-size:9pt;color:#475569;">Acquired ${escapeHTML(item.acquisitionCost)}</span><br>
+        <span style="font-size:9pt;color:#64748b;">Assessed ${escapeHTML(item.currentValue)}</span>
+      </td>
+      <td style="width:220px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
+        <strong>${escapeHTML(item.availableQuantity)} available / ${escapeHTML(item.quantity)} total ${escapeHTML(item.unit)}</strong><br>
+        <span style="display:inline-block;margin-top:5px;padding:4px 7px;background:${conditionBackground};color:${conditionColor};font-weight:bold;">${escapeHTML(item.condition)}</span>
+      </td>
+      <td style="width:260px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeHTML(assignedCustodianForList(item))}</td>
+      <td style="width:140px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
+        <span style="${statusStyle}display:inline-block;padding:4px 7px;font-weight:bold;">${escapeHTML(item.status)}</span>
+      </td>
+    </tr>`
+  }).join('')
+
+  const dateSummary = selectedDate
+    ? `Filtered by acquisition date: ${escapeHTML(formatAcquiredDate(selectedDate))}`
+    : 'Includes the records matching the selected filters'
+  const workbookHTML = `<!DOCTYPE html>
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <meta name="ProgId" content="Excel.Sheet">
+        <title>Inventory Master List Report</title>
+        <style>
+          body { font-family: Calibri, Arial, sans-serif; color: #1e293b; }
+          table { border-collapse: collapse; }
+          .report-table { table-layout: fixed; width: 1200px; }
+          .report-table th { padding: 10px; background: #09244a; color: #ffffff; border: 1px solid #09244a; text-align: left; }
+          .summary td { padding: 10px 14px; border: 1px solid #dbe3ef; }
+          .report-table td { mso-number-format: "\\@"; }
+        </style>
+      </head>
+      <body>
+        <table style="width:1200px;margin-bottom:14px;border-collapse:collapse;">
+          <tr><td colspan="6" style="padding:18px 20px;background:#09244a;color:#ffffff;">
+            <div style="font-size:10pt;font-weight:bold;letter-spacing:1px;color:#bfdbfe;">ASSET CUSTODY &amp; TRACKING</div>
+            <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">Inventory Master List Report</h1>
+            <div style="font-size:10pt;color:#dbeafe;">Generated ${escapeHTML(generatedAt)} · ${dateSummary}</div>
+          </td></tr>
+        </table>
+        <table class="summary" style="width:1200px;margin-bottom:16px;border-collapse:collapse;">
+          <tr>
+            <td style="width:25%;background:#f8fafc;"><div style="font-size:9pt;color:#64748b;">TOTAL ITEMS</div><strong style="font-size:16pt;color:#09244a;">${data.length}</strong></td>
+            <td style="width:25%;background:#eff6ff;"><div style="font-size:9pt;color:#1d4ed8;">TOTAL STOCK</div><strong style="font-size:16pt;color:#1d4ed8;">${totalQuantity}</strong></td>
+            <td style="width:25%;background:#ecfdf5;"><div style="font-size:9pt;color:#047857;">AVAILABLE QUANTITY</div><strong style="font-size:16pt;color:#047857;">${availableQuantity}</strong></td>
+            <td style="width:25%;background:#fff1f2;"><div style="font-size:9pt;color:#be123c;">NEEDS ATTENTION</div><strong style="font-size:16pt;color:#be123c;">${needsAttentionCount}</strong></td>
+          </tr>
+        </table>
+        <table class="report-table">
+          <colgroup>
+            <col style="width:250px;"><col style="width:150px;"><col style="width:180px;">
+            <col style="width:220px;"><col style="width:260px;"><col style="width:140px;">
+          </colgroup>
+          <thead><tr>
+            <th>Item</th><th>Acquired</th><th>Value</th>
+            <th>Stock / Condition</th><th>Assigned / Custodian</th><th>Status</th>
+          </tr></thead>
+          <tbody>${reportRows}</tbody>
+        </table>
+      </body>
+    </html>`
+
+  downloadInventoryFile(
+    `Inventory_Master_List_Styled_Report_${new Date().toISOString().slice(0, 10)}.xls`,
+    ['\uFEFF', workbookHTML],
+    'application/vnd.ms-excel;charset=utf-8',
+  )
+}
+
+function generateInventoryWord(data: InventoryItem[], selectedDate: string) {
+  if (data.length === 0) {
+    alert('There is no inventory data to export to Word.')
+    return
+  }
+
+  const escapeHTML = (value: string) => value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character] || character)
+  const totalQuantity = data.reduce((total, item) => total + (Number(item.quantityValue) || 0), 0)
+  const availableQuantity = data.reduce((total, item) => total + (Number(item.availableQuantity) || 0), 0)
+  const generatedAt = new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'long',
+    timeStyle: 'short',
+    timeZone: 'Asia/Manila',
+  }).format(new Date())
+
+  const reportRows = data.map((item, index) => {
+    const rowBackground = index % 2 === 0 ? '#ffffff' : '#f8fafc'
+    const conditionTone = item.conditionTone.includes('emerald')
+      ? { background: '#ecfdf5', color: '#047857' }
+      : item.conditionTone.includes('sky')
+        ? { background: '#f0f9ff', color: '#0369a1' }
+        : item.conditionTone.includes('amber')
+          ? { background: '#fffbeb', color: '#b45309' }
+          : item.conditionTone.includes('rose')
+            ? { background: '#fff1f2', color: '#be123c' }
+            : { background: '#f1f5f9', color: '#475569' }
+    const statusColor = item.statusTone.includes('emerald')
+      ? '#047857'
+      : item.statusTone.includes('blue')
+        ? '#1d4ed8'
+        : item.statusTone.includes('rose')
+          ? '#be123c'
+          : '#475569'
+
+    return `<tr style="background:${rowBackground};page-break-inside:avoid;">
+      <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
+        <strong style="color:#0f172a;">${escapeHTML(item.name)}</strong><br>
+        <span style="font-size:9pt;color:#475569;">Code: ${escapeHTML(item.code)}</span><br>
+        <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span>
+      </td>
+      <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;white-space:nowrap;">
+        <strong>${escapeHTML(item.acquired)}</strong><br>
+        <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.time)}</span>
+      </td>
+      <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
+        <strong>Unit ${escapeHTML(item.unitCost)}</strong><br>
+        <span style="font-size:9pt;color:#475569;">Acquired ${escapeHTML(item.acquisitionCost)}</span><br>
+        <span style="font-size:9pt;color:#64748b;">Assessed ${escapeHTML(item.currentValue)}</span>
+      </td>
+      <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
+        <strong>${escapeHTML(item.availableQuantity)} available / ${escapeHTML(item.quantity)} total ${escapeHTML(item.unit)}</strong><br>
+        <span style="display:inline-block;margin-top:5px;padding:3px 7px;background:${conditionTone.background};color:${conditionTone.color};font-weight:bold;">${escapeHTML(item.condition)}</span>
+      </td>
+      <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">${escapeHTML(assignedCustodianForList(item))}</td>
+      <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;color:${statusColor};font-weight:bold;">${escapeHTML(item.status)}</td>
+    </tr>`
+  }).join('')
+
+  const dateSummary = selectedDate
+    ? `Filtered by acquisition date: ${escapeHTML(formatAcquiredDate(selectedDate))}`
+    : 'Includes all acquisition dates'
+  const documentHTML = `<!DOCTYPE html>
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8">
+        <title>Inventory Master List Report</title>
+        <style>
+          @page Section1 { size: 11in 8.5in; mso-page-orientation: landscape; margin: 0.45in; }
+          div.Section1 { page: Section1; }
+          body { font-family: Arial, sans-serif; color: #1e293b; font-size: 10pt; }
+          table { border-collapse: collapse; width: 100%; }
+          thead { display: table-header-group; }
+          tr { page-break-inside: avoid; }
+        </style>
+      </head>
+      <body>
+        <div class="Section1">
+          <table style="margin-bottom:16px;border-collapse:collapse;">
+            <tr><td style="padding:18px 20px;background:#09244a;color:#ffffff;">
+              <div style="font-size:9pt;font-weight:bold;letter-spacing:1.2px;color:#bfdbfe;">ASSET CUSTODY &amp; TRACKING</div>
+              <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">Inventory Master List</h1>
+              <div style="font-size:9pt;color:#dbeafe;">Generated ${escapeHTML(generatedAt)} · ${dateSummary}</div>
+            </td></tr>
+          </table>
+          <table style="margin-bottom:16px;border-collapse:separate;border-spacing:8px 0;">
+            <tr>
+              <td style="width:33.33%;padding:10px 12px;border:1px solid #dbe3ef;background:#f8fafc;"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;">Records in this report</div><strong style="font-size:16pt;color:#09244a;">${data.length}</strong></td>
+              <td style="width:33.33%;padding:10px 12px;border:1px solid #dbe3ef;background:#eff6ff;"><div style="font-size:8pt;color:#1d4ed8;text-transform:uppercase;">Total stock quantity</div><strong style="font-size:16pt;color:#1d4ed8;">${totalQuantity}</strong></td>
+              <td style="width:33.33%;padding:10px 12px;border:1px solid #d1fae5;background:#ecfdf5;"><div style="font-size:8pt;color:#047857;text-transform:uppercase;">Available quantity</div><strong style="font-size:16pt;color:#047857;">${availableQuantity}</strong></td>
+            </tr>
+          </table>
+          <table style="width:100%;border-collapse:collapse;font-size:9pt;">
+            <thead><tr style="background:#09244a;color:#ffffff;">
+              <th style="padding:9px;border:1px solid #09244a;text-align:left;">Item</th>
+              <th style="padding:9px;border:1px solid #09244a;text-align:left;">Acquired</th>
+              <th style="padding:9px;border:1px solid #09244a;text-align:left;">Value</th>
+              <th style="padding:9px;border:1px solid #09244a;text-align:left;">Stock / Condition</th>
+              <th style="padding:9px;border:1px solid #09244a;text-align:left;">Assigned / Custodian</th>
+              <th style="padding:9px;border:1px solid #09244a;text-align:left;">Status</th>
+            </tr></thead>
+            <tbody>${reportRows}</tbody>
+          </table>
+          <p style="margin-top:12px;font-size:8pt;color:#64748b;">This report contains the inventory records matching the filters selected in Item Master Data.</p>
+        </div>
+      </body>
+    </html>`
+
+  downloadInventoryFile(
+    `Inventory_Master_List_${new Date().toISOString().slice(0, 10)}.doc`,
+    ['\uFEFF', documentHTML],
+    'application/msword;charset=utf-8',
+  )
+}
+
 function formatCreatedAt(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Recently'
@@ -272,7 +538,7 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
 
 export default function ItemsMasterData() {
   // View mode tab state
-  const [activeTab, setActiveTab] = useState<'add_and_view' | 'full_inventory'>('add_and_view')
+  const [activeTab, setActiveTab] = useState<'add_and_view' | 'full_inventory'>('full_inventory')
 
   // Dynamic categories state
   const [categories, setCategories] = useState<InventoryCategory[]>([])
@@ -314,6 +580,7 @@ export default function ItemsMasterData() {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all')
   const [selectedConditionFilter, setSelectedConditionFilter] = useState('all')
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('all')
+  const [selectedInventoryDate, setSelectedInventoryDate] = useState('')
 
   // Add Item form state
   const [formData, setFormData] = useState({
@@ -624,6 +891,10 @@ export default function ItemsMasterData() {
 
     return matchesSearch && matchesCategory && matchesCondition && matchesStatus
   })
+  const fullInventoryItems = selectedInventoryDate
+    ? filteredItems.filter((item) => item.dateAcquiredValue?.slice(0, 10) === selectedInventoryDate)
+    : filteredItems
+  const displayedItems = activeTab === 'add_and_view' ? filteredItems.slice(0, 4) : fullInventoryItems
 
   return (
     <GsoPageFrame
@@ -1152,9 +1423,55 @@ export default function ItemsMasterData() {
               </p>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-end gap-2">
+            {activeTab === 'full_inventory' && (
+              <>
+                <label className="block w-40">
+                  <span className="mb-1 block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-500">Filter by date</span>
+                  <input
+                    type="date"
+                    value={selectedInventoryDate}
+                    onChange={(event) => setSelectedInventoryDate(event.target.value)}
+                    aria-label="Filter inventory by acquisition date"
+                    className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                  />
+                </label>
+                {selectedInventoryDate && (
+                  <button
+                    type="button"
+                    aria-label="Clear date filter"
+                    onClick={() => setSelectedInventoryDate('')}
+                    className="mb-0.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[0.65rem] font-bold text-slate-600 transition hover:bg-slate-100"
+                  >
+                    Clear date
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => generateInventorySpreadsheet(fullInventoryItems, selectedInventoryDate)}
+                  className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#138548] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#0f7440] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2"
+                >
+                  <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6M8 13h2M8 17h2M14 13h2M14 17h2" />
+                  </svg>
+                  Generate CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generateInventoryWord(fullInventoryItems, selectedInventoryDate)}
+                  className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#2d5aa3] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#264e8e] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2"
+                >
+                  <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6M8 13h8M8 17h8" />
+                  </svg>
+                  Generate Word
+                </button>
+              </>
+            )}
             <span className="rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
-              {filteredItems.length} item(s) found
+              {activeTab === 'full_inventory' ? fullInventoryItems.length : filteredItems.length} item(s) found
             </span>
 
             {activeTab === 'add_and_view' && (
@@ -1169,20 +1486,20 @@ export default function ItemsMasterData() {
           </div>
         </div>
 
-        <div className="overflow-x-auto border-t border-slate-100">
+        <div className="inventory-list-scrollbar max-h-[36rem] overflow-auto border-t border-slate-100">
           <table className="min-w-245 w-full text-left">
             <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
               <tr>
-                <th className="px-5 py-3.5 sm:px-6">Item</th>
-                <th className="px-5 py-3.5">Acquired</th>
-                <th className="px-5 py-3.5">Value</th>
-                <th className="px-5 py-3.5">Stock / condition</th>
-                <th className="px-5 py-3.5">Assigned / Custodian</th>
-                <th className="px-5 py-3.5 sm:px-6">Status</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Item</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Acquired</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Value</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Stock / condition</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Assigned / Custodian</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Status</th>
               </tr>
             </thead>
             <tbody>
-              {filteredItems.map((item, index) => (
+              {displayedItems.map((item, index) => (
                 <tr
                   key={`${item.code}-${index}`}
                   onClick={() => setSelectedItem(item)}
