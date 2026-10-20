@@ -57,7 +57,7 @@ export default function Hero() {
           {/* Fully Responsive Buttons */}
           <div className="mt-7 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center sm:gap-4">
             <a
-              href="/dashboard"
+              href="/login"
               className="inline-flex min-h-12 items-center justify-center gap-2.5 rounded-xl bg-blue-600 px-6 py-3.5 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-blue-600/30 transition-all hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 sm:min-w-48"
             >
               Access Dashboard

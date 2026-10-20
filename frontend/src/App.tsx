@@ -17,11 +17,15 @@ import IssuanceApproval from './gso/issuanceapproval'
 
 
 import Login from './auth/login'
+import Register from './auth/register'
 import ForgotPassword from './auth/forgotpassword'
 import ResetOtp from './auth/resetotp'
 import ResetPassword from './auth/resetpassword'
 import VerifyEmailOtp from './auth/verifyemailotp'
 import Hero from './landing/hero'
+import LandingHome from './landing/home'
+import AboutPage from './landing/about'
+import ContactPage from './landing/contact'
 import { ApiError, clearAuthSession, dashboardPathForRoles, getCurrentUser, hasAuthToken } from './auth/authApi'
 
 function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; children: ReactNode }) {
@@ -80,6 +84,10 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
 export default function App() {
   const path = window.location.pathname
 
+  if (path === '/about') return <AboutPage />
+  if (path === '/contact') return <ContactPage />
+  if (path === '/' || path === '/dashboard') return <LandingHome />
+
   if (path === '/issuance-approval') return <IssuanceApproval />
 
   if (path === '/admin' || path === '/admin/dashboard') {
@@ -114,6 +122,7 @@ export default function App() {
   }
   if (path === '/login' && window.location.hash === '#forgot-password') return <ForgotPassword />
   if (path === '/login') return <Login />
+  if (path === '/register') return <Register />
   if (path === '/forgot-password') return <ForgotPassword />
   if (path === '/reset-otp') return <ResetOtp />
   if (path === '/reset-password') return <ResetPassword />
