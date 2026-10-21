@@ -1424,7 +1424,7 @@ export default function EmployeeMasterData() {
                       <th className="px-3.5 py-2.5">Asset Code</th>
                       <th className="px-3.5 py-2.5">Item Name</th>
                       <th className="px-3.5 py-2.5">Quantity</th>
-                      <th className="min-w-[6.5rem] whitespace-nowrap px-3.5 py-2.5">Condition</th>
+                      <th className="min-w-26 whitespace-nowrap px-3.5 py-2.5">Condition</th>
                       <th className="px-3.5 py-2.5">Assigned Date</th>
                     </tr>
                   </thead>
@@ -1602,7 +1602,7 @@ export default function EmployeeMasterData() {
                         <th className="px-3.5 py-3">Asset Code</th>
                         <th className="px-3.5 py-3">Item Name</th>
                         <th className="px-3.5 py-3">Quantity</th>
-                        <th className="min-w-[6.5rem] whitespace-nowrap px-3.5 py-3">Condition</th>
+                        <th className="min-w-26 whitespace-nowrap px-3.5 py-3">Condition</th>
                         <th className="px-3.5 py-3">Assigned Date</th>
                       </tr>
                     </thead>

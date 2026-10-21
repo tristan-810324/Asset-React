@@ -8,7 +8,6 @@ export type GsoNavigationItem =
   | 'Employee Master Data'
   | 'Issuance Records'
   | 'Returned Items'
-  | 'Issuance & Returned'
   | 'To Be Repaired'
   | 'Notifications'
   | 'Requests & Borrowing'
@@ -110,9 +109,10 @@ function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconN
 
 const navigation: { name: VisibleNavigationItem; icon: NavigationIconName; href?: string; badge?: string; action?: 'notifications' }[] = [
   { name: 'Overview', icon: 'grid', href: '/gso' },
-  { name: 'Item Master Data', icon: 'package', href: '/gso/items' },
+  { name: 'Item Master Data', icon: 'package', href: '/gso/items', badge: '1,248' },
   { name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
-  { name: 'Issuance & Returned', icon: 'clipboard-check', href: '/gso/issuance' },
+  { name: 'Issuance Records', icon: 'clipboard-check', href: '/gso/issuance' },
+  { name: 'Returned Items', icon: 'return', href: '/gso/return-items' },
   { name: 'To Be Repaired', icon: 'wrench', href: '/gso/to-be-repaired' },
   { name: 'Requests & Borrowing', icon: 'clipboard-plus', href: '/gso/requests-borrowing' },
   { name: 'Notifications', icon: 'bell', action: 'notifications' },
