@@ -10,6 +10,7 @@ export type PendingEmailVerification = {
   challengeId: string;
   email: string;
   message?: string;
+  flow?: 'registration';
 };
 
 export type PendingPasswordReset = {
@@ -79,6 +80,14 @@ export async function signIn(email: string, password: string) {
     method: 'POST',
     auth: false,
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function registerBorrower(name: string, email: string, password: string) {
+  return apiRequest<PendingEmailVerification>('/auth/register', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ name, email, password }),
   });
 }
 
@@ -192,5 +201,6 @@ export function clearAuthSession() {
 export function dashboardPathForRoles(roles: string[]) {
   if (roles.includes('IT_ADMIN')) return '/admin';
   if (roles.includes('GSO_STAFF')) return '/gso';
+  if (roles.includes('BORROWER')) return '/borrower';
   return null;
 }

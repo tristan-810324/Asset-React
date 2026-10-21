@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import AdminDashboard from './admin/admindashboard'
 import UserManagement from './admin/usermanagement'
 import AuditLogs from './admin/auditlogs'
+import BorrowerDashboard from './borrowers/borrowerdashboard'
 
 
 
@@ -125,6 +126,9 @@ export default function App() {
   }
   if (path === '/gso' || path === '/gso/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoDashboard /></ProtectedDashboard>
+  }
+  if (path === '/borrower' || path === '/borrower/dashboard') {
+    return <ProtectedDashboard requiredRole="BORROWER"><BorrowerDashboard /></ProtectedDashboard>
   }
   if (path === '/login' && window.location.hash === '#forgot-password') return <ForgotPassword />
   if (path === '/login') return <Login />

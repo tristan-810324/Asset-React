@@ -12,6 +12,39 @@ async function getUserByEmail(email) {
   return result.rows[0] || null;
 }
 
+async function createBorrowerUser({ name, email, passwordHash }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const roleResult = await client.query(
+      `SELECT id FROM roles WHERE role_key = 'BORROWER' LIMIT 1`,
+    );
+    if (!roleResult.rowCount) {
+      throw Object.assign(new Error('The BORROWER role has not been seeded.'), { code: 'BORROWER_ROLE_MISSING' });
+    }
+
+    const userResult = await client.query(
+      `INSERT INTO users (name, email, password_hash)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, email, is_active, email_verified_at, token_version`,
+      [name, email, passwordHash],
+    );
+    const user = userResult.rows[0];
+
+    await client.query(
+      `INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`,
+      [user.id, roleResult.rows[0].id],
+    );
+    await client.query('COMMIT');
+    return user;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function getUserRoles(userId) {
   const result = await pool.query(
     `SELECT r.role_key
@@ -364,6 +397,7 @@ async function updatePasswordWithResetToken({ tokenHash, passwordHash }) {
 
 module.exports = {
   getUserByEmail,
+  createBorrowerUser,
   getUserRoles,
   getSessionUser,
   countRecentLoginFailures,

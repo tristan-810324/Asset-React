@@ -4,6 +4,16 @@ function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
+const registerBorrower = asyncHandler(async (req, res) => {
+  const result = await authService.registerBorrower({
+    name: req.body?.name,
+    email: req.body?.email,
+    password: req.body?.password,
+    ipAddress: req.ip,
+  });
+  res.status(201).json({ success: true, data: result });
+});
+
 const login = asyncHandler(async (req, res) => {
   const result = await authService.login({
     email: req.body?.email,
@@ -49,4 +59,4 @@ const currentUser = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { user: req.user } });
 });
 
-module.exports = { login, verifyEmailOtp, forgotPassword, verifyOtp, resetPassword, currentUser };
+module.exports = { registerBorrower, login, verifyEmailOtp, forgotPassword, verifyOtp, resetPassword, currentUser };

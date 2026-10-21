@@ -4,6 +4,7 @@ import { dashboardPathForRoles, saveAuthToken, savePendingEmailVerification, sig
 export default function Login() {
   const [errorMessage, setErrorMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const emailVerified = window.location.hash === '#verified'
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -136,6 +137,12 @@ export default function Login() {
                   Sign in using your registered email account.
                 </p>
               </div>
+
+              {emailVerified && (
+                <p role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                  Email verified. You can now sign in with your new borrower account.
+                </p>
+              )}
 
               <form className="space-y-3 sm:space-y-4" onSubmit={handleSubmit}>
                 <div>

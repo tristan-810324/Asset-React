@@ -30,8 +30,13 @@ export default function VerifyEmailOtp() {
       const destination = dashboardPathForRoles(result.user.roles)
       if (!destination) throw new Error('This account does not have a dashboard role. Please contact the IT Admin.')
 
-      saveAuthToken(result.token)
       clearPendingEmailVerification()
+      if (pending.flow === 'registration') {
+        window.location.replace('/login#verified')
+        return
+      }
+
+      saveAuthToken(result.token)
       window.location.replace(destination)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'We could not verify your email. Please try again.')
@@ -122,7 +127,7 @@ export default function VerifyEmailOtp() {
               {errorMessage && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{errorMessage}</p>}
 
               <button type="submit" disabled={isSubmitting || !pending} aria-busy={isSubmitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-xs font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-500 active:scale-[0.98] disabled:cursor-wait disabled:opacity-60 sm:h-12">
-                {isSubmitting ? 'Verifying...' : 'Verify and continue to GSO'}
+                {isSubmitting ? 'Verifying...' : 'Verify and continue'}
                 <span aria-hidden="true">→</span>
               </button>
             </form>

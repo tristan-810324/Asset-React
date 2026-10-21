@@ -1,22 +1,35 @@
 import { useState, type FormEvent } from 'react'
+import { registerBorrower, savePendingEmailVerification } from './authApi'
 
 export default function Register() {
   const [feedback, setFeedback] = useState<{ type: 'error' | 'info'; message: string } | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setFeedback(null)
+    setIsSubmitting(true)
 
     const formData = new FormData(event.currentTarget)
+    const name = String(formData.get('name') || '').trim()
+    const email = String(formData.get('email') || '').trim()
     const password = String(formData.get('password') || '')
     const confirmPassword = String(formData.get('confirmPassword') || '')
 
     if (password !== confirmPassword) {
       setFeedback({ type: 'error', message: 'Passwords do not match. Please check and try again.' })
+      setIsSubmitting(false)
       return
     }
 
-    setFeedback({ type: 'info', message: 'Registration is not connected yet. Account creation is not available in this frontend-only page.' })
+    try {
+      const pending = await registerBorrower(name, email, password)
+      savePendingEmailVerification({ ...pending, flow: 'registration' })
+      window.location.replace('/verify-email')
+    } catch (error) {
+      setFeedback({ type: 'error', message: error instanceof Error ? error.message : 'Unable to create your account. Please try again.' })
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -103,17 +116,33 @@ export default function Register() {
 
               <div className="mb-3.5 text-center sm:mb-5 sm:text-left">
                 <h2 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl lg:text-2xl">
-                  Create account
+                  Create borrower account
                 </h2>
                 <p className="mt-0.5 text-[0.7rem] font-medium text-slate-600 sm:text-xs">
-                  Enter your email and create a password.
+                  Register with your email to request and track borrowed items.
                 </p>
               </div>
 
               <form className="space-y-3 sm:space-y-4" onSubmit={handleSubmit}>
                 <div>
+                  <label htmlFor="name" className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]">
+                    Full name
+                  </label>
+                  <input
+                    id="name"
+                    name="name"
+                    type="text"
+                    autoComplete="name"
+                    placeholder="Your full name"
+                    maxLength={120}
+                    required
+                    className="h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3.5 text-xs font-medium text-slate-900 shadow-xs outline-none transition duration-200 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-3 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
+                  />
+                </div>
+
+                <div>
                   <label htmlFor="email" className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]">
-                    DYCI Email Address
+                    Email Address
                   </label>
                   <input
                     id="email"
@@ -135,7 +164,9 @@ export default function Register() {
                     name="password"
                     type="password"
                     autoComplete="new-password"
-                    placeholder="Create a password"
+                    placeholder="At least 8 characters"
+                    minLength={8}
+                    maxLength={72}
                     required
                     className="h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3.5 text-xs font-medium text-slate-900 shadow-xs outline-none transition duration-200 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-3 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
                   />
@@ -151,6 +182,8 @@ export default function Register() {
                     type="password"
                     autoComplete="new-password"
                     placeholder="Re-enter your password"
+                    minLength={8}
+                    maxLength={72}
                     required
                     className="h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3.5 text-xs font-medium text-slate-900 shadow-xs outline-none transition duration-200 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-3 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
                   />
@@ -167,9 +200,11 @@ export default function Register() {
 
                 <button
                   type="submit"
+                  disabled={isSubmitting}
+                  aria-busy={isSubmitting}
                   className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-[0.7rem] font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition duration-200 hover:bg-blue-500 hover:shadow-blue-600/35 active:scale-[0.98] focus:outline-none focus-visible:ring-3 focus-visible:ring-blue-500/25 sm:h-11 sm:text-xs lg:h-12"
                 >
-                  Create account
+                  {isSubmitting ? 'Creating account...' : 'Create account'}
                   <span aria-hidden="true" className="text-sm leading-none sm:text-base">→</span>
                 </button>
               </form>

@@ -42,6 +42,41 @@ function publicUser(user, roles) {
   return { id: user.id, name: user.name, email: user.email, roles };
 }
 
+async function registerBorrower({ name, email, password, ipAddress }) {
+  const normalizedName = typeof name === 'string' ? name.trim() : '';
+  if (!normalizedName || normalizedName.length > 120) {
+    throw httpError(400, 'Enter your name (up to 120 characters).');
+  }
+  const normalizedEmail = normalizeEmail(email);
+  validatePassword(password, { newPassword: true });
+  if (!mailTransport) {
+    throw httpError(503, 'Email verification is unavailable. Configure SMTP or contact the IT Admin.');
+  }
+
+  await enforceRateLimit('borrower_registration_ip', ipAddress, 10, 15);
+  await enforceRateLimit('borrower_registration_email', normalizedEmail, 5, 60);
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  let user;
+  try {
+    user = await authRepository.createBorrowerUser({
+      name: normalizedName,
+      email: normalizedEmail,
+      passwordHash,
+    });
+  } catch (error) {
+    if (error.code === '23505') {
+      throw httpError(409, 'An account with this email already exists. Please sign in.');
+    }
+    if (error.code === 'BORROWER_ROLE_MISSING') {
+      throw httpError(503, 'Borrower registration is not ready. Apply the database seed and try again.');
+    }
+    throw error;
+  }
+
+  return requestEmailVerificationOtp(user);
+}
+
 async function createLoginSession(user, roles, ipAddress) {
   await authRepository.recordLoginEvent({
     userId: user.id,
@@ -249,4 +284,4 @@ async function resetPassword({ resetToken, password, ipAddress }) {
   return { message: 'Password updated. You can now sign in.' };
 }
 
-module.exports = { login, verifyEmailOtp, requestPasswordReset, verifyPasswordResetOtp, resetPassword };
+module.exports = { registerBorrower, login, verifyEmailOtp, requestPasswordReset, verifyPasswordResetOtp, resetPassword };
