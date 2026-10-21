@@ -6,8 +6,7 @@ export type GsoNavigationItem =
   | 'Overview'
   | 'Item Master Data'
   | 'Employee Master Data'
-  | 'Issuance Records'
-  | 'Returned Items'
+  | 'Issuance & Returned'
   | 'To Be Repaired'
   | 'Notifications'
   | 'Requests & Borrowing'
@@ -107,12 +106,11 @@ function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconN
   )
 }
 
-const navigation: { name: VisibleNavigationItem; icon: NavigationIconName; href?: string; badge?: string; action?: 'notifications' }[] = [
+const navigation: { name: VisibleNavigationItem; label?: string; icon: NavigationIconName; href?: string; badge?: string; action?: 'notifications' }[] = [
   { name: 'Overview', icon: 'grid', href: '/gso' },
   { name: 'Item Master Data', icon: 'package', href: '/gso/items', badge: '1,248' },
   { name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
-  { name: 'Issuance Records', icon: 'clipboard-check', href: '/gso/issuance' },
-  { name: 'Returned Items', icon: 'return', href: '/gso/return-items' },
+  { name: 'Issuance & Returned', label: 'Issuance & Returns', icon: 'clipboard-check', href: '/gso/issuance' },
   { name: 'To Be Repaired', icon: 'wrench', href: '/gso/to-be-repaired' },
   { name: 'Requests & Borrowing', icon: 'clipboard-plus', href: '/gso/requests-borrowing' },
   { name: 'Notifications', icon: 'bell', action: 'notifications' },
@@ -171,7 +169,7 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOp
                   aria-expanded={notificationsOpen}
                 >
                   <NavigationIcon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
-                  <span className="flex-1">{item.name}</span>
+                  <span className="flex-1">{item.label ?? item.name}</span>
                 </button>
               )
             }
@@ -188,7 +186,7 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOp
                 aria-current={isActive ? 'page' : undefined}
               >
                 <NavigationIcon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
-                <span className="flex-1">{item.name}</span>
+                <span className="flex-1">{item.label ?? item.name}</span>
                 {item.badge && (
                   <span className={`rounded-md px-1.5 py-0.5 text-[0.62rem] font-black ${isActive ? 'bg-white/18 text-white' : 'bg-white/10 text-blue-100'}`}>
                     {item.badge}
