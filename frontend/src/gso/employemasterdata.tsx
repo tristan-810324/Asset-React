@@ -47,7 +47,9 @@ interface ChangeHistoryRecord {
 interface EmployeeRecord {
   id: string
   firstName: string
+  middleName: string
   lastName: string
+  suffix: string
   initials: string
   department: string
   position: string
@@ -75,7 +77,9 @@ function employeeRecordFromProfile(profile: EmployeeProfile, existing?: Employee
   return {
     id: profile.id,
     firstName,
+    middleName: profile.middleName,
     lastName,
+    suffix: profile.suffix,
     initials: `${firstName[0] || ''}${lastName[0] || ''}`.toUpperCase() || 'EM',
     department: profile.department,
     position: profile.position,
@@ -93,16 +97,33 @@ function employeeRecordFromProfile(profile: EmployeeProfile, existing?: Employee
   }
 }
 
-function employeeProfileInput(employee: EmployeeRecord): EmployeeProfileInput {
+function employeeProfileInput(employee: EmployeeRecord, pictureData?: string | null): EmployeeProfileInput {
   return {
     employeeCode: employee.id,
     firstName: employee.firstName,
+    middleName: employee.middleName,
     lastName: employee.lastName,
+    suffix: employee.suffix,
     department: employee.department,
     position: employee.position,
     email: employee.email,
     status: employee.status as 'Active' | 'Inactive',
+    ...(pictureData !== undefined ? { pictureData } : {}),
   }
+}
+
+const maxEmployeePictureSizeBytes = 1024 * 1024
+
+function readEmployeePicture(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('Unable to read the selected picture.'))
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('Unable to read the selected picture.'))
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 export default function EmployeeMasterData() {
@@ -148,7 +169,9 @@ export default function EmployeeMasterData() {
     empCode: '',
     department: 'Registrar Office',
     lastName: '',
+    middleName: '',
     firstName: '',
+    suffix: '',
     position: '',
     email: '',
     status: 'Active',
@@ -213,7 +236,9 @@ export default function EmployeeMasterData() {
     empCode: '',
     department: 'Registrar Office',
     lastName: '',
+    middleName: '',
     firstName: '',
+    suffix: '',
     position: '',
     email: '',
     picture: null as File | null,
@@ -237,9 +262,21 @@ export default function EmployeeMasterData() {
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFormData((prev) => ({ ...prev, picture: e.target.files![0] }))
+    const file = e.target.files?.[0]
+    if (!file) return
+    const acceptedPictureTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+    if (!acceptedPictureTypes.includes(file.type)) {
+      setEmployeeSaveError('Choose a JPG, PNG, WebP, or GIF picture.')
+      e.target.value = ''
+      return
     }
+    if (file.size > maxEmployeePictureSizeBytes) {
+      setEmployeeSaveError('The picture must be 1 MB or smaller.')
+      e.target.value = ''
+      return
+    }
+    setEmployeeSaveError('')
+    setFormData((prev) => ({ ...prev, picture: file }))
   }
 
   const handleClearForm = () => {
@@ -247,7 +284,9 @@ export default function EmployeeMasterData() {
       empCode: '',
       department: departments[0]?.name || 'Registrar Office',
       lastName: '',
+      middleName: '',
       firstName: '',
+      suffix: '',
       position: '',
       email: '',
       picture: null,
@@ -365,7 +404,9 @@ export default function EmployeeMasterData() {
     const newEmp: EmployeeRecord = {
       id: employeeCode,
       firstName,
+      middleName: formData.middleName.trim(),
       lastName,
+      suffix: formData.suffix.trim(),
       initials: `${firstName[0] || ''}${lastName[0] || ''}`.toUpperCase() || 'EM',
       department: formData.department,
       position: formData.position.trim() || 'Employee',
@@ -379,7 +420,8 @@ export default function EmployeeMasterData() {
     }
 
     try {
-      const { employee } = await createEmployee(employeeProfileInput(newEmp))
+      const pictureData = formData.picture ? await readEmployeePicture(formData.picture) : null
+      const { employee } = await createEmployee(employeeProfileInput(newEmp, pictureData))
       const savedEmployee = employeeRecordFromProfile(employee)
       setEmployees((current) => [savedEmployee, ...current])
       setPersistedEmployeeIds((current) => new Set(current).add(savedEmployee.id))
@@ -399,7 +441,9 @@ export default function EmployeeMasterData() {
       empCode: selectedEmployee.id,
       department: selectedEmployee.department,
       lastName: selectedEmployee.lastName,
+      middleName: selectedEmployee.middleName,
       firstName: selectedEmployee.firstName,
+      suffix: selectedEmployee.suffix,
       position: selectedEmployee.position,
       email: selectedEmployee.email,
       status: selectedEmployee.status,
@@ -439,7 +483,9 @@ export default function EmployeeMasterData() {
       ...selectedEmployee,
       id: editEmployeeData.empCode.trim(),
       firstName: editEmployeeData.firstName.trim(),
+      middleName: editEmployeeData.middleName.trim(),
       lastName: editEmployeeData.lastName.trim(),
+      suffix: editEmployeeData.suffix.trim(),
       initials: `${editEmployeeData.firstName[0] || ''}${editEmployeeData.lastName[0] || ''}`.toUpperCase() || 'EM',
       department: editEmployeeData.department,
       position: editEmployeeData.position.trim() || 'Employee',
@@ -809,7 +855,7 @@ export default function EmployeeMasterData() {
             </p>
           )}
 
-          {/* FIELDS IN REVERSE ORDER */}
+          {/* EMPLOYEE FIELDS */}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <label className="block">
               <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Status</span>
@@ -822,16 +868,6 @@ export default function EmployeeMasterData() {
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
               </select>
-            </label>
-
-            <label className="block sm:col-span-2">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Picture</span>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleFileChange}
-                className="block h-10 w-full rounded-lg border border-slate-200 bg-white text-[0.65rem] text-slate-600 file:mr-3 file:h-full file:border-0 file:bg-slate-50 file:px-3 file:text-[0.65rem] file:font-bold"
-              />
             </label>
 
             <label className="block">
@@ -847,13 +883,25 @@ export default function EmployeeMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Position</span>
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Surname</span>
               <input
                 type="text"
-                name="position"
-                value={formData.position}
+                name="lastName"
+                value={formData.lastName}
                 onChange={handleInputChange}
-                placeholder="Job title or designation"
+                placeholder="Enter surname"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Middle Name</span>
+              <input
+                type="text"
+                name="middleName"
+                value={formData.middleName}
+                onChange={handleInputChange}
+                placeholder="Enter middle name"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               />
             </label>
@@ -871,13 +919,13 @@ export default function EmployeeMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Last Name</span>
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Suffix</span>
               <input
                 type="text"
-                name="lastName"
-                value={formData.lastName}
+                name="suffix"
+                value={formData.suffix}
                 onChange={handleInputChange}
-                placeholder="Enter last name"
+                placeholder="e.g. Jr., III"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               />
             </label>
@@ -899,6 +947,18 @@ export default function EmployeeMasterData() {
             </label>
 
             <label className="block">
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Position</span>
+              <input
+                type="text"
+                name="position"
+                value={formData.position}
+                onChange={handleInputChange}
+                placeholder="Job title or designation"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              />
+            </label>
+
+            <label className="block">
               <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Employee Code</span>
               <input
                 type="text"
@@ -908,6 +968,17 @@ export default function EmployeeMasterData() {
                 placeholder="e.g. EMP-1300"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               />
+            </label>
+
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Picture</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={handleFileChange}
+                className="block h-10 w-full rounded-lg border border-slate-200 bg-white text-[0.65rem] text-slate-600 file:mr-3 file:h-full file:border-0 file:bg-slate-50 file:px-3 file:text-[0.65rem] file:font-bold"
+              />
+              <span className="mt-1 block text-[0.6rem] font-medium text-slate-400">JPG, PNG, WebP, or GIF up to 1 MB</span>
             </label>
           </div>
 
@@ -1186,18 +1257,16 @@ export default function EmployeeMasterData() {
         </div>
 
         <div className="overflow-x-auto border-t border-slate-100">
-          <table className="min-w-220 w-full text-left">
+          <table className="w-full min-w-5xl table-fixed text-left">
             <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
               <tr>
-                <th className="px-5 py-3.5 sm:px-6">Employee</th>
-                <th className="px-5 py-3.5">Employee Code</th>
-                <th className="px-5 py-3.5">Department</th>
-                <th className="px-5 py-3.5">Last Name</th>
-                <th className="px-5 py-3.5">First Name</th>
-                <th className="px-5 py-3.5">Position</th>
-                <th className="px-5 py-3.5">School Email</th>
-                <th className="px-5 py-3.5">Items</th>
-                <th className="px-5 py-3.5 sm:px-6">Status</th>
+                <th className="w-[24%] px-4 py-3.5">Employee</th>
+                <th className="w-[12%] px-4 py-3.5">Employee Code</th>
+                <th className="w-[14%] px-4 py-3.5">Department</th>
+                <th className="w-[13%] px-4 py-3.5">Position</th>
+                <th className="w-[22%] px-4 py-3.5">School Email</th>
+                <th className="w-[7%] px-4 py-3.5 text-center">Items</th>
+                <th className="w-[8%] px-4 py-3.5">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -1207,28 +1276,34 @@ export default function EmployeeMasterData() {
                   onClick={() => handleOpenEmployeeProfile(emp)}
                   className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50/50"
                 >
-                  <td className="px-5 py-4 sm:px-6">
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-100 text-xs font-black text-blue-700">
+                  <td className="px-4 py-3.5">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-100 text-xs font-black text-blue-700">
                         {emp.initials}
                       </span>
-                      <span className="text-xs font-extrabold text-slate-800">
-                        {emp.firstName} {emp.lastName}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-extrabold text-slate-800" title={`${emp.firstName} ${emp.lastName}`}>
+                          {emp.firstName} {emp.lastName}
+                        </span>
+                        <span
+                          className="mt-0.5 block truncate text-[0.62rem] font-medium text-slate-500"
+                          title={`Middle name: ${emp.middleName || '-'} | Suffix: ${emp.suffix || '-'}`}
+                        >
+                          Middle: {emp.middleName || '-'} <span className="px-1 text-slate-300">|</span> Suffix: {emp.suffix || '-'}
+                        </span>
                       </span>
                     </div>
                   </td>
-                  <td className="px-5 py-4 text-xs font-bold text-slate-500">{emp.id}</td>
-                  <td className="px-5 py-4 text-xs font-bold text-slate-700">{emp.department}</td>
-                  <td className="px-5 py-4 text-xs font-semibold text-slate-700">{emp.lastName}</td>
-                  <td className="px-5 py-4 text-xs font-semibold text-slate-700">{emp.firstName}</td>
-                  <td className="px-5 py-4 text-xs font-medium text-slate-600">{emp.position}</td>
-                  <td className="px-5 py-4 text-xs font-medium text-blue-600">{emp.email}</td>
-                  <td className="px-5 py-4">
+                  <td className="truncate px-4 py-3.5 text-xs font-bold text-slate-500" title={emp.id}>{emp.id}</td>
+                  <td className="px-4 py-3.5 text-xs font-bold text-slate-700">{emp.department}</td>
+                  <td className="truncate px-4 py-3.5 text-xs font-medium text-slate-600" title={emp.position}>{emp.position}</td>
+                  <td className="truncate px-4 py-3.5 text-xs font-medium text-blue-600" title={emp.email}>{emp.email}</td>
+                  <td className="px-4 py-3.5 text-center">
                     <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-lg bg-blue-50 px-2 text-xs font-extrabold text-blue-700">
                       {emp.assigned}
                     </span>
                   </td>
-                  <td className="px-5 py-4 sm:px-6">
+                  <td className="px-4 py-3.5">
                     <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${emp.statusTone}`}>
                       {emp.status}
                     </span>
@@ -1237,7 +1312,7 @@ export default function EmployeeMasterData() {
               ))}
               {filteredEmployees.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">
+                  <td colSpan={7} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">
                     No employees match the selected filters.
                   </td>
                 </tr>
@@ -1349,7 +1424,7 @@ export default function EmployeeMasterData() {
                       <th className="px-3.5 py-2.5">Asset Code</th>
                       <th className="px-3.5 py-2.5">Item Name</th>
                       <th className="px-3.5 py-2.5">Quantity</th>
-                      <th className="px-3.5 py-2.5">Condition</th>
+                      <th className="min-w-[6.5rem] whitespace-nowrap px-3.5 py-2.5">Condition</th>
                       <th className="px-3.5 py-2.5">Assigned Date</th>
                     </tr>
                   </thead>
@@ -1359,8 +1434,8 @@ export default function EmployeeMasterData() {
                         <td className="px-3.5 py-2.5 font-bold text-slate-500">{item.code}</td>
                         <td className="px-3.5 py-2.5 font-extrabold text-slate-800">{item.name}</td>
                         <td className="px-3.5 py-2.5 font-bold text-slate-600">{item.quantity} {item.unitOfMeasure}</td>
-                        <td className="px-3.5 py-2.5">
-                          <span className={`rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
+                        <td className="whitespace-nowrap px-3.5 py-2.5 align-middle">
+                          <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
                             {item.condition}
                           </span>
                         </td>
@@ -1527,7 +1602,7 @@ export default function EmployeeMasterData() {
                         <th className="px-3.5 py-3">Asset Code</th>
                         <th className="px-3.5 py-3">Item Name</th>
                         <th className="px-3.5 py-3">Quantity</th>
-                        <th className="px-3.5 py-3">Condition</th>
+                        <th className="min-w-[6.5rem] whitespace-nowrap px-3.5 py-3">Condition</th>
                         <th className="px-3.5 py-3">Assigned Date</th>
                       </tr>
                     </thead>
@@ -1537,8 +1612,8 @@ export default function EmployeeMasterData() {
                           <td className="px-3.5 py-3 font-bold text-slate-600">{item.code}</td>
                           <td className="px-3.5 py-3 font-extrabold text-slate-800">{item.name}</td>
                           <td className="px-3.5 py-3 font-bold text-slate-600">{item.quantity} {item.unitOfMeasure}</td>
-                          <td className="px-3.5 py-3">
-                            <span className={`rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
+                          <td className="whitespace-nowrap px-3.5 py-3 align-middle">
+                            <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
                               {item.condition}
                             </span>
                           </td>
@@ -1899,6 +1974,17 @@ export default function EmployeeMasterData() {
               </label>
 
               <label className="block">
+                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Middle Name</span>
+                <input
+                  type="text"
+                  name="middleName"
+                  value={editEmployeeData.middleName}
+                  onChange={handleEditEmployeeInputChange}
+                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                />
+              </label>
+
+              <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Last Name</span>
                 <input
                   type="text"
@@ -1906,6 +1992,18 @@ export default function EmployeeMasterData() {
                   required
                   value={editEmployeeData.lastName}
                   onChange={handleEditEmployeeInputChange}
+                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Suffix</span>
+                <input
+                  type="text"
+                  name="suffix"
+                  value={editEmployeeData.suffix}
+                  onChange={handleEditEmployeeInputChange}
+                  placeholder="e.g. Jr., III"
                   className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                 />
               </label>

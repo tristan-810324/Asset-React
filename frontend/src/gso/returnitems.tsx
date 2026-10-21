@@ -93,6 +93,7 @@ export default function ReturnItems() {
   const [selectedReportDate, setSelectedReportDate] = useState('')
   const [departmentOptions, setDepartmentOptions] = useState(initialDepartments)
   const [returnedItems, setReturnedItems] = useState<ReturnedItemRecord[]>([])
+  const [mainIssuancesCount, setMainIssuancesCount] = useState(0)
   const [isLoadingReturns, setIsLoadingReturns] = useState(true)
   const [returnLoadError, setReturnLoadError] = useState('')
   const [selectedItem, setSelectedItem] = useState<ReturnedItemRecord | null>(null)
@@ -114,6 +115,16 @@ export default function ReturnItems() {
           employees.map((employee) => listEmployeeIssuances(employee.id)),
         )
         if (!isMounted) return
+        const confirmedIssuancesCount = inventoryItems.reduce(
+          (count, item) => count + (item.changeHistory || []).filter((change) => change.action === 'issued').length,
+          0,
+        )
+        const pendingOrRejectedCount = employeeHistories.reduce((count, result) => count + (
+          result.status === 'fulfilled'
+            ? result.value.history.filter((entry) => entry.event === 'Pending Approval' || entry.event === 'Rejected').length
+            : 0
+        ), 0)
+        setMainIssuancesCount(confirmedIssuancesCount + pendingOrRejectedCount)
 
         if (departmentResponse?.departments.length) {
           setDepartmentOptions(departmentResponse.departments.map((department) => department.name))
@@ -176,6 +187,7 @@ export default function ReturnItems() {
       } catch (error) {
         if (isMounted) {
           setReturnedItems([])
+          setMainIssuancesCount(0)
           setReturnLoadError(error instanceof Error ? error.message : 'Unable to load returned item records.')
         }
       } finally {
@@ -441,7 +453,7 @@ export default function ReturnItems() {
   }
 
   return (
-    <GsoPageFrame activePage="Returned Items" searchPlaceholder="Search returned asset, code, or employee...">
+    <GsoPageFrame activePage="Issuance & Returned" searchPlaceholder="Search returned asset, code, or employee...">
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -458,11 +470,14 @@ export default function ReturnItems() {
             Custody · Returned Assets
           </span>
         </div>
-        <div className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4">
-          <span className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
+        <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Issuance and return records">
+          <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+            + Main Issuances ({mainIssuancesCount})
+          </a>
+          <a href="/gso/return-items" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
             + Returned Items ({returnedItems.length})
-          </span>
-        </div>
+          </a>
+        </nav>
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">

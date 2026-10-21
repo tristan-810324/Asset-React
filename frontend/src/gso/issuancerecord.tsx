@@ -82,6 +82,7 @@ export default function IssuanceRecord() {
   const [departmentOptions, setDepartmentOptions] = useState<string[]>(initialDepartments)
   const [selectedAckFilter, setSelectedAckFilter] = useState('all')
   const [mainIssuances, setMainIssuances] = useState<MainIssuanceRecord[]>([])
+  const [returnedItemsCount, setReturnedItemsCount] = useState(0)
   const [isLoadingMainIssuances, setIsLoadingMainIssuances] = useState(true)
   const [mainIssuanceLoadError, setMainIssuanceLoadError] = useState('')
 
@@ -112,6 +113,10 @@ export default function IssuanceRecord() {
           employees.map((employee) => listEmployeeIssuances(employee.id)),
         )
         if (!isMounted) return
+        setReturnedItemsCount(inventoryItems.reduce(
+          (count, item) => count + (item.changeHistory || []).filter((change) => change.action === 'returned').length,
+          0,
+        ))
 
         const employeesByCode = new Map(employees.map((employee) => [employee.id.toLowerCase(), employee]))
         const inventoryByCode = new Map(inventoryItems.map((item) => [item.itemCode.toLowerCase(), item]))
@@ -201,6 +206,7 @@ export default function IssuanceRecord() {
       } catch (error) {
         if (isMounted) {
           setMainIssuances([])
+          setReturnedItemsCount(0)
           setMainIssuanceLoadError(error instanceof Error ? error.message : 'Unable to load saved issuance records.')
         }
       } finally {
@@ -534,7 +540,7 @@ export default function IssuanceRecord() {
   })
 
   return (
-    <GsoPageFrame activePage="Issuance Records" searchPlaceholder="Search item code, employee, or department...">
+    <GsoPageFrame activePage="Issuance & Returned" searchPlaceholder="Search item code, employee, or department...">
       {/* HEADER SECTION */}
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
@@ -554,11 +560,14 @@ export default function IssuanceRecord() {
         </div>
 
         {/* WORKSPACE NAVIGATION TABS */}
-        <div className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4">
-          <span className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
+        <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Issuance and return records">
+          <a href="/gso/issuance" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
             +  Main Issuances ({mainIssuances.length})
-          </span>
-        </div>
+          </a>
+          <a href="/gso/return-items" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+            + Returned Items ({returnedItemsCount})
+          </a>
+        </nav>
       </section>
 
       {/* SEARCH AND FILTER CONTROL SECTION */}

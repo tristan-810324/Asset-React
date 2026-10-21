@@ -3,7 +3,9 @@ const pool = require('../../config/db');
 const employeeColumns = `
   employee.employee_code AS id,
   employee.first_name AS "firstName",
+  employee.middle_name AS "middleName",
   employee.last_name AS "lastName",
+  employee.suffix,
   employee.department,
   employee.position,
   employee.email,
@@ -50,7 +52,9 @@ function employeeSnapshot(employee) {
   return {
     employeeCode: employee.employee_code,
     firstName: employee.first_name,
+    middleName: employee.middle_name,
     lastName: employee.last_name,
+    suffix: employee.suffix,
     department: employee.department,
     position: employee.position,
     email: employee.email,
@@ -64,17 +68,21 @@ async function createEmployee(employee, { createdByUserId }) {
     await client.query('BEGIN');
     const result = await client.query(
       `INSERT INTO employees (
-         employee_code, first_name, last_name, department, position, email, status, created_by_user_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         employee_code, first_name, middle_name, last_name, suffix, department, position,
+         email, status, picture_data, created_by_user_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id`,
       [
         employee.employeeCode,
         employee.firstName,
+        employee.middleName,
         employee.lastName,
+        employee.suffix,
         employee.department,
         employee.position,
         employee.email,
         employee.status,
+        employee.pictureData,
         createdByUserId,
       ],
     );
@@ -122,18 +130,22 @@ async function updateEmployee(previousCode, employee, { changedByUserId }) {
       `UPDATE employees
           SET employee_code = $2,
               first_name = $3,
-              last_name = $4,
-              department = $5,
-              position = $6,
-              email = $7,
-              status = $8,
+              middle_name = $4,
+              last_name = $5,
+              suffix = $6,
+              department = $7,
+              position = $8,
+              email = $9,
+              status = $10,
               updated_at = NOW()
         WHERE id = $1`,
       [
         previous.id,
         employee.employeeCode,
         employee.firstName,
+        employee.middleName,
         employee.lastName,
+        employee.suffix,
         employee.department,
         employee.position,
         employee.email,

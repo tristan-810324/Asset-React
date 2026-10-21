@@ -3,7 +3,9 @@ import { apiRequest } from '../auth/authApi'
 export type EmployeeProfile = {
   id: string
   firstName: string
+  middleName: string
   lastName: string
+  suffix: string
   department: string
   position: string
   email: string
@@ -18,6 +20,7 @@ export type EmployeeProfile = {
 
 export type EmployeeProfileInput = Omit<EmployeeProfile, 'id' | 'assignedCount' | 'changeHistory'> & {
   employeeCode: string
+  pictureData?: string | null
   reason?: string
 }
 

@@ -8,13 +8,14 @@ export type GsoNavigationItem =
   | 'Employee Master Data'
   | 'Issuance Records'
   | 'Returned Items'
+  | 'Issuance & Returned'
   | 'To Be Repaired'
   | 'Notifications'
   | 'Requests & Borrowing'
   | 'Maintenance'
 
 type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Maintenance'>
-type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'grid' | 'menu' | 'return' | 'search' | 'truck' | 'users'
+type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'menu' | 'package' | 'return' | 'search' | 'truck' | 'users' | 'wrench'
 
 const iconPaths: Record<NavigationIconName, ReactNode> = {
   archive: (
@@ -39,6 +40,20 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
       <path d="M8.5 10h7M8.5 14h7M8.5 18h4" />
     </>
   ),
+  'clipboard-check': (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4.25V3.5A1.5 1.5 0 0 1 10.5 2h3A1.5 1.5 0 0 1 15 3.5v.75" />
+      <path d="m8.5 14 2.25 2.25L15.5 11.5" />
+    </>
+  ),
+  'clipboard-plus': (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="2" />
+      <path d="M9 4.25V3.5A1.5 1.5 0 0 1 10.5 2h3A1.5 1.5 0 0 1 15 3.5v.75" />
+      <path d="M12 11v6M9 14h6" />
+    </>
+  ),
   close: <path d="m6 6 12 12M18 6 6 18" />,
   grid: (
     <>
@@ -49,6 +64,13 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
     </>
   ),
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  package: (
+    <>
+      <path d="m12 3 8.25 4.5v9L12 21l-8.25-4.5v-9L12 3z" />
+      <path d="m3.75 7.5 8.25 4.5 8.25-4.5M12 21v-9" />
+      <path d="m7.75 5.25 8.5 4.75" />
+    </>
+  ),
   return: (
     <>
       <path d="M9 14 4 9l5-5" />
@@ -75,6 +97,7 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
       <path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
     </>
   ),
+  wrench: <path d="M14.7 6.3a5.3 5.3 0 0 0-7.4 7.4l-5.1 5.1a2.1 2.1 0 0 0 3 3l5.1-5.1a5.3 5.3 0 0 0 7.4-7.4l-3.1 3.1-3-3z" />,
 }
 
 function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconName; className?: string }) {
@@ -87,12 +110,11 @@ function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconN
 
 const navigation: { name: VisibleNavigationItem; icon: NavigationIconName; href?: string; badge?: string; action?: 'notifications' }[] = [
   { name: 'Overview', icon: 'grid', href: '/gso' },
-  { name: 'Item Master Data', icon: 'archive', href: '/gso/items', badge: '1,248' },
+  { name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
-  { name: 'Issuance Records', icon: 'truck', href: '/gso/issuance' },
-  { name: 'Returned Items', icon: 'return', href: '/gso/return-items' },
-  { name: 'To Be Repaired', icon: 'clipboard', href: '/gso/to-be-repaired' },
-  { name: 'Requests & Borrowing', icon: 'clipboard', href: '/gso/requests-borrowing' },
+  { name: 'Issuance & Returned', icon: 'clipboard-check', href: '/gso/issuance' },
+  { name: 'To Be Repaired', icon: 'wrench', href: '/gso/to-be-repaired' },
+  { name: 'Requests & Borrowing', icon: 'clipboard-plus', href: '/gso/requests-borrowing' },
   { name: 'Notifications', icon: 'bell', action: 'notifications' },
 ]
 
