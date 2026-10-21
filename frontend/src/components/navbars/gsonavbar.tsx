@@ -108,7 +108,7 @@ function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconN
 
 const navigation: { name: VisibleNavigationItem; label?: string; icon: NavigationIconName; href?: string; badge?: string; action?: 'notifications' }[] = [
   { name: 'Overview', icon: 'grid', href: '/gso' },
-  { name: 'Item Master Data', icon: 'package', href: '/gso/items', badge: '1,248' },
+  { name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
   { name: 'Issuance & Returned', label: 'Issuance & Returns', icon: 'clipboard-check', href: '/gso/issuance' },
   { name: 'To Be Repaired', icon: 'wrench', href: '/gso/to-be-repaired' },

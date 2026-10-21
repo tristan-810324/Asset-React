@@ -26,6 +26,7 @@ type InventoryItem = {
   id?: string
   code: string
   name: string
+  description: string
   initials: string
   category: string
   acquired: string
@@ -391,7 +392,8 @@ function formatCreatedAt(value: string) {
 const changeFieldLabels: Record<string, string> = {
   itemCode: 'Asset Code',
   category: 'Category',
-  description: 'Item Name',
+  itemName: 'Item Name',
+  description: 'Item Description',
   dateAcquired: 'Date Acquired',
   timeAcquired: 'Time Acquired',
   unitCost: 'Unit Cost',
@@ -506,8 +508,9 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
   return {
     id: record.id,
     code: record.itemCode,
-    name: record.description,
-    initials: record.description.trim().slice(0, 2).toUpperCase() || 'IT',
+    name: record.itemName,
+    description: record.description,
+    initials: record.itemName.trim().slice(0, 2).toUpperCase() || 'IT',
     category: record.category,
     acquired: formatAcquiredDate(record.dateAcquired),
     time: formatAcquiredTime(record.timeAcquired),
@@ -563,6 +566,7 @@ export default function ItemsMasterData() {
   const [editFormData, setEditFormData] = useState({
     itemCode: '',
     category: '',
+    itemName: '',
     description: '',
     dateAcquired: '',
     timeAcquired: '',
@@ -586,6 +590,7 @@ export default function ItemsMasterData() {
   const [formData, setFormData] = useState({
     itemCode: '',
     category: '',
+    itemName: '',
     description: '',
     dateAcquired: '',
     timeAcquired: '',
@@ -655,6 +660,7 @@ export default function ItemsMasterData() {
     setFormData({
       itemCode: '',
       category: categories[0]?.name || '',
+      itemName: '',
       description: '',
       dateAcquired: '',
       timeAcquired: '',
@@ -743,7 +749,8 @@ export default function ItemsMasterData() {
     setEditFormData({
       itemCode: selectedItem.code,
       category: selectedItem.category,
-      description: selectedItem.name,
+      itemName: selectedItem.name,
+      description: selectedItem.description,
       dateAcquired: selectedItem.dateAcquiredValue || '',
       timeAcquired: selectedItem.timeAcquiredValue || '',
       unitCost: String(selectedItem.unitCostValue ?? 0),
@@ -786,8 +793,8 @@ export default function ItemsMasterData() {
   const handleUpdateSelectedItem = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedItem?.id) return
-    if (!editFormData.itemCode.trim() || !editFormData.description.trim() || !editFormData.reason.trim()) {
-      setItemEditError('Enter the item code, item description, and reason for the change.')
+    if (!editFormData.itemCode.trim() || !editFormData.itemName.trim() || !editFormData.description.trim() || !editFormData.reason.trim()) {
+      setItemEditError('Enter the item code, item name, item description, and reason for the change.')
       return
     }
 
@@ -814,6 +821,7 @@ export default function ItemsMasterData() {
       const savedRecord = await updateInventoryItem(selectedItem.id, {
         itemCode: editFormData.itemCode.trim(),
         category: editFormData.category,
+        itemName: editFormData.itemName.trim(),
         description: editFormData.description.trim(),
         dateAcquired: editFormData.dateAcquired,
         timeAcquired: editFormData.timeAcquired,
@@ -837,8 +845,8 @@ export default function ItemsMasterData() {
   }
 
   const handleSaveItem = async () => {
-    if (!formData.itemCode.trim() || !formData.description.trim()) {
-      alert('Enter the item code and item description.')
+    if (!formData.itemCode.trim() || !formData.itemName.trim() || !formData.description.trim()) {
+      alert('Enter the item code, item name, and item description.')
       return
     }
 
@@ -856,6 +864,7 @@ export default function ItemsMasterData() {
       const savedRecord = await createInventoryItem({
         itemCode: formData.itemCode.trim(),
         category: formData.category,
+        itemName: formData.itemName.trim(),
         description: formData.description.trim(),
         dateAcquired: formData.dateAcquired,
         timeAcquired: formData.timeAcquired,
@@ -995,13 +1004,29 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item name</span>
+              <input
+                type="text"
+                name="itemName"
+                value={formData.itemName}
+                onChange={handleInputChange}
+                required
+                maxLength={500}
+                placeholder="e.g. Laptop"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              />
+            </label>
+
+            <label className="block">
               <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item description</span>
               <input
                 type="text"
                 name="description"
                 value={formData.description}
                 onChange={handleInputChange}
-                placeholder="Item name or description"
+                required
+                maxLength={500}
+                placeholder="Describe the item"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               />
             </label>
@@ -1568,6 +1593,7 @@ export default function ItemsMasterData() {
                 </span>
                 <div>
                   <h3 className="text-base font-black text-slate-900">{selectedItem.name}</h3>
+                  <p className="mt-1 text-xs font-medium text-slate-500">{selectedItem.description}</p>
                   <p className="text-xs font-bold text-slate-400">{selectedItem.code} · {selectedItem.category}</p>
                 </div>
               </div>
@@ -1782,6 +1808,10 @@ export default function ItemsMasterData() {
                 <select name="category" value={editFormData.category} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
                   {categories.map((category) => <option key={category.id || category.name} value={category.name}>{category.name}</option>)}
                 </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item Name</span>
+                <input name="itemName" required maxLength={500} value={editFormData.itemName} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
               </label>
               <label className="block sm:col-span-2">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item Description</span>

@@ -4,6 +4,7 @@ const itemColumns = `
   i.id,
   i.item_code AS "itemCode",
   i.category,
+  i.item_name AS "itemName",
   i.description,
   to_char(i.date_acquired, 'YYYY-MM-DD') AS "dateAcquired",
   to_char(i.time_acquired, 'HH24:MI') AS "timeAcquired",
@@ -178,6 +179,7 @@ async function getItemById(queryable, id) {
 async function createItem({
   itemCode,
   category,
+  itemName,
   description,
   dateAcquired,
   timeAcquired,
@@ -194,17 +196,18 @@ async function createItem({
     await client.query('BEGIN');
     const result = await client.query(
       `INSERT INTO item_catalog (
-         item_code, category_id, category, description, date_acquired, time_acquired,
+         item_code, category_id, category, item_name, description, date_acquired, time_acquired,
          unit_cost, acquisition_cost, current_value, quantity, unit_of_measure,
          condition, created_by_user_id
        )
-       SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+       SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
          FROM item_categories AS category_row
         WHERE lower(category_row.name) = lower($2)
        RETURNING id`,
       [
         itemCode,
         category,
+        itemName,
         description,
         dateAcquired,
         timeAcquired,
@@ -231,9 +234,10 @@ async function createItem({
          entity_type, entity_key, entity_name, item_id, action, reason,
          old_values, new_values, changed_by_user_id
        ) VALUES ('item', $1, $2, $3, 'created', 'New inventory item created.', '{}'::JSONB, $4::JSONB, $5)`,
-      [String(id), created.description, id, JSON.stringify({
+      [String(id), created.itemName, id, JSON.stringify({
         itemCode: created.itemCode,
         category: created.category,
+        itemName: created.itemName,
         description: created.description,
         dateAcquired: created.dateAcquired,
         timeAcquired: created.timeAcquired,
@@ -260,6 +264,7 @@ function itemSnapshot(item) {
   return {
     itemCode: item.item_code,
     category: item.category,
+    itemName: item.item_name,
     description: item.description,
     dateAcquired: item.date_acquired,
     timeAcquired: item.time_acquired,
@@ -319,15 +324,16 @@ async function updateItem(id, item, { changedByUserId }) {
           SET item_code = $2,
               category_id = category_row.id,
               category = category_row.name,
-              description = $4,
-              date_acquired = $5,
-              time_acquired = $6,
-              unit_cost = $7,
-              acquisition_cost = $8,
-              current_value = $9,
-              quantity = $10,
-              unit_of_measure = $11,
-              condition = $12
+              item_name = $4,
+              description = $5,
+              date_acquired = $6,
+              time_acquired = $7,
+              unit_cost = $8,
+              acquisition_cost = $9,
+              current_value = $10,
+              quantity = $11,
+              unit_of_measure = $12,
+              condition = $13
          FROM item_categories AS category_row
         WHERE inventory_item.id = $1
           AND lower(category_row.name) = lower($3)
@@ -336,6 +342,7 @@ async function updateItem(id, item, { changedByUserId }) {
         id,
         item.itemCode,
         item.category,
+        item.itemName,
         item.description,
         item.dateAcquired,
         item.timeAcquired,
@@ -361,13 +368,14 @@ async function updateItem(id, item, { changedByUserId }) {
        ) VALUES ('item', $1, $2, $3, 'updated', $4, $5::JSONB, $6::JSONB, $7)`,
       [
         String(id),
-        updated.description,
+        updated.itemName,
         id,
         item.reason,
         JSON.stringify(itemSnapshot(previous)),
         JSON.stringify({
           itemCode: updated.itemCode,
           category: updated.category,
+          itemName: updated.itemName,
           description: updated.description,
           dateAcquired: updated.dateAcquired,
           timeAcquired: updated.timeAcquired,

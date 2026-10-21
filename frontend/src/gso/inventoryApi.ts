@@ -18,6 +18,7 @@ export type InventoryItemRecord = {
   id: string
   itemCode: string
   category: string
+  itemName: string
   description: string
   dateAcquired: string | null
   timeAcquired: string | null
@@ -40,6 +41,7 @@ export type InventoryItemRecord = {
 export type NewInventoryItem = {
   itemCode: string
   category: string
+  itemName: string
   description: string
   dateAcquired: string
   timeAcquired: string

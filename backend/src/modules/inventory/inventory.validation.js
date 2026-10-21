@@ -99,6 +99,7 @@ function validateInventoryItem(input, includeReason) {
   const item = {
     itemCode: requiredText(input.itemCode, 'Item Code', 100),
     category: requiredText(input.category || 'Others', 'Category', 120),
+    itemName: requiredText(input.itemName, 'Item Name', 500),
     description: requiredText(input.description, 'Item Description', 500),
     dateAcquired: optionalDate(input.dateAcquired),
     timeAcquired: optionalTime(input.timeAcquired),
