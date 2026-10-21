@@ -13,7 +13,7 @@ export type GsoNavigationItem =
   | 'Maintenance'
 
 type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Maintenance'>
-type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'menu' | 'package' | 'return' | 'search' | 'truck' | 'users' | 'wrench'
+type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
 
 const iconPaths: Record<NavigationIconName, ReactNode> = {
   archive: (
@@ -61,6 +61,13 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
       <rect x="14" y="14" width="6.5" height="6.5" rx="1" />
     </>
   ),
+  history: (
+    <>
+      <path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" />
+      <path d="M3 3v5h5M12 7v5l3 2" />
+    </>
+  ),
+  logout: <><path d="M10 17l5-5-5-5m5 5H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
   package: (
     <>
@@ -81,11 +88,23 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
       <path d="m15.1 15.1 4.15 4.15" />
     </>
   ),
+  settings: (
+    <>
+      <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" />
+      <path d="m19.4 15 .1.1a1.8 1.8 0 0 1-2.5 2.5l-.1-.1a1.8 1.8 0 0 0-3 .9v.2a1.8 1.8 0 0 1-3.6 0v-.2a1.8 1.8 0 0 0-3-.9l-.1.1a1.8 1.8 0 0 1-2.5-2.5l.1-.1a1.8 1.8 0 0 0-.9-3h-.2a1.8 1.8 0 0 1 0-3.6h.2a1.8 1.8 0 0 0 .9-3l-.1-.1a1.8 1.8 0 0 1 2.5-2.5l.1.1a1.8 1.8 0 0 0 3-.9v-.2a1.8 1.8 0 0 1 3.6 0v.2a1.8 1.8 0 0 0 3 .9l.1-.1a1.8 1.8 0 0 1 2.5 2.5l-.1.1a1.8 1.8 0 0 0 .9 3h.2a1.8 1.8 0 0 1 0 3.6h-.2a1.8 1.8 0 0 0-.9 3Z" />
+    </>
+  ),
   truck: (
     <>
       <path d="M3 5h11v11H3zM14 9h3l3 3v4h-6z" />
       <circle cx="7" cy="18" r="2" />
       <circle cx="17" cy="18" r="2" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21a8 8 0 0 1 16 0" />
     </>
   ),
   users: (
@@ -113,7 +132,7 @@ const navigation: { name: VisibleNavigationItem; label?: string; icon: Navigatio
   { name: 'Issuance & Returned', label: 'Issuance & Returns', icon: 'clipboard-check', href: '/gso/issuance' },
   { name: 'To Be Repaired', icon: 'wrench', href: '/gso/to-be-repaired' },
   { name: 'Requests & Borrowing', icon: 'clipboard-plus', href: '/gso/requests-borrowing' },
-  { name: 'Notifications', icon: 'bell', action: 'notifications' },
+  { name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
 ]
 
 type GsoNavbarProps = {
@@ -125,7 +144,7 @@ type GsoNavbarProps = {
   onOpenNotifications: () => void
 }
 
-export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOpen, onClose, onOpenNotifications }: GsoNavbarProps) {
+export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOpen, onClose, onAction, onOpenNotifications }: GsoNavbarProps) {
   return (
     <>
       <aside
@@ -312,10 +331,38 @@ export function GsoPageHeader({
             </button>
 
             {accountMenuOpen && (
-              <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/20">
-                <div className="border-b border-slate-100 px-3 py-3">
-                  <p className="text-xs font-extrabold text-slate-800">GSO Officer</p>
-                  <p className="mt-1 text-[0.65rem] font-semibold text-slate-500">Administrator</p>
+              <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/20">
+                <div className="flex items-center gap-3 border-b border-slate-100 px-3 py-3">
+                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">GO</span>
+                  <div>
+                    <p className="text-xs font-extrabold text-slate-800">GSO Officer</p>
+                    <p className="mt-1 text-[0.65rem] font-semibold text-slate-500">Administrator</p>
+                  </div>
+                </div>
+                <div className="border-b border-slate-100 px-1 py-2">
+                  <p className="px-2.5 pb-1.5 pt-1 text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Settings</p>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAccountMenuOpen(false)
+                      onAction('Profile')
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    <NavigationIcon name="user" className="h-4 w-4 text-slate-400" /> Profile
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAccountMenuOpen(false)
+                      onAction('Audit Trail')
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    <NavigationIcon name="history" className="h-4 w-4 text-slate-400" /> Audit Trail
+                  </button>
                 </div>
                 <button
                   type="button"
@@ -325,9 +372,9 @@ export function GsoPageHeader({
                     clearAuthSession()
                     window.location.replace('/login')
                   }}
-                  className="mt-1 flex w-full items-center rounded-xl px-3 py-2.5 text-left text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                  className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"
                 >
-                  Log out
+                  <NavigationIcon name="logout" className="h-4 w-4" /> Logout
                 </button>
               </div>
             )}

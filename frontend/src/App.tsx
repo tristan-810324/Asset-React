@@ -13,6 +13,7 @@ import ReturnItems from './gso/returnitems'
 import ToRepaired from './gso/torepaired'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
+import Notifications from './gso/notifications'
 
 
 
@@ -22,6 +23,8 @@ import ForgotPassword from './auth/forgotpassword'
 import ResetOtp from './auth/resetotp'
 import ResetPassword from './auth/resetpassword'
 import VerifyEmailOtp from './auth/verifyemailotp'
+
+
 import Hero from './landing/hero'
 import LandingHome from './landing/home'
 import AboutPage from './landing/about'
@@ -101,6 +104,9 @@ export default function App() {
   }
   if (path === '/gso/items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ItemsMasterData /></ProtectedDashboard>
+  }
+  if (path === '/gso/notifications') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><Notifications /></ProtectedDashboard>
   }
   if (path === '/gso/employees') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><EmployeeMasterData /></ProtectedDashboard>
