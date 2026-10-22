@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { clearAuthSession } from '../auth/authApi'
-import AdminNavbar from '../components/navbars/adminnavbar'
+import AdminNavbar, { AdminPageHeader } from '../components/navbars/adminnavbar'
 import { listAuditLogs, type AuditLogAction, type AuditLogEntityType, type AuditLogEntry } from './auditLogsApi'
 
 const pageSize = 25
@@ -131,18 +131,7 @@ export default function AuditLogs() {
     <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
       <AdminNavbar activePath="/admin/audit-logs" mobileMenuOpen={mobileMenuOpen} onMobileMenuClose={() => setMobileMenuOpen(false)} />
       <section className="min-h-screen lg:pl-72">
-        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <button type="button" onClick={() => setMobileMenuOpen(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden" aria-label="Open admin navigation"><Icon name="menu" /></button>
-              <div className="min-w-0">
-                <p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">IT Administration / <span className="text-slate-700">Audit logs</span></p>
-                <p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">Employee, inventory, and category change history</p>
-              </div>
-            </div>
-            <button type="button" onClick={handleSignOut} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 sm:px-3.5">Sign out</button>
-          </div>
-        </header>
+        <AdminPageHeader pageName="Audit logs" subtitle="Employee, inventory, and category change history" onOpenMenu={() => setMobileMenuOpen(true)} onSignOut={handleSignOut} />
 
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-9">
           <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">

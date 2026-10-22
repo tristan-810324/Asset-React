@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { clearAuthSession } from '../auth/authApi'
-import AdminNavbar from '../components/navbars/adminnavbar'
+import AdminNavbar, { AdminPageHeader } from '../components/navbars/adminnavbar'
 
 type AdminIconName = 'activity' | 'alert' | 'bell' | 'chevron-down' | 'close' | 'database' | 'grid' | 'mail' | 'menu' | 'search' | 'settings' | 'shield' | 'users' | 'logout'
 
@@ -104,42 +104,7 @@ export default function AdminDashboard() {
       <AdminNavbar activePath="/admin" mobileMenuOpen={mobileMenuOpen} onMobileMenuClose={() => setMobileMenuOpen(false)} />
 
       <section className="min-h-screen lg:pl-72">
-        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
-          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <button type="button" onClick={() => setMobileMenuOpen(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden" aria-label="Open navigation menu">
-                <Icon name="menu" />
-              </button>
-              <div className="min-w-0">
-                <p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">IT Administration / <span className="text-slate-700">Overview</span></p>
-                <p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p>
-              </div>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-              <label className="relative hidden md:block">
-                <span className="sr-only">Search admin modules</span>
-                <Icon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input type="search" placeholder="Search accounts, activity..." disabled className="h-10 w-56 rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-xs font-medium text-slate-700 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed disabled:opacity-70" />
-              </label>
-              <button type="button" disabled className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-400 shadow-sm" aria-label="Notifications not connected">
-                <Icon name="bell" className="h-[1.1rem] w-[1.1rem]" />
-              </button>
-              <div className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm sm:flex">
-                <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">IT</span>
-                <span className="text-left">
-                  <span className="block text-[0.68rem] font-extrabold leading-none text-slate-800">IT Admin</span>
-                  <span className="mt-1 block text-[0.58rem] font-bold leading-none text-slate-400">System administrator</span>
-                </span>
-                <Icon name="chevron-down" className="h-3.5 w-3.5 text-slate-400" />
-              </div>
-              <button type="button" onClick={handleSignOut} className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-600 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 sm:px-3.5" aria-label="Sign out">
-                <Icon name="logout" className="h-4 w-4" />
-                <span className="hidden sm:inline">Sign out</span>
-              </button>
-            </div>
-          </div>
-        </header>
+        <AdminPageHeader pageName="Overview" today={today} onOpenMenu={() => setMobileMenuOpen(true)} onSignOut={handleSignOut} />
 
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-9">
           <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">

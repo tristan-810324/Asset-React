@@ -9,6 +9,7 @@ const employeesRoutes = require('./modules/employees/employees.routes');
 const issuancesRoutes = require('./modules/issuances/issuances.routes');
 const departmentsRoutes = require('./modules/departments/departments.routes');
 const auditRoutes = require('./modules/audit/audit.routes');
+const requestsRoutes = require('./modules/requests/requests.routes');
 const errorMiddleware = require('./middleware/error.middleware');
 
 const app = express();
@@ -36,6 +37,7 @@ app.use('/api/v1/employees', employeesRoutes);
 app.use('/api/v1/issuances', issuancesRoutes);
 app.use('/api/v1/departments', departmentsRoutes);
 app.use('/api/v1/audit', auditRoutes);
+app.use('/api/v1/requests', requestsRoutes);
 app.use(errorMiddleware);
 
 module.exports = app;

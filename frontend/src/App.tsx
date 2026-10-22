@@ -3,6 +3,12 @@ import AdminDashboard from './admin/admindashboard'
 import UserManagement from './admin/usermanagement'
 import AuditLogs from './admin/auditlogs'
 import BorrowerDashboard from './borrowers/borrowerdashboard'
+import RequestCenter from './borrowers/requestcenter'
+import RequestForm from './borrowers/requestform'
+import MyRequests from './borrowers/myrequests'
+import RequestDetail from './borrowers/requestdetail'
+import RequesterProfile from './borrowers/requesterprofile'
+import RequesterNotifications from './borrowers/notifications'
 
 
 
@@ -126,6 +132,24 @@ export default function App() {
   }
   if (path === '/gso' || path === '/gso/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoDashboard /></ProtectedDashboard>
+  }
+  if (path === '/borrower/request-center') {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequestCenter /></ProtectedDashboard>
+  }
+  if (path === '/borrower/requests/new') {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequestForm /></ProtectedDashboard>
+  }
+  if (path === '/borrower/my-requests') {
+    return <ProtectedDashboard requiredRole="BORROWER"><MyRequests /></ProtectedDashboard>
+  }
+  if (path === '/borrower/profile') {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequesterProfile /></ProtectedDashboard>
+  }
+  if (path === '/borrower/notifications') {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequesterNotifications /></ProtectedDashboard>
+  }
+  if (/^\/borrower\/requests\/\d+$/.test(path)) {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequestDetail /></ProtectedDashboard>
   }
   if (path === '/borrower' || path === '/borrower/dashboard') {
     return <ProtectedDashboard requiredRole="BORROWER"><BorrowerDashboard /></ProtectedDashboard>

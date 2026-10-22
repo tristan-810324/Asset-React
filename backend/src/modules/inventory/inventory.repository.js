@@ -19,6 +19,7 @@ const itemColumns = `
     WHEN i.inventory_status = 'Borrowed' AND COALESCE(stock_usage.active_quantity, 0) = 0 THEN 'Borrowed'
     WHEN i.quantity > COALESCE(stock_usage.active_quantity, 0) THEN 'Available'
     WHEN COALESCE(stock_usage.pending_quantity, 0) > 0 THEN 'Pending Approval'
+    WHEN COALESCE(stock_usage.reserved_quantity, 0) > 0 THEN 'Reserved'
     WHEN COALESCE(stock_usage.issued_quantity, 0) > 0 THEN 'Issued'
     ELSE i.inventory_status
   END AS status,
@@ -117,21 +118,50 @@ const itemColumns = `
   ), '[]'::JSON) AS "changeHistory"
 `;
 
+async function hasRequesterInventory(queryable) {
+  const result = await queryable.query("SELECT to_regclass('public.service_request_assets') IS NOT NULL AS available");
+  return Boolean(result.rows[0]?.available);
+}
+
+function stockUsageJoin(includeRequesterInventory) {
+  const borrowerReserved = includeRequesterInventory
+    ? `COALESCE((
+         SELECT SUM(asset.quantity)
+           FROM service_request_assets AS asset
+           JOIN service_requests AS request ON request.id = asset.request_id
+          WHERE asset.item_id = i.id AND request.status IN ('Approved', 'Ready for Pickup')
+       ), 0)`
+    : '0';
+  const borrowerIssued = includeRequesterInventory
+    ? `COALESCE((
+         SELECT SUM(asset.quantity)
+           FROM service_request_assets AS asset
+           JOIN service_requests AS request ON request.id = asset.request_id
+          WHERE asset.item_id = i.id AND request.status IN ('Issued', 'Return Requested', 'For Repair')
+       ), 0)`
+    : '0';
+  return `LEFT JOIN LATERAL (
+    SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)::INTEGER AS pending_quantity,
+           (${borrowerReserved})::INTEGER AS reserved_quantity,
+           (COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)
+             + (${borrowerIssued}))::INTEGER AS issued_quantity,
+           (COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
+             + COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)
+             + (${borrowerReserved}) + (${borrowerIssued}))::INTEGER AS active_quantity,
+           COUNT(DISTINCT issue.employee_id) FILTER (WHERE issue.status IN ('Pending', 'Issued'))::INTEGER AS active_employee_count
+      FROM employee_issuances AS issue
+     WHERE issue.item_id = i.id
+       AND issue.status IN ('Pending', 'Issued')
+  ) AS stock_usage ON TRUE`;
+}
+
 async function listItems() {
+  const includeRequesterInventory = await hasRequesterInventory(pool);
   const result = await pool.query(
     `SELECT ${itemColumns}
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)::INTEGER AS pending_quantity,
-                COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)::INTEGER AS issued_quantity,
-                (COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
-                  + COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0))::INTEGER AS active_quantity,
-                COUNT(DISTINCT issue.employee_id) FILTER (WHERE issue.status IN ('Pending', 'Issued'))::INTEGER AS active_employee_count
-           FROM employee_issuances AS issue
-          WHERE issue.item_id = i.id
-            AND issue.status IN ('Pending', 'Issued')
-       ) AS stock_usage ON TRUE
+       ${stockUsageJoin(includeRequesterInventory)}
        LEFT JOIN LATERAL (
          SELECT issue.employee_id, issue.decided_at, issue.status
            FROM employee_issuances AS issue
@@ -147,20 +177,12 @@ async function listItems() {
 }
 
 async function getItemById(queryable, id) {
+  const includeRequesterInventory = await hasRequesterInventory(queryable);
   const result = await queryable.query(
     `SELECT ${itemColumns}
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
-       LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)::INTEGER AS pending_quantity,
-                COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)::INTEGER AS issued_quantity,
-                (COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
-                  + COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0))::INTEGER AS active_quantity,
-                COUNT(DISTINCT issue.employee_id) FILTER (WHERE issue.status IN ('Pending', 'Issued'))::INTEGER AS active_employee_count
-           FROM employee_issuances AS issue
-          WHERE issue.item_id = i.id
-            AND issue.status IN ('Pending', 'Issued')
-       ) AS stock_usage ON TRUE
+       ${stockUsageJoin(includeRequesterInventory)}
        LEFT JOIN LATERAL (
          SELECT issue.employee_id, issue.decided_at, issue.status
            FROM employee_issuances AS issue

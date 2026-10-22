@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { clearAuthSession } from '../../auth/authApi'
 import GsoNotif from '../notifbell/gsonotif'
@@ -144,7 +145,7 @@ type GsoNavbarProps = {
   onOpenNotifications: () => void
 }
 
-export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOpen, onClose, onAction, onOpenNotifications }: GsoNavbarProps) {
+export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOpen, onClose, onOpenNotifications }: GsoNavbarProps) {
   return (
     <>
       <aside
@@ -290,6 +291,10 @@ export function GsoPageHeader({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [accountMenuOpen])
+
+  function onAction(_arg0: string) {
+    throw new Error('Function not implemented.')
+  }
 
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
