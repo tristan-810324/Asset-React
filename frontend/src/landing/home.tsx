@@ -63,7 +63,7 @@ function AboutSection() {
 function ContactSection() {
   return (
     <section id="contact" className="scroll-mt-28 bg-linear-to-br from-sky-50 via-white to-violet-50 px-5 py-20 font-['Plus_Jakarta_Sans'] text-slate-900 sm:px-8 sm:py-24 lg:px-12">
-      <div className="mx-auto grid max-w-7xl gap-8 rounded-[2rem] border border-white bg-white/85 p-7 shadow-[0_30px_90px_-45px_rgba(37,99,235,0.35)] backdrop-blur sm:p-10 lg:grid-cols-[1fr_auto] lg:items-center lg:p-12">
+      <div className="mx-auto grid max-w-7xl gap-8 rounded-4xl border border-white bg-white/85 p-7 shadow-[0_30px_90px_-45px_rgba(37,99,235,0.35)] backdrop-blur sm:p-10 lg:grid-cols-[1fr_auto] lg:items-center lg:p-12">
         <div className="max-w-2xl">
           <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-indigo-600">Contact and support</p>
           <h2 className="mt-3 text-3xl font-black tracking-[-0.04em] text-slate-950 sm:text-4xl">Need help with A.SSET?</h2>
@@ -71,7 +71,7 @@ function ContactSection() {
             GSO Staff can assist with equipment records, assignments, returns, and repairs. Contact IT Admin for account and portal access concerns through your school&apos;s official channels.
           </p>
         </div>
-        <a href="/contact" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 px-6 py-3 text-xs font-extrabold uppercase tracking-[0.1em] text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+        <a href="/contact" className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-linear-to-r from-blue-600 to-indigo-600 px-6 py-3 text-xs font-extrabold uppercase tracking-widest text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
           Contact the team <span aria-hidden="true" className="text-base">→</span>
         </a>
       </div>
