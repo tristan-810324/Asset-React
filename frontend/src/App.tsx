@@ -20,7 +20,7 @@ import ReturnItems from './gso/returnitems'
 import ToRepaired from './gso/torepaired'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
-import Notifications from './gso/notifications'
+import Notifications from './gso/notifications' 
 
 
 
@@ -32,10 +32,7 @@ import ResetPassword from './auth/resetpassword'
 import VerifyEmailOtp from './auth/verifyemailotp'
 
 
-import Hero from './landing/hero'
 import LandingHome from './landing/home'
-import AboutPage from './landing/about'
-import ContactPage from './landing/contact'
 import { ApiError, clearAuthSession, dashboardPathForRoles, getCurrentUser, hasAuthToken } from './auth/authApi'
 
 function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; children: ReactNode }) {
@@ -49,7 +46,7 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
       return () => { active = false }
     }
 
-    getCurrentUser()
+    getCurrentUser()  
       .then((user) => {
         if (!active) return
         if (user.roles.includes(requiredRole)) {
@@ -94,8 +91,9 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
 export default function App() {
   const path = window.location.pathname
 
-  if (path === '/about') return <AboutPage />
-  if (path === '/contact') return <ContactPage />
+  if (path === '/about' || path === '/faq' || path === '/contact') {
+    return <LandingHome />
+  }
   if (path === '/' || path === '/dashboard') return <LandingHome />
 
   if (path === '/issuance-approval') return <IssuanceApproval />
@@ -162,5 +160,5 @@ export default function App() {
   if (path === '/reset-password') return <ResetPassword />
   if (path === '/verify-email') return <VerifyEmailOtp />
 
-  return <Hero />
+  return <LandingHome />
 }

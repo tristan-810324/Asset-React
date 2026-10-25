@@ -1,79 +1,52 @@
-import Navbar from '../components/navbars/navbar'
-
 export default function Hero() {
   return (
-    <main
+    <section
       id="home"
-      className="relative isolate flex min-h-screen items-center overflow-hidden bg-slate-950 font-['Plus_Jakarta_Sans']"
+      aria-labelledby="home-heading"
+      className="relative isolate flex min-h-[min(100svh,38rem)] items-center overflow-hidden bg-slate-950 font-['Plus_Jakarta_Sans'] sm:min-h-[max(100svh,42rem)]"
     >
-      {/* Background Campus Image */}
       <div
-        className="absolute inset-0 -z-20 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: "url('/dyci_img/homepage5.jpg')" }}
+        className="absolute inset-0 -z-20 bg-cover bg-position-[center_42%] bg-no-repeat"
+        style={{ backgroundImage: "url('/dyci_img/mainhome.jpg')" }}
         role="img"
         aria-label="Dr. Yanga's Colleges campus"
       />
+      <div aria-hidden="true" className="absolute inset-0 -z-10 bg-slate-950/25" />
+      <div aria-hidden="true" className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950/90 via-slate-950/25 to-slate-950/45" />
+      <div aria-hidden="true" className="absolute inset-0 -z-10 bg-linear-to-r from-slate-950/85 via-slate-950/45 to-slate-950/5" />
 
-      {/* Subtle Dark Glass Overlays for Readability */}
-      <div className="absolute inset-0 -z-10 bg-slate-950/20" />
-      <div className="absolute inset-0 -z-10 bg-linear-to-t from-slate-950/90 via-slate-950/25 to-slate-950/40" />
-      <div className="absolute inset-0 -z-10 bg-linear-to-r from-slate-950/80 via-slate-950/35 to-transparent" />
-
-      {/* Top Navigation */}
-      <Navbar />
-
-      {/* Hero Content Section */}
-      <section className="mx-auto w-full max-w-7xl px-5 pb-14 pt-32 sm:px-8 sm:pb-16 sm:pt-36 lg:px-12 lg:pb-20 lg:pt-40">
-        <div className="max-w-2xl sm:max-w-3xl lg:max-w-4xl xl:max-w-5xl">
-          
-          {/* Pill Badge */}
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-slate-900/50 px-3.5 py-1.5 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-slate-200 backdrop-blur-md sm:mb-6 sm:px-4 sm:text-xs">
-            <span className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]" />
-            DR. YANGA&apos;S COLLEGES, INC.
-          </div>
-
-          {/* Main Title (Fixed to 2 Lines Max) */}
-          <h1 className="text-[2.2rem] font-black leading-[1.05] tracking-tight text-white sm:text-[3.2rem] md:text-[3.6rem] lg:text-[3.85rem] xl:text-[4.15rem]">
-            Master Your School&apos;s Data
-            <span className="mt-1 block">
-              <span className="bg-linear-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent">
-                Without{" "}
-              </span>
-              <span className="text-slate-100">the </span>
-              <span className="bg-linear-to-r from-sky-300 via-blue-200 to-indigo-200 bg-clip-text text-transparent">
-                Headache.
-              </span>
-            </span>
-          </h1>
-
-          {/* Subtitle Paragraph */}
-          <p className="mt-4 max-w-lg text-xs font-medium leading-relaxed text-slate-200/90 sm:mt-5 sm:text-sm sm:leading-relaxed lg:max-w-xl">
-            The GSO keeps your school&apos;s master data organized in one system—from available equipment to every item deployed across departments. See exactly{" "}
-            <strong className="font-extrabold text-white">
-              what was assigned, where it went, and who received it.
-            </strong>
+      <div className="mx-auto w-full max-w-7xl px-4 pb-8 pt-24 sm:px-8 sm:pb-16 sm:pt-36 lg:px-12 lg:pb-20">
+        <div className="max-w-3xl">
+          <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/20 bg-slate-950/45 px-3.5 py-1.5 text-[0.62rem] font-bold uppercase tracking-[0.15em] text-slate-100 backdrop-blur-md sm:mb-6 sm:gap-2.5 sm:px-4 sm:py-2 sm:text-xs">
+            <span aria-hidden="true" className="h-2 w-2 rounded-full bg-sky-300 shadow-[0_0_10px_rgba(125,211,252,0.75)]" />
+            Dr. Yanga&apos;s Colleges, Inc.
           </p>
 
-          {/* Fully Responsive Buttons */}
-          <div className="mt-7 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center sm:gap-4">
+          <h1 id="home-heading" className="max-w-3xl text-[2rem] font-black leading-[1.08] tracking-tighter text-white sm:text-4xl md:text-5xl lg:text-6xl">
+            Keep school equipment{' '}
+            <span className="bg-linear-to-r from-sky-200 via-blue-200 to-white bg-clip-text text-transparent">easier to manage.</span>
+          </h1>
+
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-100/90 sm:mt-5 sm:text-base sm:leading-7">
+            A.SSET brings DYCI equipment records and GSO workflows together—from item details and staff assignments to returns and repair follow-up.
+          </p>
+
+          <div className="mt-5 flex flex-col gap-2.5 sm:mt-7 sm:flex-row sm:items-center sm:gap-4">
             <a
               href="/login"
-              className="inline-flex min-h-12 items-center justify-center gap-2.5 rounded-xl bg-blue-600 px-6 py-3.5 text-xs font-black uppercase tracking-wider text-white shadow-lg shadow-blue-600/30 transition-all hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 sm:min-w-48"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-[0.68rem] font-extrabold uppercase tracking-widest text-white shadow-lg shadow-blue-950/30 transition hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-blue-700 sm:min-h-12 sm:min-w-48 sm:gap-2.5 sm:px-6 sm:py-3.5 sm:text-xs"
             >
-              Access Dashboard
-              <span aria-hidden="true" className="text-base leading-none">→</span>
+              Access the portal <span aria-hidden="true" className="text-base leading-none">→</span>
             </a>
-
             <a
               href="#about"
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-white/20 bg-slate-900/50 px-6 py-3.5 text-xs font-black uppercase tracking-wider text-slate-200 backdrop-blur-md transition-all hover:-translate-y-0.5 hover:bg-slate-800/60 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 sm:min-w-48"
+              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/25 bg-slate-950/40 px-4 py-2.5 text-[0.68rem] font-extrabold uppercase tracking-widest text-white backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white sm:min-h-12 sm:min-w-48 sm:px-6 sm:py-3.5 sm:text-xs"
             >
-              Explore Features
+              Explore A.SSET
             </a>
           </div>
-
         </div>
-      </section>
-    </main>
+      </div>
+    </section>
   )
 }
