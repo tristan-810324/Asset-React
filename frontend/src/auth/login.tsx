@@ -159,7 +159,7 @@ export default function Login() {
                     autoComplete="email"
                     placeholder="yourname@example.com"
                     required
-                    className="h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3.5 text-xs font-medium text-slate-900 shadow-xs backdrop-blur-md outline-none transition duration-200 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-3 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-900 shadow-sm shadow-slate-900/5 outline-none transition duration-200 placeholder:text-slate-500 hover:border-blue-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
                   />
                 </div>
 
@@ -177,7 +177,7 @@ export default function Login() {
                     autoComplete="current-password"
                     placeholder="Enter your password"
                     required
-                    className="h-10 w-full rounded-xl border border-white/90 bg-white/70 px-3.5 text-xs font-medium text-slate-900 shadow-xs backdrop-blur-md outline-none transition duration-200 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-3 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
+                    className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-900 shadow-sm shadow-slate-900/5 outline-none transition duration-200 placeholder:text-slate-500 hover:border-blue-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
                   />
                 </div>
 

@@ -120,7 +120,7 @@ export default function VerifyEmailOtp() {
                   maxLength={6}
                   placeholder="000000"
                   required
-                  className="h-12 w-full rounded-xl border border-slate-200 bg-white/80 px-3.5 text-center text-lg font-bold tracking-[0.5em] outline-none transition placeholder:tracking-[0.5em] placeholder:text-slate-300 focus:border-blue-500 focus:ring-3 focus:ring-blue-500/15"
+                  className="h-12 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-center shadow-sm shadow-slate-900/5 text-lg font-bold tracking-[0.5em] outline-none transition placeholder:tracking-[0.5em] placeholder:text-slate-400 hover:border-blue-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15"
                 />
               </div>
 
