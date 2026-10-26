@@ -1082,7 +1082,7 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition cost</span>
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition cost </span>
               <input
                 type="number"
                 min="0"
@@ -1442,6 +1442,11 @@ export default function ItemsMasterData() {
             <p className="mt-1 text-xs font-medium text-slate-500">
               Click on any row to open full item details and condition history log.
             </p>
+            {activeTab === 'full_inventory' && (
+              <span className="mt-2 inline-flex rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
+                {fullInventoryItems.length} item(s) found
+              </span>
+            )}
             {inventoryLoadError && (
               <p role="alert" className="mt-2 text-xs font-semibold text-rose-600">
                 {inventoryLoadError}
@@ -1495,10 +1500,6 @@ export default function ItemsMasterData() {
                 </button>
               </>
             )}
-            <span className="rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
-              {activeTab === 'full_inventory' ? fullInventoryItems.length : filteredItems.length} item(s) found
-            </span>
-
             {activeTab === 'add_and_view' && (
               <button
                 type="button"

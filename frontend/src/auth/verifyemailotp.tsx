@@ -46,14 +46,14 @@ export default function VerifyEmailOtp() {
 
   return (
     <main className="relative min-h-screen font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-500 selection:text-white">
-      <div className="fixed inset-0 z-0 bg-cover bg-center lg:hidden" style={{ backgroundImage: "url('/dyci_img/homepage7.jpg')" }}>
+      <div className="fixed inset-0 z-0 bg-cover bg-center lg:hidden" style={{ backgroundImage: "url('/dyci_img/homepage2.jpg')" }}>
         <div className="absolute inset-0 bg-linear-to-b from-white/40 via-white/20 to-slate-900/30 backdrop-blur-[3px]" />
       </div>
 
       <div className="relative z-10 grid min-h-screen lg:grid-cols-2">
         <section
           className="relative hidden min-h-107.5 overflow-hidden bg-cover bg-center lg:flex lg:min-h-screen"
-          style={{ backgroundImage: "url('/dyci_img/homepage7.jpg')" }}
+          style={{ backgroundImage: "url('/dyci_img/homepage2.jpg')" }}
           aria-label="Dr. Yanga's Colleges campus"
         >
           <div className="absolute inset-0 bg-slate-950/60" />

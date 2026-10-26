@@ -236,6 +236,7 @@ export default function ToRepaired() {
       const updatedInventoryItem = await updateInventoryItem(inventoryItem.id, {
         itemCode: inventoryItem.itemCode,
         category: inventoryItem.category,
+        itemName: inventoryItem.itemName,
         description: inventoryItem.description,
         dateAcquired: inventoryItem.dateAcquired || '',
         timeAcquired: inventoryItem.timeAcquired || '',

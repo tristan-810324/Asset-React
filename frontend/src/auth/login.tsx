@@ -42,7 +42,7 @@ export default function Login() {
       {/* Mobile/iPad Full Background Image with Soft Light Overlay */}
       <div 
         className="fixed inset-0 z-0 bg-cover bg-center lg:hidden"
-        style={{ backgroundImage: "url('/dyci_img/homepage7.jpg')" }}
+        style={{ backgroundImage: "url('/dyci_img/homepage1.jpg')" }}
       >
         <div className="absolute inset-0 bg-linear-to-b from-white/40 via-white/20 to-slate-900/30 backdrop-blur-[3px]" />
       </div>
@@ -51,7 +51,7 @@ export default function Login() {
         {/* Hero Image Section (Desktop Only) */}
         <section
           className="relative hidden min-h-107.5 overflow-hidden bg-cover bg-center lg:flex lg:min-h-screen"
-          style={{ backgroundImage: "url('/dyci_img/homepage7.jpg')" }}
+          style={{ backgroundImage: "url('/dyci_img/homepage1.jpg')" }}
           aria-label="Dr. Yanga's Colleges campus"
         >
           <div className="absolute inset-0 bg-slate-950/60" />
