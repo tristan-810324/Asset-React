@@ -542,6 +542,7 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
 export default function ItemsMasterData() {
   // View mode tab state
   const [activeTab, setActiveTab] = useState<'add_and_view' | 'full_inventory'>('full_inventory')
+  const [showAddItemModal, setShowAddItemModal] = useState(false)
 
   // Dynamic categories state
   const [categories, setCategories] = useState<InventoryCategory[]>([])
@@ -932,7 +933,10 @@ export default function ItemsMasterData() {
         <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
           <button
             type="button"
-            onClick={() => setActiveTab('add_and_view')}
+            onClick={() => {
+              setActiveTab('add_and_view')
+              setShowAddItemModal(true)
+            }}
             className={`rounded-xl px-4 py-2 text-xs font-extrabold transition ${
               activeTab === 'add_and_view'
                 ? 'bg-white text-blue-950 shadow-md'
@@ -956,22 +960,41 @@ export default function ItemsMasterData() {
       </section>
 
       {/* TAB 1: ADD ITEM FORM SECTION */}
-      {activeTab === 'add_and_view' && (
-        <section className="mt-6 rounded-2xl border border-blue-100 bg-blue-50/30 p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+      {showAddItemModal && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6"
+          onClick={() => setShowAddItemModal(false)}
+        >
+        <section
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-item-modal-title"
+          onClick={(event) => event.stopPropagation()}
+          className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-blue-100 bg-white p-5 shadow-2xl shadow-slate-950/20 sm:p-6"
+        >
           <div className="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
             <div>
-              <h2 className="text-base font-black text-slate-900">Add an inventory item</h2>
+              <h2 id="add-item-modal-title" className="text-base font-black text-slate-900">Add an inventory item</h2>
               <p className="mt-0.5 text-xs font-medium text-slate-500">
                 Record catalog details, acquisition, condition, and quantity.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowCategoryModal(true)}
-              className="inline-flex items-center gap-1.5 self-start rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50 sm:self-auto"
-            >
-              <span>+ Add New Category</span>
-            </button>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setShowCategoryModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50"
+              >
+                <span>+ Add New Category</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddItemModal(false)}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -1175,6 +1198,7 @@ export default function ItemsMasterData() {
             </button>
           </div>
         </section>
+        </div>
       )}
 
       {/* SEARCH AND FILTER CONTROL SECTION */}
