@@ -9,6 +9,7 @@ export type NotificationRecord = {
   createdAt: string
   priority: NotificationPriority
   read: boolean
+  archived: boolean
   actionLabel: string
   href: string
 }
@@ -18,7 +19,9 @@ const updateEventName = 'gso-notifications-updated'
 
 export const notificationModules: NotificationModule[] = ['Requests', 'Inventory', 'Issuance', 'Returns', 'Maintenance', 'System']
 
-function isNotificationRecord(value: unknown): value is NotificationRecord {
+type StoredNotificationRecord = Omit<NotificationRecord, 'archived'> & { archived?: boolean }
+
+function isNotificationRecord(value: unknown): value is StoredNotificationRecord {
   if (!value || typeof value !== 'object') return false
   const record = value as Partial<NotificationRecord>
   return typeof record.id === 'string'
@@ -26,6 +29,7 @@ function isNotificationRecord(value: unknown): value is NotificationRecord {
     && typeof record.message === 'string'
     && typeof record.createdAt === 'string'
     && typeof record.read === 'boolean'
+    && (record.archived === undefined || typeof record.archived === 'boolean')
     && notificationModules.includes(record.module as NotificationModule)
     && ['Urgent', 'Normal', 'Low'].includes(record.priority || '')
     && typeof record.actionLabel === 'string'
@@ -38,7 +42,9 @@ export function readGsoNotifications(): NotificationRecord[] | null {
     const saved = window.localStorage.getItem(storageKey)
     if (!saved) return null
     const parsed: unknown = JSON.parse(saved)
-    return Array.isArray(parsed) && parsed.every(isNotificationRecord) ? parsed : null
+    return Array.isArray(parsed) && parsed.every(isNotificationRecord)
+      ? parsed.map((record) => ({ ...record, archived: record.archived === true }))
+      : null
   } catch {
     return null
   }
@@ -64,9 +70,10 @@ export function addGsoNotification(
     createdAt: new Date().toISOString(),
     priority: notification.priority || 'Normal',
     read: false,
+    archived: false,
   }
   const current = readGsoNotifications() || []
-  publishGsoNotifications([nextNotification, ...current].slice(0, 100))
+  publishGsoNotifications([nextNotification, ...current])
   return nextNotification
 }
 
@@ -75,7 +82,7 @@ export function subscribeToGsoNotifications(onChange: (notifications: Notificati
 
   const handleUpdate: EventListener = (event) => {
     if (event instanceof CustomEvent && Array.isArray(event.detail) && event.detail.every(isNotificationRecord)) {
-      onChange(event.detail)
+      onChange(event.detail.map((record) => ({ ...record, archived: record.archived === true })))
       return
     }
     const saved = readGsoNotifications()

@@ -1041,10 +1041,17 @@ export default function ItemsMasterData() {
   }
 
   // Filter logic for searching
+  const savedFilterItemNames = selectedCategoryFilter === 'all'
+    ? itemNameOptions
+    : categoryItemNameOptionsFor(selectedCategoryFilter, categories, itemNameOptions)
   const itemNameFilterOptions = Array.from(new Map(
-    items
-      .filter((item) => selectedCategoryFilter === 'all' || item.category === selectedCategoryFilter)
-      .map((item) => item.name.trim())
+    [
+      ...savedFilterItemNames.map((itemName) => itemName.name),
+      ...items
+        .filter((item) => selectedCategoryFilter === 'all' || item.category === selectedCategoryFilter)
+        .map((item) => item.name),
+    ]
+      .map((name) => name.trim())
       .filter(Boolean)
       .map((name) => [name.toLocaleLowerCase(), name]),
   ).values()).sort((firstName, secondName) => firstName.localeCompare(secondName))
@@ -1775,10 +1782,11 @@ export default function ItemsMasterData() {
               <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Specific item name</span>
               <select
                 value={selectedItemNameFilter}
+                disabled={selectedCategoryFilter === 'all'}
                 onChange={(event) => setSelectedItemNameFilter(event.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
               >
-                <option value="all">All item names</option>
+                <option value="all">{selectedCategoryFilter === 'all' ? 'Choose a category first' : 'All item names'}</option>
                 {itemNameFilterOptions.map((name) => (
                   <option key={name} value={name}>{name}</option>
                 ))}

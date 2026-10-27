@@ -20,11 +20,14 @@ function notificationDate(value: string) {
 
 export default function GsoNotif({ open, onOpenChange }: GsoNotifProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [notifications, setNotifications] = useState<NotificationRecord[]>(() => readGsoNotifications() ?? [])
-  const unreadCount = notifications.filter((notification) => !notification.read).length
-  const latestNotifications = notifications.slice(0, 6)
+  const [notifications, setNotifications] = useState<NotificationRecord[]>(() => (readGsoNotifications() ?? []).filter((notification) => !notification.id.startsWith('preview-')))
+  const activeNotifications = notifications.filter((notification) => !notification.archived)
+  const unreadCount = activeNotifications.filter((notification) => !notification.read).length
+  const latestNotifications = activeNotifications.slice(0, 6)
 
-  useEffect(() => subscribeToGsoNotifications(setNotifications), [])
+  useEffect(() => subscribeToGsoNotifications((next) => {
+    setNotifications(next.filter((notification) => !notification.id.startsWith('preview-')))
+  }), [])
 
   useEffect(() => {
     if (!open) return
@@ -51,7 +54,7 @@ export default function GsoNotif({ open, onOpenChange }: GsoNotifProps) {
   }
 
   const markAllAsRead = () => {
-    const updatedNotifications = notifications.map((notification) => ({ ...notification, read: true }))
+    const updatedNotifications = notifications.map((notification) => notification.archived ? notification : { ...notification, read: true })
     setNotifications(updatedNotifications)
     publishGsoNotifications(updatedNotifications)
   }
