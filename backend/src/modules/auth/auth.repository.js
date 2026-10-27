@@ -182,6 +182,19 @@ async function getActiveEmailVerificationOtp(userId) {
   return result.rows[0]?.id || null;
 }
 
+async function getEmailVerificationUserByChallenge(challengeId) {
+  const result = await pool.query(
+    `SELECT user_account.id, user_account.email, user_account.is_active, user_account.email_verified_at
+       FROM auth_tokens token
+       JOIN users user_account ON user_account.id = token.user_id
+      WHERE token.id = $1
+        AND token.purpose = 'email_verification_otp'
+      LIMIT 1`,
+    [challengeId],
+  );
+  return result.rows[0] || null;
+}
+
 async function createEmailVerificationOtp({ userId, challengeId, tokenHash }) {
   const client = await pool.connect();
   try {
@@ -217,6 +230,50 @@ async function createEmailVerificationOtp({ userId, challengeId, tokenHash }) {
     if (active.rowCount) {
       await client.query('COMMIT');
       return { challengeId: active.rows[0].id, created: false };
+    }
+
+    await client.query(
+      `UPDATE auth_tokens
+          SET used_at = NOW()
+        WHERE user_id = $1
+          AND purpose = 'email_verification_otp'
+          AND used_at IS NULL`,
+      [userId],
+    );
+    await client.query(
+      `INSERT INTO auth_tokens (id, user_id, purpose, token_hash, expires_at)
+       VALUES ($1, $2, 'email_verification_otp', $3, NOW() + INTERVAL '5 minutes')`,
+      [challengeId, userId, tokenHash],
+    );
+    await client.query('COMMIT');
+    return { challengeId, created: true };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function replaceEmailVerificationOtp({ userId, challengeId, tokenHash }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const account = await client.query(
+      `SELECT id, email_verified_at, is_active
+         FROM users
+        WHERE id = $1
+        FOR UPDATE`,
+      [userId],
+    );
+    const user = account.rows[0];
+    if (!user || !user.is_active) {
+      await client.query('COMMIT');
+      return { unavailable: true };
+    }
+    if (user.email_verified_at) {
+      await client.query('COMMIT');
+      return { alreadyVerified: true };
     }
 
     await client.query(
@@ -406,7 +463,9 @@ module.exports = {
   getPasswordResetUser,
   createPasswordResetOtp,
   getActiveEmailVerificationOtp,
+  getEmailVerificationUserByChallenge,
   createEmailVerificationOtp,
+  replaceEmailVerificationOtp,
   consumeEmailVerificationOtp,
   invalidateToken,
   consumeOtpAndCreateResetToken,

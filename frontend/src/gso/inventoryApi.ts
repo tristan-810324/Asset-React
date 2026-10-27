@@ -5,6 +5,13 @@ export type InventoryCategory = {
   name: string
 }
 
+export type InventoryCategoryItemName = {
+  id: string
+  categoryId: string
+  name: string
+  createdAt: string
+}
+
 export type InventoryChangeRecord = {
   action: 'updated' | 'issued' | 'returned' | 'employee_profile_updated'
   reason: string
@@ -91,6 +98,26 @@ export async function deleteInventoryCategory(id: string, reason: string) {
   return result.category
 }
 
+export async function listInventoryCategoryItemNames() {
+  const result = await apiRequest<{ itemNames: InventoryCategoryItemName[] }>('/inventory/item-names')
+  return result.itemNames
+}
+
+export async function createInventoryCategoryItemName(categoryId: string, name: string) {
+  const result = await apiRequest<{ itemName: InventoryCategoryItemName }>(`/inventory/categories/${encodeURIComponent(categoryId)}/item-names`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+  return result.itemName
+}
+
+export async function deleteInventoryCategoryItemName(id: string) {
+  const result = await apiRequest<{ itemName: InventoryCategoryItemName }>(`/inventory/item-names/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  return result.itemName
+}
+
 export async function listInventoryItems() {
   const result = await apiRequest<{ items: InventoryItemRecord[] }>('/inventory/items')
   return result.items
@@ -102,6 +129,14 @@ export async function createInventoryItem(item: NewInventoryItem) {
     body: JSON.stringify(item),
   })
   return result.item
+}
+
+export async function createInventoryItems(items: NewInventoryItem[]) {
+  const result = await apiRequest<{ items: InventoryItemRecord[] }>('/inventory/items/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ items }),
+  })
+  return result.items
 }
 
 export async function updateInventoryItem(id: string, item: UpdatedInventoryItem) {

@@ -53,6 +53,30 @@ export type CatalogAsset = {
   availableQuantity: number
 }
 
+export type RequesterIdentityStatus = 'Incomplete' | 'Pending' | 'Verified' | 'Needs Correction'
+
+export type RequesterIdentity = {
+  userId: string | number
+  accountName: string
+  accountEmail: string
+  employeeCode: string
+  department: string
+  position: string
+  contactNumber: string
+  status: RequesterIdentityStatus
+  reviewNote: string
+  submittedAt: string | null
+  reviewedAt: string | null
+  matchedEmployeeCode: string | null
+  matchedDepartment: string | null
+  matchedPosition: string | null
+  matchedEmail: string | null
+  matchedEmployeeStatus: string | null
+  employeeRecordMatch: boolean
+}
+
+export type RequesterIdentityInput = Pick<RequesterIdentity, 'employeeCode' | 'department' | 'position' | 'contactNumber'>
+
 export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
   BORROWING: 'Borrow an Asset',
   FACILITY_USE: 'Facility Use Permit',
@@ -93,6 +117,30 @@ export function respondToRequest(id: string, message: string) {
 
 export function requestAssetReturn(id: string) {
   return apiRequest<{ request: ServiceRequest }>(`/requests/mine/${encodeURIComponent(id)}/return`, { method: 'POST' }).then((data) => data.request)
+}
+
+export function getMyRequesterIdentity() {
+  return apiRequest<{ identity: RequesterIdentity }>('/requester-identity/me').then((data) => data.identity)
+}
+
+export function submitRequesterIdentity(identity: RequesterIdentityInput) {
+  return apiRequest<{ identity: RequesterIdentity }>('/requester-identity/me', {
+    method: 'PUT',
+    body: JSON.stringify(identity),
+  }).then((data) => data.identity)
+}
+
+export function listRequesterIdentityReviews(status = 'all') {
+  const query = new URLSearchParams()
+  if (status !== 'all') query.set('status', status)
+  return apiRequest<{ profiles: RequesterIdentity[] }>(`/requester-identity/reviews${query.size ? `?${query.toString()}` : ''}`).then((data) => data.profiles)
+}
+
+export function reviewRequesterIdentity(userId: string | number, payload: { status: 'Verified' | 'Needs Correction'; note: string }) {
+  return apiRequest<{ identity: RequesterIdentity }>(`/requester-identity/reviews/${encodeURIComponent(String(userId))}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }).then((data) => data.identity)
 }
 
 export type GsoRequestFilters = { type?: string; status?: string; search?: string }

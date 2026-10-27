@@ -32,6 +32,14 @@ const verifyEmailOtp = asyncHandler(async (req, res) => {
   res.json({ success: true, data: result });
 });
 
+const resendEmailVerificationOtp = asyncHandler(async (req, res) => {
+  const result = await authService.resendEmailVerificationOtp({
+    challengeId: req.body?.challengeId,
+    ipAddress: req.ip,
+  });
+  res.json({ success: true, data: result });
+});
+
 const forgotPassword = asyncHandler(async (req, res) => {
   const result = await authService.requestPasswordReset({ email: req.body?.email, ipAddress: req.ip });
   res.json({ success: true, data: result });
@@ -59,4 +67,4 @@ const currentUser = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { user: req.user } });
 });
 
-module.exports = { registerBorrower, login, verifyEmailOtp, forgotPassword, verifyOtp, resetPassword, currentUser };
+module.exports = { registerBorrower, login, verifyEmailOtp, resendEmailVerificationOtp, forgotPassword, verifyOtp, resetPassword, currentUser };

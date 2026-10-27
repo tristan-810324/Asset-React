@@ -83,7 +83,7 @@ export async function signIn(email: string, password: string) {
   });
 }
 
-export async function registerBorrower(name: string, email: string, password: string) {
+export async function registerRequester(name: string, email: string, password: string) {
   return apiRequest<PendingEmailVerification>('/auth/register', {
     method: 'POST',
     auth: false,
@@ -96,6 +96,17 @@ export async function verifyEmailOtp(challengeId: string, otp: string) {
     method: 'POST',
     auth: false,
     body: JSON.stringify({ challengeId, otp }),
+  });
+}
+
+export async function resendEmailVerificationOtp(challengeId: string) {
+  return apiRequest<
+    | { alreadyVerified: true }
+    | { requiresEmailVerification: true; challengeId: string; email: string; message?: string }
+  >('/auth/resend-email-verification-otp', {
+    method: 'POST',
+    auth: false,
+    body: JSON.stringify({ challengeId }),
   });
 }
 
@@ -188,6 +199,10 @@ export async function getCurrentUser() {
 
 export function saveAuthToken(token: string) {
   sessionStorage.setItem(authTokenKey, token);
+  for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = sessionStorage.key(index);
+    if (key?.startsWith('requesterIdentityPromptDismissed:')) sessionStorage.removeItem(key);
+  }
 }
 
 export function hasAuthToken() {
@@ -200,7 +215,8 @@ export function clearAuthSession() {
 
 export function dashboardPathForRoles(roles: string[]) {
   if (roles.includes('IT_ADMIN')) return '/admin';
+  if (roles.includes('IT_STAFF')) return '/itss';
   if (roles.includes('GSO_STAFF')) return '/gso';
-  if (roles.includes('BORROWER')) return '/borrower';
+  if (roles.includes('BORROWER')) return '/requester';
   return null;
 }

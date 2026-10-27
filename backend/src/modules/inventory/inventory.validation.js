@@ -66,6 +66,31 @@ function validateCreateInventoryItem(input) {
   return validateInventoryItem(input, false);
 }
 
+function validateCreateInventoryItems(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || !Array.isArray(input.items)) {
+    invalid('Hindi valid ang listahan ng inventory items.');
+  }
+  if (input.items.length < 1 || input.items.length > 500) {
+    invalid('Mag-save ng 1 hanggang 500 individual items bawat batch.');
+  }
+
+  const items = input.items.map(validateCreateInventoryItem);
+  if (items.some((item) => item.quantity !== 1)) {
+    invalid('Bawat record sa batch ay dapat kumatawan sa isang item lamang.');
+  }
+
+  const itemCodes = new Set();
+  for (const item of items) {
+    const normalizedCode = item.itemCode.toLowerCase();
+    if (itemCodes.has(normalizedCode)) {
+      invalid('Bawat individual item ay dapat may unique na Item Code.');
+    }
+    itemCodes.add(normalizedCode);
+  }
+
+  return items;
+}
+
 function validateUpdateInventoryItem(input) {
   return validateInventoryItem(input, true);
 }
@@ -133,9 +158,18 @@ function validateCategoryChange(input, includeName) {
   };
 }
 
+function validateCreateCategoryItemName(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    invalid('Hindi valid ang item name details.');
+  }
+  return { name: requiredText(input.name, 'Item name', 500) };
+}
+
 module.exports = {
   validateCreateInventoryItem,
+  validateCreateInventoryItems,
   validateUpdateInventoryItem,
   validateCreateCategory,
   validateCategoryChange,
+  validateCreateCategoryItemName,
 };

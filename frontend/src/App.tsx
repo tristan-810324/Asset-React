@@ -2,13 +2,14 @@ import { useEffect, useState, type ReactNode } from 'react'
 import AdminDashboard from './admin/admindashboard'
 import UserManagement from './admin/usermanagement'
 import AuditLogs from './admin/auditlogs'
-import BorrowerDashboard from './borrowers/borrowerdashboard'
-import RequestCenter from './borrowers/requestcenter'
-import RequestForm from './borrowers/requestform'
-import MyRequests from './borrowers/myrequests'
-import RequestDetail from './borrowers/requestdetail'
-import RequesterProfile from './borrowers/requesterprofile'
-import RequesterNotifications from './borrowers/notifications'
+import RequesterDashboard from './requesters/requesterdashboard'
+import RequestCenter from './requesters/requestcenter'
+import RequestForm from './requesters/requestform'
+import MyRequests from './requesters/myrequests'
+import RequestDetail from './requesters/requestdetail'
+import RequesterProfile from './requesters/requesterprofile'
+import RequesterNotifications from './requesters/notifications'
+import ITSSDashboard from './ITSS/itssdashboard'
 
 
 
@@ -21,6 +22,7 @@ import ToRepaired from './gso/torepaired'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
 import Notifications from './gso/notifications' 
+import RequesterVerification from './gso/requesterverification'
 
 
 
@@ -107,11 +109,17 @@ export default function App() {
   if (path === '/admin/audit-logs') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AuditLogs /></ProtectedDashboard>
   }
+  if (path === '/itss' || path === '/itss/dashboard') {
+    return <ProtectedDashboard requiredRole="IT_STAFF"><ITSSDashboard /></ProtectedDashboard>
+  }
   if (path === '/gso/items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ItemsMasterData /></ProtectedDashboard>
   }
   if (path === '/gso/notifications') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><Notifications /></ProtectedDashboard>
+  }
+  if (path === '/gso/requester-verification') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><RequesterVerification /></ProtectedDashboard>
   }
   if (path === '/gso/employees') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><EmployeeMasterData /></ProtectedDashboard>
@@ -131,26 +139,26 @@ export default function App() {
   if (path === '/gso' || path === '/gso/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoDashboard /></ProtectedDashboard>
   }
-  if (path === '/borrower/request-center') {
+  if (path === '/requester/request-center' || path === '/borrower/request-center') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequestCenter /></ProtectedDashboard>
   }
-  if (path === '/borrower/requests/new') {
+  if (path === '/requester/requests/new' || path === '/borrower/requests/new') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequestForm /></ProtectedDashboard>
   }
-  if (path === '/borrower/my-requests') {
+  if (path === '/requester/my-requests' || path === '/borrower/my-requests') {
     return <ProtectedDashboard requiredRole="BORROWER"><MyRequests /></ProtectedDashboard>
   }
-  if (path === '/borrower/profile') {
+  if (path === '/requester/profile' || path === '/borrower/profile') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequesterProfile /></ProtectedDashboard>
   }
-  if (path === '/borrower/notifications') {
+  if (path === '/requester/notifications' || path === '/borrower/notifications') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequesterNotifications /></ProtectedDashboard>
   }
-  if (/^\/borrower\/requests\/\d+$/.test(path)) {
+  if (/^\/(?:requester|borrower)\/requests\/\d+$/.test(path)) {
     return <ProtectedDashboard requiredRole="BORROWER"><RequestDetail /></ProtectedDashboard>
   }
-  if (path === '/borrower' || path === '/borrower/dashboard') {
-    return <ProtectedDashboard requiredRole="BORROWER"><BorrowerDashboard /></ProtectedDashboard>
+  if (path === '/requester' || path === '/requester/dashboard' || path === '/borrower' || path === '/borrower/dashboard') {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequesterDashboard /></ProtectedDashboard>
   }
   if (path === '/login' && window.location.hash === '#forgot-password') return <ForgotPassword />
   if (path === '/login') return <Login />

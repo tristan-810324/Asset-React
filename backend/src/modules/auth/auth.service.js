@@ -145,6 +145,57 @@ async function requestEmailVerificationOtp(user) {
   };
 }
 
+async function resendEmailVerificationOtp({ challengeId, ipAddress }) {
+  validateChallengeId(challengeId);
+  if (!mailTransport) {
+    throw httpError(503, 'Email verification is unavailable. Configure SMTP or contact the IT Admin.');
+  }
+
+  await enforceRateLimit('email_verification_resend_ip', ipAddress, 10, 15);
+  const user = await authRepository.getEmailVerificationUserByChallenge(challengeId);
+  if (!user || !user.is_active || user.email_verified_at) {
+    throw httpError(400, 'This verification request is invalid or has expired. Sign in again to request a new code.');
+  }
+
+  await enforceRateLimit('email_verification_otp', user.email, 5, 60);
+  const nextChallengeId = crypto.randomUUID();
+  const otp = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+  const otpHash = verifier(`${nextChallengeId}:${otp}`);
+  const created = await authRepository.replaceEmailVerificationOtp({
+    userId: user.id,
+    challengeId: nextChallengeId,
+    tokenHash: otpHash,
+  });
+
+  if (created.unavailable) throw httpError(401, invalidLoginMessage);
+  if (created.alreadyVerified) return { alreadyVerified: true };
+  if (!created.created) throw httpError(400, 'This verification request is invalid or has expired. Sign in again to request a new code.');
+
+  try {
+    await mailTransport.sendMail({
+      from: env.smtp.from,
+      to: user.email,
+      subject: 'A.SSET account verification code',
+      text: `Your new A.SSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not request this, ignore this email.`,
+    });
+  } catch (error) {
+    await authRepository.invalidateToken(nextChallengeId);
+    console.error('Account verification email could not be delivered.', {
+      code: error.code,
+      responseCode: error.responseCode,
+      command: error.command,
+    });
+    throw httpError(503, 'Could not send the verification code. Check the Gmail SMTP App Password in backend/.env and try again.');
+  }
+
+  return {
+    requiresEmailVerification: true,
+    challengeId: nextChallengeId,
+    email: user.email,
+    message: 'A new one-time verification code has been sent to your email.',
+  };
+}
+
 async function login({ email, password, ipAddress }) {
   const normalizedEmail = normalizeEmail(email);
   validatePassword(password);
@@ -284,4 +335,4 @@ async function resetPassword({ resetToken, password, ipAddress }) {
   return { message: 'Password updated. You can now sign in.' };
 }
 
-module.exports = { registerBorrower, login, verifyEmailOtp, requestPasswordReset, verifyPasswordResetOtp, resetPassword };
+module.exports = { registerBorrower, login, verifyEmailOtp, resendEmailVerificationOtp, requestPasswordReset, verifyPasswordResetOtp, resetPassword };

@@ -14,6 +14,11 @@ const createItem = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: { item } });
 });
 
+const createItems = asyncHandler(async (req, res) => {
+  const items = await inventoryService.createItems(req.body, req.user);
+  res.status(201).json({ success: true, data: { items } });
+});
+
 const updateItem = asyncHandler(async (req, res) => {
   const item = await inventoryService.updateItem(req.params.id, req.body, req.user);
   res.json({ success: true, data: { item } });
@@ -39,12 +44,31 @@ const deleteCategory = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { category } });
 });
 
+const listCategoryItemNames = asyncHandler(async (req, res) => {
+  const itemNames = await inventoryService.listCategoryItemNames();
+  res.json({ success: true, data: { itemNames } });
+});
+
+const createCategoryItemName = asyncHandler(async (req, res) => {
+  const itemName = await inventoryService.createCategoryItemName(req.params.id, req.body, req.user);
+  res.status(201).json({ success: true, data: { itemName } });
+});
+
+const deleteCategoryItemName = asyncHandler(async (req, res) => {
+  const itemName = await inventoryService.deleteCategoryItemName(req.params.id);
+  res.json({ success: true, data: { itemName } });
+});
+
 module.exports = {
   listItems,
   createItem,
+  createItems,
   updateItem,
   listCategories,
   createCategory,
   renameCategory,
   deleteCategory,
+  listCategoryItemNames,
+  createCategoryItemName,
+  deleteCategoryItemName,
 };

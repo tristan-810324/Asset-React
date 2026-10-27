@@ -1,4 +1,5 @@
 const requestsRepository = require('./requests.repository');
+const requesterIdentityRepository = require('../requester-identity/requester-identity.repository');
 const { invalid, text, validateCreateRequest, validateRequestFilters, validateRequestId } = require('./requests.validation');
 
 const transitions = {
@@ -51,6 +52,9 @@ async function listAssets() {
 }
 
 async function createRequest(input, user) {
+  if (!(await requesterIdentityRepository.isVerified(user.id))) {
+    invalid('Kumpletuhin ang requester identity profile at hintayin ang pag-verify ng GSO bago magsumite ng request.', 403);
+  }
   const validated = validateCreateRequest(input);
   return requestsRepository.createRequest({ ...validated, userId: user.id });
 }

@@ -2,13 +2,18 @@ import React, { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import {
   createInventoryCategory,
+  createInventoryCategoryItemName,
   createInventoryItem,
+  createInventoryItems,
   deleteInventoryCategory,
+  deleteInventoryCategoryItemName,
   listInventoryCategories,
+  listInventoryCategoryItemNames,
   listInventoryItems,
   renameInventoryCategory,
   updateInventoryItem,
   type InventoryCategory,
+  type InventoryCategoryItemName,
   type InventoryChangeRecord,
   type InventoryItemRecord,
 } from './inventoryApi'
@@ -58,6 +63,40 @@ type InventoryItem = {
 const conditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']
 const addItemConditionOptions = ['New', 'Good', 'Fair']
 const unitOfMeasureOptions = ['piece', 'unit', 'box', 'pack', 'ream', 'set', 'pair', 'roll', 'bottle', 'carton', 'bundle']
+
+function categoryItemNameOptionsFor(
+  categoryName: string,
+  categories: InventoryCategory[],
+  itemNames: InventoryCategoryItemName[],
+) {
+  const categoryId = categories.find((category) => category.name === categoryName)?.id
+  return categoryId ? itemNames.filter((itemName) => itemName.categoryId === categoryId) : []
+}
+
+function categoryInitials(category: string) {
+  const initials = (category.match(/[A-Za-z0-9]+/g) || [])
+    .map((word) => word[0])
+    .join('')
+    .toUpperCase()
+  return initials.slice(0, 4) || 'OTH'
+}
+
+const MAX_INDIVIDUAL_ITEMS_PER_SAVE = 500
+
+function inventoryItemCodes(category: string, quantity: number, inventoryItems: InventoryItem[]) {
+  if (!category || !Number.isInteger(quantity) || quantity < 1 || quantity > MAX_INDIVIDUAL_ITEMS_PER_SAVE) return []
+  const prefix = `AST-${categoryInitials(category)}-`
+  const codePattern = new RegExp(`^${prefix}(\\d+)$`, 'i')
+  const highestNumber = inventoryItems.reduce((highest, item) => {
+    const match = item.code.match(codePattern)
+    return match ? Math.max(highest, Number(match[1])) : highest
+  }, 0)
+  return Array.from({ length: quantity }, (_, index) => `${prefix}${String(highestNumber + index + 1).padStart(4, '0')}`)
+}
+
+function nextInventoryItemCode(category: string, inventoryItems: InventoryItem[]) {
+  return inventoryItemCodes(category, 1, inventoryItems)[0] || ''
+}
 
 function calculateAcquisitionCost(quantity: string | number, unitCost: string | number) {
   const normalizedQuantity = quantity === '' ? 1 : Number(quantity)
@@ -546,7 +585,8 @@ export default function ItemsMasterData() {
 
   // Dynamic categories state
   const [categories, setCategories] = useState<InventoryCategory[]>([])
-  const [showCategoryModal, setShowCategoryModal] = useState(false)
+  const [showMasterDataModal, setShowMasterDataModal] = useState(false)
+  const [masterDataManagerTab, setMasterDataManagerTab] = useState<'item_names' | 'categories'>('item_names')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [categoryManagerError, setCategoryManagerError] = useState('')
   const [isSavingCategory, setIsSavingCategory] = useState(false)
@@ -556,6 +596,13 @@ export default function ItemsMasterData() {
   const [categoryToDelete, setCategoryToDelete] = useState<InventoryCategory | null>(null)
   const [categoryDeleteReason, setCategoryDeleteReason] = useState('')
   const [isDeletingCategory, setIsDeletingCategory] = useState(false)
+  const [itemNameOptions, setItemNameOptions] = useState<InventoryCategoryItemName[]>([])
+  const [itemNameCategoryId, setItemNameCategoryId] = useState('')
+  const [newItemName, setNewItemName] = useState('')
+  const [itemNameSearch, setItemNameSearch] = useState('')
+  const [itemNameManagerError, setItemNameManagerError] = useState('')
+  const [isSavingItemName, setIsSavingItemName] = useState(false)
+  const [deletingItemNameId, setDeletingItemNameId] = useState('')
 
   // Selected item modal state
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
@@ -583,6 +630,7 @@ export default function ItemsMasterData() {
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all')
+  const [selectedItemNameFilter, setSelectedItemNameFilter] = useState('all')
   const [selectedConditionFilter, setSelectedConditionFilter] = useState('all')
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('all')
   const [selectedInventoryDate, setSelectedInventoryDate] = useState('')
@@ -597,13 +645,11 @@ export default function ItemsMasterData() {
     timeAcquired: '',
     unitCost: '',
     acquisitionCost: '0.00',
-    currentValue: '',
     quantity: '1',
     unitOfMeasure: 'piece',
     condition: '',
     picture: null as File | null,
   })
-
   // Items list state
   const [items, setItems] = useState<InventoryItem[]>([])
   const [isSavingItem, setIsSavingItem] = useState(false)
@@ -612,15 +658,24 @@ export default function ItemsMasterData() {
   useEffect(() => {
     let isMounted = true
 
-    Promise.all([listInventoryItems(), listInventoryCategories()])
-      .then(([records, categoryRecords]) => {
+    Promise.all([listInventoryItems(), listInventoryCategories(), listInventoryCategoryItemNames()])
+      .then(([records, categoryRecords, itemNameRecords]) => {
         if (!isMounted) return
         const savedItems = records.map(mapInventoryRecord)
         setItems(savedItems)
         setCategories(categoryRecords)
-        setFormData((current) => categoryRecords.some((category) => category.name === current.category)
-          ? current
-          : { ...current, category: categoryRecords[0]?.name || '' })
+        setItemNameOptions(itemNameRecords)
+        const defaultCategory = categoryRecords[0]?.name || ''
+        setFormData((current) => {
+          const selectedCategory = categoryRecords.some((category) => category.name === current.category)
+            ? current.category
+            : defaultCategory
+          return {
+            ...current,
+            category: selectedCategory,
+            itemCode: nextInventoryItemCode(selectedCategory, savedItems),
+          }
+        })
         setInventoryLoadError('')
       })
       .catch((error: unknown) => {
@@ -638,6 +693,10 @@ export default function ItemsMasterData() {
     const { name, value } = e.target
     setFormData((previous) => {
       const next = { ...previous, [name]: value }
+      if (name === 'category') {
+        next.itemName = ''
+        next.itemCode = nextInventoryItemCode(value, items)
+      }
       if (name === 'unitCost' || name === 'quantity') {
         next.acquisitionCost = calculateAcquisitionCost(
           name === 'quantity' ? value : previous.quantity,
@@ -657,17 +716,16 @@ export default function ItemsMasterData() {
     }
   }
 
-  const handleClearForm = () => {
+  const handleClearForm = (inventoryItems = items, categoryName = categories[0]?.name || '') => {
     setFormData({
-      itemCode: '',
-      category: categories[0]?.name || '',
+      itemCode: nextInventoryItemCode(categoryName, inventoryItems),
+      category: categoryName,
       itemName: '',
       description: '',
       dateAcquired: '',
       timeAcquired: '',
       unitCost: '',
       acquisitionCost: '0.00',
-      currentValue: '',
       quantity: '1',
       unitOfMeasure: 'piece',
       condition: '',
@@ -685,12 +743,65 @@ export default function ItemsMasterData() {
     try {
       const category = await createInventoryCategory(name)
       setCategories((current) => [...current, category])
-      setFormData((prev) => ({ ...prev, category: category.name }))
+      setItemNameCategoryId(category.id)
+      setFormData((prev) => ({
+        ...prev,
+        category: category.name,
+        itemCode: nextInventoryItemCode(category.name, items),
+        itemName: '',
+      }))
       setNewCategoryName('')
     } catch (error) {
       setCategoryManagerError(error instanceof Error ? error.message : 'Unable to add the category.')
     } finally {
       setIsSavingCategory(false)
+    }
+  }
+
+  const handleAddItemName = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const name = newItemName.trim()
+    if (!itemNameCategoryId || !name) return
+
+    setIsSavingItemName(true)
+    setItemNameManagerError('')
+    try {
+      const itemName = await createInventoryCategoryItemName(itemNameCategoryId, name)
+      setItemNameOptions((current) => [...current, itemName])
+      setNewItemName('')
+      const category = categories.find((entry) => entry.id === itemName.categoryId)
+      if (category) {
+        setFormData((current) => ({
+          ...current,
+          category: category.name,
+          itemCode: nextInventoryItemCode(category.name, items),
+          itemName: itemName.name,
+        }))
+      }
+    } catch (error) {
+      setItemNameManagerError(error instanceof Error ? error.message : 'Unable to add this item name.')
+    } finally {
+      setIsSavingItemName(false)
+    }
+  }
+
+  const handleDeleteItemName = async (id: string) => {
+    setDeletingItemNameId(id)
+    setItemNameManagerError('')
+    try {
+      const deletedItemName = await deleteInventoryCategoryItemName(id)
+      const remainingItemNames = itemNameOptions.filter((itemName) => itemName.id !== deletedItemName.id)
+      setItemNameOptions(remainingItemNames)
+      const currentCategoryId = categories.find((category) => category.name === formData.category)?.id
+      if (deletedItemName.categoryId === currentCategoryId) {
+        if (formData.itemName === deletedItemName.name) {
+          setFormData((current) => ({ ...current, itemName: '' }))
+        }
+      }
+    } catch (error) {
+      setItemNameManagerError(error instanceof Error ? error.message : 'Unable to delete this item name.')
+    } finally {
+      setDeletingItemNameId('')
     }
   }
 
@@ -707,7 +818,9 @@ export default function ItemsMasterData() {
       setCategories((current) => current.map((entry) => entry.id === renamed.id ? renamed : entry))
       setItems((current) => current.map((item) => item.category === category.name ? { ...item, category: renamed.name } : item))
       setSelectedItem((current) => current?.category === category.name ? { ...current, category: renamed.name } : current)
-      setFormData((current) => current.category === category.name ? { ...current, category: renamed.name } : current)
+      setFormData((current) => current.category === category.name
+        ? { ...current, category: renamed.name, itemCode: nextInventoryItemCode(renamed.name, items), itemName: '' }
+        : current)
       setEditFormData((current) => current.category === category.name ? { ...current, category: renamed.name } : current)
       setSelectedCategoryFilter((current) => current === category.name ? renamed.name : current)
       setEditingCategoryId(null)
@@ -729,12 +842,16 @@ export default function ItemsMasterData() {
     try {
       await deleteInventoryCategory(categoryToDelete.id, categoryDeleteReason.trim())
       const remainingCategories = categories.filter((entry) => entry.id !== categoryToDelete.id)
-      const fallbackCategory = remainingCategories.find((entry) => entry.name === 'Others')?.name
-        || remainingCategories[0]?.name
-        || ''
+      const fallback = remainingCategories.find((entry) => entry.name === 'Others') || remainingCategories[0]
+      const fallbackCategory = fallback?.name || ''
+      const remainingItemNameOptions = itemNameOptions.filter((itemName) => itemName.categoryId !== categoryToDelete.id)
       setCategories(remainingCategories)
+      setItemNameOptions(remainingItemNameOptions)
       setSelectedCategoryFilter((current) => current === categoryToDelete.name ? 'all' : current)
-      setFormData((current) => current.category === categoryToDelete.name ? { ...current, category: fallbackCategory } : current)
+      setItemNameCategoryId((current) => current === categoryToDelete.id ? fallback?.id || '' : current)
+      setFormData((current) => current.category === categoryToDelete.name
+        ? { ...current, category: fallbackCategory, itemCode: nextInventoryItemCode(fallbackCategory, items), itemName: '' }
+        : current)
       setEditFormData((current) => current.category === categoryToDelete.name ? { ...current, category: fallbackCategory } : current)
       setCategoryToDelete(null)
       setCategoryDeleteReason('')
@@ -853,34 +970,41 @@ export default function ItemsMasterData() {
 
     const unitCost = formData.unitCost ? Number(formData.unitCost) : 0
     const quantity = formData.quantity ? Number(formData.quantity) : 1
-    const acquisitionCost = calculateAcquisitionCost(quantity, unitCost)
-    const currentValue = formData.currentValue ? Number(formData.currentValue) : null
-    if (currentValue !== null && currentValue > acquisitionCost) {
-      alert('Current assessed value cannot exceed the calculated acquisition cost.')
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_INDIVIDUAL_ITEMS_PER_SAVE) {
+      alert(`Enter a whole number from 1 to ${MAX_INDIVIDUAL_ITEMS_PER_SAVE} for the number of individual items.`)
       return
     }
 
     setIsSavingItem(true)
     try {
-      const savedRecord = await createInventoryItem({
-        itemCode: formData.itemCode.trim(),
+      const itemCodes = inventoryItemCodes(formData.category, quantity, items)
+      if (itemCodes.length !== quantity) {
+        throw new Error('Unable to generate item codes. Please check the quantity and try again.')
+      }
+      const individualItems = itemCodes.map((itemCode) => ({
+        itemCode,
         category: formData.category,
         itemName: formData.itemName.trim(),
         description: formData.description.trim(),
         dateAcquired: formData.dateAcquired,
         timeAcquired: formData.timeAcquired,
         unitCost,
-        acquisitionCost,
-        currentValue,
-        quantity,
+        acquisitionCost: unitCost,
+        currentValue: null,
+        quantity: 1,
         unitOfMeasure: formData.unitOfMeasure.trim() || 'piece',
         condition: formData.condition || 'New',
-      })
-      const newItem = mapInventoryRecord(savedRecord)
-      setItems((current) => [newItem, ...current.filter((item) => item.code.toLowerCase() !== newItem.code.toLowerCase())])
+      }))
+      const savedRecords = quantity === 1
+        ? [await createInventoryItem(individualItems[0])]
+        : await createInventoryItems(individualItems)
+      const newItems = savedRecords.map(mapInventoryRecord)
+      const newItemCodes = new Set(newItems.map((item) => item.code.toLowerCase()))
+      const nextItems = [...newItems, ...items.filter((item) => !newItemCodes.has(item.code.toLowerCase()))]
+      setItems(nextItems)
       setInventoryLoadError('')
-      handleClearForm()
-      alert('The item was saved to the GSO inventory successfully!')
+      handleClearForm(nextItems, formData.category)
+      alert(`${quantity} individual ${quantity === 1 ? 'item was' : 'items were'} saved to the GSO inventory successfully.`)
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Unable to save the item. Please try again.')
     } finally {
@@ -889,22 +1013,50 @@ export default function ItemsMasterData() {
   }
 
   // Filter logic for searching
+  const itemNameFilterOptions = Array.from(new Map(
+    items
+      .filter((item) => selectedCategoryFilter === 'all' || item.category === selectedCategoryFilter)
+      .map((item) => item.name.trim())
+      .filter(Boolean)
+      .map((name) => [name.toLocaleLowerCase(), name]),
+  ).values()).sort((firstName, secondName) => firstName.localeCompare(secondName))
+
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase()
   const filteredItems = items.filter((item) => {
-    const matchesSearch =
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.assignedTo.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchesSearch = [item.name, item.description, item.code, item.assignedTo]
+      .some((value) => value.toLocaleLowerCase().includes(normalizedSearch))
 
     const matchesCategory = selectedCategoryFilter === 'all' || item.category === selectedCategoryFilter
+    const matchesItemName = selectedItemNameFilter === 'all'
+      || item.name.toLocaleLowerCase() === selectedItemNameFilter.toLocaleLowerCase()
     const matchesCondition = selectedConditionFilter === 'all' || item.condition === selectedConditionFilter
     const matchesStatus = selectedStatusFilter === 'all' || item.status === selectedStatusFilter
 
-    return matchesSearch && matchesCategory && matchesCondition && matchesStatus
+    return matchesSearch && matchesCategory && matchesItemName && matchesCondition && matchesStatus
   })
   const fullInventoryItems = selectedInventoryDate
     ? filteredItems.filter((item) => item.dateAcquiredValue?.slice(0, 10) === selectedInventoryDate)
     : filteredItems
   const displayedItems = activeTab === 'add_and_view' ? filteredItems.slice(0, 4) : fullInventoryItems
+  const formCategoryItemNames = categoryItemNameOptionsFor(formData.category, categories, itemNameOptions)
+  const requestedIndividualItemCount = Number(formData.quantity)
+  const formItemCodes = inventoryItemCodes(formData.category, requestedIndividualItemCount, items)
+  const itemCodePreview = formItemCodes.length > 1
+    ? `${formItemCodes[0]} – ${formItemCodes[formItemCodes.length - 1]}`
+    : formData.itemCode
+  const selectedFormCategoryId = categories.find((category) => category.name === formData.category)?.id || ''
+  const categoryManagedItemNames = itemNameOptions.filter((itemName) => itemName.categoryId === itemNameCategoryId)
+  const managedItemNames = categoryManagedItemNames.filter((itemName) => itemName.name.toLowerCase().includes(itemNameSearch.trim().toLowerCase()))
+  const managedItemNameCategory = categories.find((category) => category.id === itemNameCategoryId)
+
+  const handleOpenItemNameManager = () => {
+    setItemNameCategoryId(selectedFormCategoryId)
+    setNewItemName('')
+    setItemNameSearch('')
+    setItemNameManagerError('')
+    setMasterDataManagerTab('item_names')
+    setShowMasterDataModal(true)
+  }
 
   return (
     <GsoPageFrame
@@ -954,7 +1106,7 @@ export default function ItemsMasterData() {
                 : 'bg-white/10 text-blue-100 hover:bg-white/20'
             }`}
           >
-              + Master Inventory List ({items.length})
+              + View All Inventory List ({items.length})
           </button>
         </div>
       </section>
@@ -979,13 +1131,13 @@ export default function ItemsMasterData() {
                 Record catalog details, acquisition, condition, and quantity.
               </p>
             </div>
-            <div className="flex items-center gap-2 self-start sm:self-auto">
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
               <button
                 type="button"
-                onClick={() => setShowCategoryModal(true)}
+                onClick={handleOpenItemNameManager}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50"
               >
-                <span>+ Add New Category</span>
+                <span>Manage Categories &amp; Items</span>
               </button>
               <button
                 type="button"
@@ -1003,11 +1155,13 @@ export default function ItemsMasterData() {
               <input
                 type="text"
                 name="itemCode"
-                value={formData.itemCode}
-                onChange={handleInputChange}
-                placeholder="e.g. AST-EQP-0001"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                value={itemCodePreview}
+                readOnly
+                aria-readonly="true"
+                placeholder="Choose a category to generate a code"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none"
               />
+              <span className="mt-1 block text-[0.6rem] text-slate-400">Each individual item gets a unique sequential code.</span>
             </label>
 
             <label className="block">
@@ -1028,16 +1182,21 @@ export default function ItemsMasterData() {
 
             <label className="block">
               <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item name</span>
-              <input
-                type="text"
+              <select
                 name="itemName"
                 value={formData.itemName}
                 onChange={handleInputChange}
                 required
-                maxLength={500}
-                placeholder="e.g. Laptop"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
+              >
+                <option value="" disabled>
+                  {formCategoryItemNames.length > 0 ? 'Select an item name' : 'No item names yet — click Add Item Name'}
+                </option>
+                {formCategoryItemNames.map((itemName) => <option key={itemName.id} value={itemName.name}>{itemName.name}</option>)}
+              </select>
+              <span className="mt-1 block text-[0.6rem] text-slate-400">
+                If the item is not listed, click Add Item Name to add it to this category.
+              </span>
             </label>
 
             <label className="block">
@@ -1091,17 +1250,19 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Quantity</span>
+              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Number of individual items</span>
               <input
                 type="number"
-                min="0"
+                min="1"
+                max={MAX_INDIVIDUAL_ITEMS_PER_SAVE}
                 step="1"
                 name="quantity"
                 value={formData.quantity}
                 onChange={handleInputChange}
-                placeholder="Enter quantity"
+                placeholder="Enter number of items"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
               />
+              <span className="mt-1 block text-[0.6rem] text-slate-400">Each item will be saved as a separate row with quantity 1.</span>
             </label>
 
             <label className="block">
@@ -1118,24 +1279,6 @@ export default function ItemsMasterData() {
                 placeholder="Calculated from quantity and unit cost"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none"
               />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                Current assessed value (optional)
-              </span>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                max={formData.acquisitionCost === '' ? undefined : Number(formData.acquisitionCost)}
-                name="currentValue"
-                value={formData.currentValue}
-                onChange={handleInputChange}
-                placeholder="Current value"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-              <span className="mt-1 block text-[0.6rem] text-slate-400">Maximum: {formatMoney(formData.acquisitionCost)}</span>
             </label>
 
             <label className="block">
@@ -1183,7 +1326,7 @@ export default function ItemsMasterData() {
           <div className="mt-5 flex justify-end gap-2.5">
             <button
               type="button"
-              onClick={handleClearForm}
+              onClick={() => handleClearForm()}
               className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
             >
               Clear form
@@ -1201,217 +1344,276 @@ export default function ItemsMasterData() {
         </div>
       )}
 
-      {/* SEARCH AND FILTER CONTROL SECTION */}
-      <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <label className="block">
-            <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
-              Search inventory
-            </span>
-            <div className="relative">
-              <svg aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="10.75" cy="10.75" r="5.75" />
-                <path d="m15.1 15.1 4.15 4.15" />
-              </svg>
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Item name, code, or assigned recipient"
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3.5 text-xs font-semibold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </div>
-          </label>
-
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Category</span>
+      {showMasterDataModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="master-data-manager-title" className="flex max-h-[94vh] min-h-[78vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-blue-100 bg-white shadow-2xl shadow-slate-950/30">
+            <header className="flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-7">
+              <div>
+                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Master data setup</p>
+                <h2 id="master-data-manager-title" className="mt-1 text-base font-black text-slate-900 sm:text-lg">Manage Categories &amp; Item Names</h2>
+                <p className="mt-1 text-xs text-slate-500">Organize categories and the item names available in each one.</p>
+              </div>
               <button
                 type="button"
-                onClick={() => setShowCategoryModal(true)}
-                className="text-[0.65rem] font-extrabold text-blue-600 hover:underline"
+                onClick={() => {
+                  setShowMasterDataModal(false)
+                  setCategoryManagerError('')
+                  setItemNameManagerError('')
+                  setEditingCategoryId(null)
+                }}
+                className="shrink-0 rounded-xl border border-slate-200 px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50"
               >
-                + New Category
+                Close
+              </button>
+            </header>
+
+            <div role="tablist" aria-label="Master data sections" className="grid grid-cols-2 gap-2 border-b border-slate-100 bg-slate-50/80 px-5 py-3 sm:px-7">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={masterDataManagerTab === 'item_names'}
+                onClick={() => { setMasterDataManagerTab('item_names'); setItemNameManagerError('') }}
+                className={`rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${masterDataManagerTab === 'item_names' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-blue-700'}`}
+              >
+                Item Names
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={masterDataManagerTab === 'categories'}
+                onClick={() => { setMasterDataManagerTab('categories'); setCategoryManagerError('') }}
+                className={`rounded-xl px-4 py-2.5 text-xs font-extrabold transition ${masterDataManagerTab === 'categories' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-blue-700'}`}
+              >
+                Categories
               </button>
             </div>
-            <select
-              value={selectedCategoryFilter}
-              onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-            >
-              <option value="all">All categories</option>
-              {categories.map((category) => (
-                <option key={category.id || category.name} value={category.name}>
-                  {category.name}
-                </option>
-              ))}
-            </select>
-          </div>
 
-          <label className="block">
-            <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
-              Condition
-            </span>
-            <select
-              value={selectedConditionFilter}
-              onChange={(event) => setSelectedConditionFilter(event.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-            >
-              <option value="all">All Conditions</option>
-              {conditions.map((condition) => (
-                <option key={condition} value={condition}>{condition}</option>
-              ))}
-            </select>
-          </label>
+            <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
+              {masterDataManagerTab === 'item_names' ? (
+                <div role="tabpanel" className="min-h-full">
+                  <p className="text-xs leading-relaxed text-slate-500">Add specific item names and link them to a category. Saved names appear in the Add Inventory Item dropdown.</p>
+                  <form onSubmit={handleAddItemName} className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_auto] md:items-end">
+                    <label className="block">
+                      <span className="mb-1.5 block text-[0.65rem] font-bold text-slate-600">Category</span>
+                      <select
+                        value={itemNameCategoryId}
+                        onChange={(event) => { setItemNameCategoryId(event.target.value); setItemNameSearch('') }}
+                        required
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                      >
+                        <option value="" disabled>Select a category</option>
+                        {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-[0.65rem] font-bold text-slate-600">New item name</span>
+                      <input
+                        type="text"
+                        required
+                        maxLength={500}
+                        value={newItemName}
+                        onChange={(event) => setNewItemName(event.target.value)}
+                        placeholder="e.g. Mouse, Keyboard, or Laptop"
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={isSavingItemName || !itemNameCategoryId}
+                      className="h-11 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSavingItemName ? 'Saving...' : 'Add Item Name'}
+                    </button>
+                  </form>
 
-          <label className="block">
-            <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
-              Status
-            </span>
-            <select
-              value={selectedStatusFilter}
-              onChange={(event) => setSelectedStatusFilter(event.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Available">Available</option>
-              <option value="Issued">Issued</option>
-              <option value="Pending Approval">Pending Approval</option>
-              <option value="Reserved">Reserved</option>
-              <option value="Borrowed">Borrowed</option>
-            </select>
-          </label>
-        </div>
-      </section>
+                  {itemNameManagerError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{itemNameManagerError}</p>}
 
-      {/* MODAL FOR ADDING AND MANAGING CATEGORIES */}
-      {showCategoryModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <h3 className="text-sm font-black text-slate-900">Manage Inventory Categories</h3>
-            <p className="mt-1 text-xs text-slate-500">Add categories, rename them with a reason, or remove unused categories.</p>
-            <form onSubmit={handleAddCategory} className="mt-4">
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Category Name</span>
-                <input
-                  type="text"
-                  required
-                  value={newCategoryName}
-                  onChange={(e) => setNewCategoryName(e.target.value)}
-                  placeholder="e.g. Sports Equipment"
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-              <div className="mt-3 flex justify-end">
-                <button
-                  type="submit"
-                  disabled={isSavingCategory}
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isSavingCategory ? 'Saving...' : 'Add Category'}
-                </button>
-              </div>
-            </form>
+                  <div className="mt-6 flex flex-col justify-between gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-end">
+                    <div>
+                      <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-600">Saved item names</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {managedItemNameCategory ? `${managedItemNameCategory.name} · ${categoryManagedItemNames.length} name(s)` : 'Choose a category to view its names.'}
+                      </p>
+                    </div>
+                    <label className="block w-full sm:max-w-sm">
+                      <span className="sr-only">Search item names</span>
+                      <input
+                        type="search"
+                        value={itemNameSearch}
+                        onChange={(event) => setItemNameSearch(event.target.value)}
+                        placeholder="Search item names..."
+                        aria-label="Search item names"
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+                  </div>
 
-            {categoryManagerError && (
-              <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                {categoryManagerError}
-              </p>
-            )}
-
-            <div className="mt-5 border-t border-slate-100 pt-4">
-              <h4 className="text-xs font-extrabold uppercase tracking-wide text-slate-500">Existing Categories</h4>
-              <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
-                {categories.map((category) => (
-                  <div key={category.id || category.name} className="rounded-xl border border-slate-100 p-3">
-                    {editingCategoryId === category.id && Boolean(category.id) ? (
-                      <form onSubmit={(e) => handleRenameCategory(e, category)} className="space-y-2">
-                        <label className="block">
-                          <span className="mb-1 block text-[0.62rem] font-bold text-slate-500">Updated category name</span>
-                          <input
-                            type="text"
-                            required
-                            maxLength={120}
-                            value={editingCategoryName}
-                            onChange={(e) => setEditingCategoryName(e.target.value)}
-                            className="h-9 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="mb-1 block text-[0.62rem] font-bold text-slate-500">Reason for renaming</span>
-                          <textarea
-                            required
-                            maxLength={1000}
-                            value={editingCategoryReason}
-                            onChange={(e) => setEditingCategoryReason(e.target.value)}
-                            placeholder="Why does this category name need to change?"
-                            className="min-h-16 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                          />
-                        </label>
-                        <div className="flex justify-end gap-2">
+                  <div className="mt-3 max-h-[52vh] min-h-56 space-y-2 overflow-y-auto rounded-2xl bg-slate-50/80 p-2.5 pr-3">
+                    {categoryManagedItemNames.length === 0 ? (
+                      <p className="grid min-h-44 place-items-center rounded-xl border border-dashed border-slate-200 bg-white px-5 text-center text-xs font-medium text-slate-500">
+                        No saved names for this category yet. Add Mouse, Keyboard, Laptop, or another item above.
+                      </p>
+                    ) : managedItemNames.length === 0 ? (
+                      <p className="grid min-h-44 place-items-center rounded-xl border border-dashed border-slate-200 bg-white px-5 text-center text-xs font-medium text-slate-500">
+                        No item names match “{itemNameSearch}”. Try a different search.
+                      </p>
+                    ) : managedItemNames.map((itemName) => (
+                      <div key={itemName.id} className="flex min-h-16 flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm shadow-slate-900/2">
+                        <span className="min-w-0 text-sm font-bold text-slate-700">{itemName.name}</span>
+                        <div className="flex shrink-0 gap-2">
                           <button
                             type="button"
-                            onClick={() => { setEditingCategoryId(null); setCategoryManagerError('') }}
-                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="submit"
-                            disabled={isSavingCategory}
-                            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-extrabold text-white disabled:opacity-60"
-                          >
-                            {isSavingCategory ? 'Saving...' : 'Save name'}
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-slate-700">{category.name}</span>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            disabled={!category.id || isSavingCategory}
                             onClick={() => {
-                              setEditingCategoryId(category.id)
-                              setEditingCategoryName(category.name)
-                              setEditingCategoryReason('')
-                              setCategoryManagerError('')
+                              const category = categories.find((entry) => entry.id === itemName.categoryId)
+                              if (category) {
+                                setFormData((current) => ({ ...current, category: category.name, itemCode: nextInventoryItemCode(category.name, items), itemName: itemName.name }))
+                              }
+                              setShowMasterDataModal(false)
                             }}
-                            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[0.65rem] font-bold text-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-lg border border-blue-100 px-3 py-2 text-[0.68rem] font-bold text-blue-700 transition hover:bg-blue-50"
                           >
-                            Rename
+                            Use name
                           </button>
                           <button
                             type="button"
-                            disabled={!category.id || isSavingCategory || categories.length <= 1}
-                            onClick={() => {
-                              setCategoryToDelete(category)
-                              setCategoryDeleteReason('')
-                              setCategoryManagerError('')
-                            }}
-                            className="rounded-lg border border-rose-100 px-2.5 py-1.5 text-[0.65rem] font-bold text-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                            disabled={Boolean(deletingItemNameId)}
+                            onClick={() => void handleDeleteItemName(itemName.id)}
+                            className="rounded-lg border border-rose-100 px-3 py-2 text-[0.68rem] font-bold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            Delete
+                            {deletingItemNameId === itemName.id ? 'Removing...' : 'Remove'}
                           </button>
                         </div>
                       </div>
-                    )}
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              ) : (
+                <div role="tabpanel">
+                  <p className="text-xs leading-relaxed text-slate-500">Add categories, rename them with a reason, or remove unused categories.</p>
+                  <form onSubmit={handleAddCategory} className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                    <label className="block">
+                      <span className="mb-1.5 block text-[0.65rem] font-bold text-slate-600">Category name</span>
+                      <input
+                        type="text"
+                        required
+                        value={newCategoryName}
+                        onChange={(e) => setNewCategoryName(e.target.value)}
+                        placeholder="e.g. Sports Equipment"
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={isSavingCategory}
+                      className="h-11 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSavingCategory ? 'Saving...' : 'Add Category'}
+                    </button>
+                  </form>
+
+                  {categoryManagerError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{categoryManagerError}</p>}
+
+                  <div className="mt-6 border-t border-slate-100 pt-5">
+                    <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-600">Existing categories · {categories.length}</h3>
+                    <div className="mt-3 max-h-[54vh] space-y-2 overflow-y-auto rounded-2xl bg-slate-50/80 p-2.5 pr-3">
+                      {categories.map((category) => (
+                        <div key={category.id || category.name} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-900/2">
+                          {editingCategoryId === category.id && Boolean(category.id) ? (
+                            <form onSubmit={(e) => handleRenameCategory(e, category)} className="space-y-3">
+                              <label className="block">
+                                <span className="mb-1.5 block text-[0.62rem] font-bold text-slate-500">Updated category name</span>
+                                <input
+                                  type="text"
+                                  required
+                                  maxLength={120}
+                                  value={editingCategoryName}
+                                  onChange={(e) => setEditingCategoryName(e.target.value)}
+                                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1.5 block text-[0.62rem] font-bold text-slate-500">Reason for renaming</span>
+                                <textarea
+                                  required
+                                  maxLength={1000}
+                                  value={editingCategoryReason}
+                                  onChange={(e) => setEditingCategoryReason(e.target.value)}
+                                  placeholder="Why does this category name need to change?"
+                                  className="min-h-16 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                                />
+                              </label>
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => { setEditingCategoryId(null); setCategoryManagerError('') }}
+                                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="submit"
+                                  disabled={isSavingCategory}
+                                  className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-extrabold text-white disabled:opacity-60"
+                                >
+                                  {isSavingCategory ? 'Saving...' : 'Save name'}
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <span className="text-sm font-bold text-slate-700">{category.name}</span>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  disabled={!category.id || isSavingCategory}
+                                  onClick={() => {
+                                    setEditingCategoryId(category.id)
+                                    setEditingCategoryName(category.name)
+                                    setEditingCategoryReason('')
+                                    setCategoryManagerError('')
+                                  }}
+                                  className="rounded-lg border border-slate-200 px-3 py-2 text-[0.68rem] font-bold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Rename
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!category.id || isSavingCategory || categories.length <= 1}
+                                  onClick={() => {
+                                    setCategoryToDelete(category)
+                                    setCategoryDeleteReason('')
+                                    setCategoryManagerError('')
+                                  }}
+                                  className="rounded-lg border border-rose-100 px-3 py-2 text-[0.68rem] font-bold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="mt-5 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setShowCategoryModal(false); setCategoryManagerError(''); setEditingCategoryId(null) }}
-                  className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600"
-                >
-                  Done
-                </button>
-              </div>
-          </div>
+            <footer className="flex justify-end border-t border-slate-100 px-5 py-4 sm:px-7">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMasterDataModal(false)
+                  setCategoryManagerError('')
+                  setItemNameManagerError('')
+                  setEditingCategoryId(null)
+                }}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50"
+              >
+                Done
+              </button>
+            </footer>
+          </section>
         </div>
       )}
 
@@ -1536,11 +1738,97 @@ export default function ItemsMasterData() {
           </div>
         </div>
 
+        <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-6">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-[0.65rem] font-extrabold uppercase tracking-[0.12em] text-slate-500">Search and filter inventory</h3>
+            <p className="text-[0.65rem] font-medium text-slate-400">Narrow the list by item, category, condition, or status.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <label className="block">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
+                Search inventory
+              </span>
+              <div className="relative">
+                <svg aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="10.75" cy="10.75" r="5.75" />
+                  <path d="m15.1 15.1 4.15 4.15" />
+                </svg>
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Item name, code, or assigned recipient"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3.5 text-xs font-semibold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                />
+              </div>
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Category</span>
+              <select
+                value={selectedCategoryFilter}
+                onChange={(event) => {
+                  setSelectedCategoryFilter(event.target.value)
+                  setSelectedItemNameFilter('all')
+                }}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              >
+                <option value="all">All categories</option>
+                {categories.map((category) => (
+                  <option key={category.id || category.name} value={category.name}>{category.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Specific item name</span>
+              <select
+                value={selectedItemNameFilter}
+                onChange={(event) => setSelectedItemNameFilter(event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              >
+                <option value="all">All item names</option>
+                {itemNameFilterOptions.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition</span>
+              <select
+                value={selectedConditionFilter}
+                onChange={(event) => setSelectedConditionFilter(event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              >
+                <option value="all">All Conditions</option>
+                {conditions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Status</span>
+              <select
+                value={selectedStatusFilter}
+                onChange={(event) => setSelectedStatusFilter(event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+              >
+                <option value="all">All Statuses</option>
+                <option value="Available">Available</option>
+                <option value="Issued">Issued</option>
+                <option value="Pending Approval">Pending Approval</option>
+                <option value="Reserved">Reserved</option>
+                <option value="Borrowed">Borrowed</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
         <div className="inventory-list-scrollbar max-h-144 overflow-auto border-t border-slate-100">
           <table className="min-w-245 w-full text-left">
             <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
               <tr>
-                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Item</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Item description</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Acquired</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Value</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Stock / condition</th>
@@ -1561,7 +1849,12 @@ export default function ItemsMasterData() {
                         {item.initials}
                       </span>
                       <span className="min-w-0">
-                        <span className="block truncate text-xs font-extrabold text-slate-800">{item.name}</span>
+                        <span title={item.description} className="line-clamp-2 block text-xs font-extrabold leading-5 text-slate-800">
+                          {item.description || item.name}
+                        </span>
+                        {item.name.trim().toLocaleLowerCase() !== (item.description || '').trim().toLocaleLowerCase() && (
+                          <span className="mt-1 block truncate text-[0.68rem] font-bold text-blue-700">{item.name}</span>
+                        )}
                         <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{item.code}</span>
                         <span className="mt-1 inline-flex rounded-md bg-slate-100 px-1.5 py-0.5 text-[0.58rem] font-bold text-slate-500">
                           {item.category}

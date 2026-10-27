@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { registerBorrower, savePendingEmailVerification } from './authApi'
+import { registerRequester, savePendingEmailVerification } from './authApi'
 
 export default function Register() {
   const [feedback, setFeedback] = useState<{ type: 'error' | 'info'; message: string } | null>(null)
@@ -23,7 +23,7 @@ export default function Register() {
     }
 
     try {
-      const pending = await registerBorrower(name, email, password)
+      const pending = await registerRequester(name, email, password)
       savePendingEmailVerification({ ...pending, flow: 'registration' })
       window.location.replace('/verify-email')
     } catch (error) {
@@ -116,7 +116,7 @@ export default function Register() {
 
               <div className="mb-3.5 text-center sm:mb-5 sm:text-left">
                 <h2 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl lg:text-2xl">
-                  Create borrower account
+                  Create requester account
                 </h2>
                 <p className="mt-0.5 text-[0.7rem] font-medium text-slate-600 sm:text-xs">
                   Register with your email to request and track borrowed items.

@@ -10,7 +10,11 @@ router.get('/categories', inventoryController.listCategories);
 router.post('/categories', inventoryController.createCategory);
 router.patch('/categories/:id', inventoryController.renameCategory);
 router.delete('/categories/:id', inventoryController.deleteCategory);
+router.get('/item-names', inventoryController.listCategoryItemNames);
+router.post('/categories/:id/item-names', inventoryController.createCategoryItemName);
+router.delete('/item-names/:id', inventoryController.deleteCategoryItemName);
 router.get('/items', inventoryController.listItems);
+router.post('/items/bulk', inventoryController.createItems);
 router.post('/items', inventoryController.createItem);
 router.put('/items/:id', inventoryController.updateItem);
 

@@ -11,6 +11,7 @@ export type GsoNavigationItem =
   | 'To Be Repaired'
   | 'Notifications'
   | 'Requests & Borrowing'
+  | 'Requester Verification'
   | 'Maintenance'
 
 type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Maintenance'>
@@ -133,6 +134,7 @@ const navigation: { name: VisibleNavigationItem; label?: string; icon: Navigatio
   { name: 'Issuance & Returned', label: 'Issuance & Returns', icon: 'clipboard-check', href: '/gso/issuance' },
   { name: 'To Be Repaired', icon: 'wrench', href: '/gso/to-be-repaired' },
   { name: 'Requests & Borrowing', icon: 'clipboard-plus', href: '/gso/requests-borrowing' },
+  { name: 'Requester Verification', icon: 'users', href: '/gso/requester-verification' },
   { name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
 ]
 

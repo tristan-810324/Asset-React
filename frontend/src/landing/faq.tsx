@@ -15,7 +15,7 @@ const faqItems: FaqItem[] = [
   {
     id: 'who-can-use',
     question: 'Who can use A.SSET?',
-    answer: 'GSO Staff, IT Admin, and authorized borrowers can sign in. Your account determines which workspace and tools are available.',
+    answer: 'GSO Staff, IT Admin, and authorized requesters can sign in. Your account determines which workspace and tools are available.',
   },
   {
     id: 'borrow-equipment',

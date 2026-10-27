@@ -219,12 +219,10 @@ export default function GsoDashboard() {
                 </span>
                 <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">GSO Executive Overview</h1>
                 <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-                  High-level breakdown of institutional asset custody, campus allocation, and active lifecycle logs.
+                  System Command Center
                 </p>
               </div>
-              <span className="rounded-xl border border-white/10 bg-white/8 px-3.5 py-2 text-xs font-bold text-blue-100">
-                System Command Center
-              </span>
+             
             </div>
           </section>
 

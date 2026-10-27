@@ -1,22 +1,23 @@
 INSERT INTO roles (role_key, display_name)
 VALUES
     ('IT_ADMIN', 'IT Admin'),
+    ('IT_STAFF', 'IT Staff'),
     ('GSO_STAFF', 'GSO Staff'),
-    ('BORROWER', 'Borrower')
+    ('BORROWER', 'Requester')
 ON CONFLICT (role_key) DO NOTHING;
 
 INSERT INTO permissions (permission_key, description)
 VALUES
     ('auth.login', 'Sign in to the staff portal'),
     ('users.manage', 'Create and manage staff accounts')
-ON CONFLICT (permission_key) DO NOTHING;
+ON CONFLICT (permission_key) DO NOTHING; 
 
 INSERT INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
   FROM roles r
  CROSS JOIN permissions p
  WHERE (r.role_key = 'IT_ADMIN' AND p.permission_key IN ('auth.login', 'users.manage'))
-    OR (r.role_key IN ('GSO_STAFF', 'BORROWER') AND p.permission_key = 'auth.login')
+    OR (r.role_key IN ('IT_STAFF', 'GSO_STAFF', 'BORROWER') AND p.permission_key = 'auth.login')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Local development accounts for the requested direct-to-dashboard login flow.
@@ -25,8 +26,9 @@ ON CONFLICT (role_id, permission_id) DO NOTHING;
 INSERT INTO users (name, email, password_hash, email_verified_at)
 VALUES
     ('DYCI IT Admin', 'admin@dyci.edu.ph', '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.', NOW()),
+    ('DYCI IT Staff', 'itstaff@dyci.edu.ph', '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.', NOW()),
     ('DYCI GSO Staff', 'gso@dyci.edu.ph', '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.', NOW()),
-    ('DYCI Borrower', 'borrow@dyci.edu.ph', '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.', NOW())
+    ('DYCI Requester', 'borrow@dyci.edu.ph', '$2b$12$KJ17o6wIXzjT5c8aQzBQaeJcgiBMzeu8DwM6tDlH4AJzghgsrZqC.', NOW())
 ON CONFLICT DO NOTHING;
 
 -- Refresh the seeded credentials on reruns so existing local accounts also use Admin123.
@@ -35,12 +37,13 @@ UPDATE users
        is_active = TRUE,
        email_verified_at = COALESCE(email_verified_at, NOW()),
        updated_at = NOW()
- WHERE lower(email) IN ('admin@dyci.edu.ph', 'gso@dyci.edu.ph', 'borrow@dyci.edu.ph');
+ WHERE lower(email) IN ('admin@dyci.edu.ph', 'itstaff@dyci.edu.ph', 'gso@dyci.edu.ph', 'borrow@dyci.edu.ph');
 
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
   FROM (VALUES
       ('admin@dyci.edu.ph', 'IT_ADMIN'),
+      ('itstaff@dyci.edu.ph', 'IT_STAFF'),
       ('gso@dyci.edu.ph', 'GSO_STAFF'),
       ('borrow@dyci.edu.ph', 'BORROWER')
   ) AS seeded_accounts(email, role_key)
@@ -48,7 +51,7 @@ SELECT u.id, r.id
   JOIN roles r ON r.role_key = seeded_accounts.role_key
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
--- Keep the seeded borrower account separate from staff/admin roles on reruns.
+-- Keep the seeded requester account separate from staff/admin roles on reruns.
 DELETE FROM user_roles ur
  USING users u
  WHERE ur.user_id = u.id

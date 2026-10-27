@@ -282,6 +282,81 @@ async function createItem({
   }
 }
 
+async function createItems(items, { createdByUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const createdItems = [];
+
+    for (const item of items) {
+      const result = await client.query(
+        `INSERT INTO item_catalog (
+           item_code, category_id, category, item_name, description, date_acquired, time_acquired,
+           unit_cost, acquisition_cost, current_value, quantity, unit_of_measure,
+           condition, created_by_user_id
+         )
+         SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+           FROM item_categories AS category_row
+          WHERE lower(category_row.name) = lower($2)
+         RETURNING id`,
+        [
+          item.itemCode,
+          item.category,
+          item.itemName,
+          item.description,
+          item.dateAcquired,
+          item.timeAcquired,
+          item.unitCost,
+          item.acquisitionCost,
+          item.currentValue,
+          item.quantity,
+          item.unitOfMeasure,
+          item.condition,
+          createdByUserId,
+        ],
+      );
+
+      if (!result.rows[0]) {
+        throw Object.assign(new Error('Hindi na makita ang piniling category. I-refresh ang page at pumili muli.'), {
+          code: 'CATEGORY_NOT_FOUND',
+        });
+      }
+
+      const id = result.rows[0].id;
+      const created = await getItemById(client, id);
+      await client.query(
+        `INSERT INTO inventory_change_logs (
+           entity_type, entity_key, entity_name, item_id, action, reason,
+           old_values, new_values, changed_by_user_id
+         ) VALUES ('item', $1, $2, $3, 'created', 'New inventory item created.', '{}'::JSONB, $4::JSONB, $5)`,
+        [String(id), created.itemName, id, JSON.stringify({
+          itemCode: created.itemCode,
+          category: created.category,
+          itemName: created.itemName,
+          description: created.description,
+          dateAcquired: created.dateAcquired,
+          timeAcquired: created.timeAcquired,
+          unitCost: created.unitCost,
+          acquisitionCost: created.acquisitionCost,
+          currentValue: created.currentValue,
+          quantity: created.quantity,
+          unitOfMeasure: created.unitOfMeasure,
+          condition: created.condition,
+        }), createdByUserId],
+      );
+      createdItems.push(await getItemById(client, id));
+    }
+
+    await client.query('COMMIT');
+    return createdItems;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function itemSnapshot(item) {
   return {
     itemCode: item.item_code,
@@ -556,12 +631,57 @@ async function deleteCategory(id, { reason, changedByUserId }) {
   }
 }
 
+async function listCategoryItemNames() {
+  const result = await pool.query(
+    `SELECT item_name.id,
+            item_name.category_id AS "categoryId",
+            item_name.name,
+            item_name.created_at AS "createdAt"
+       FROM item_category_item_names AS item_name
+       JOIN item_categories AS category ON category.id = item_name.category_id
+      ORDER BY lower(category.name), lower(item_name.name), item_name.id`,
+  );
+  return result.rows;
+}
+
+async function createCategoryItemName(categoryId, { name, createdByUserId }) {
+  const result = await pool.query(
+    `INSERT INTO item_category_item_names (category_id, name, created_by_user_id)
+     SELECT category.id, $2, $3
+       FROM item_categories AS category
+      WHERE category.id = $1
+     RETURNING id, category_id AS "categoryId", name, created_at AS "createdAt"`,
+    [categoryId, name, createdByUserId],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(new Error('Hindi na makita ang piniling category.'), { code: 'CATEGORY_NOT_FOUND' });
+  }
+  return result.rows[0];
+}
+
+async function deleteCategoryItemName(id) {
+  const result = await pool.query(
+    `DELETE FROM item_category_item_names
+      WHERE id = $1
+      RETURNING id, category_id AS "categoryId", name, created_at AS "createdAt"`,
+    [id],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(new Error('Hindi na makita ang item name na buburahin.'), { status: 404 });
+  }
+  return result.rows[0];
+}
+
 module.exports = {
   listItems,
   createItem,
+  createItems,
   updateItem,
   listCategories,
   createCategory,
   renameCategory,
   deleteCategory,
+  listCategoryItemNames,
+  createCategoryItemName,
+  deleteCategoryItemName,
 };

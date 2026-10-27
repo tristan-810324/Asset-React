@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { listGsoRequests, REQUEST_TYPE_LABELS, updateGsoRequestStatus, type ServiceRequest } from '../borrowers/requesterApi'
+import { listGsoRequests, REQUEST_TYPE_LABELS, updateGsoRequestStatus, type ServiceRequest } from '../requesters/requesterApi'
 
 const typeOptions = [
   ['BORROWING', 'Borrowing'],
@@ -111,7 +111,7 @@ export default function RequesterRequestInbox() {
 
   return <section className="mt-6 overflow-hidden rounded-2xl border border-blue-200/70 bg-white shadow-md shadow-blue-950/5" aria-label="Live requester submissions">
     <div className="border-b border-slate-100 bg-linear-to-r from-blue-50/90 via-white to-white px-5 py-5 sm:px-6">
-      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-blue-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live database queue</span><h2 className="mt-2 text-lg font-black tracking-tight text-slate-900">Requester submissions</h2><p className="mt-1 text-xs leading-relaxed text-slate-500">Review borrower and school-service forms submitted from the browser portal.</p></div><button type="button" onClick={() => { setLoading(true); void loadRequests() }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-slate-600 shadow-sm hover:bg-slate-50">Refresh queue</button></div>
+      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-blue-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live database queue</span><h2 className="mt-2 text-lg font-black tracking-tight text-slate-900">Requester submissions</h2><p className="mt-1 text-xs leading-relaxed text-slate-500">Review requester and school-service forms submitted from the browser portal.</p></div><button type="button" onClick={() => { setLoading(true); void loadRequests() }} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-slate-600 shadow-sm hover:bg-slate-50">Refresh queue</button></div>
       <div className="mt-4 grid gap-2 sm:grid-cols-3">{summary.map((item) => <div key={item.label} className="flex items-center justify-between rounded-xl border border-slate-100 bg-white px-3 py-2.5"><span className="text-[0.66rem] font-bold text-slate-500">{item.label}</span><span className={`grid h-7 min-w-7 place-items-center rounded-lg px-1 text-xs font-black ${item.tone}`}>{item.count}</span></div>)}</div>
     </div>
     <div className="grid xl:grid-cols-[0.95fr_1.05fr]">

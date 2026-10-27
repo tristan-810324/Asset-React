@@ -3,24 +3,36 @@ import {
   clearPendingEmailVerification,
   dashboardPathForRoles,
   getPendingEmailVerification,
+  resendEmailVerificationOtp,
   saveAuthToken,
+  savePendingEmailVerification,
   verifyEmailOtp,
 } from './authApi'
 
 export default function VerifyEmailOtp() {
-  const [pending] = useState(getPendingEmailVerification)
+  const [pending, setPending] = useState(getPendingEmailVerification)
   const [errorMessage, setErrorMessage] = useState('')
+  const [noticeMessage, setNoticeMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isResending, setIsResending] = useState(false)
+  const [resendSeconds, setResendSeconds] = useState(60)
 
   useEffect(() => {
     if (!pending) window.location.replace('/login')
   }, [pending])
 
+  useEffect(() => {
+    if (!pending || resendSeconds <= 0) return
+    const timer = window.setTimeout(() => setResendSeconds((seconds) => seconds - 1), 1000)
+    return () => window.clearTimeout(timer)
+  }, [pending, resendSeconds])
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (!pending) return
+    if (!pending || isSubmitting || isResending) return
 
     setErrorMessage('')
+    setNoticeMessage('')
     setIsSubmitting(true)
     const formData = new FormData(event.currentTarget)
     const otp = String(formData.get('otp') || '').trim()
@@ -41,6 +53,33 @@ export default function VerifyEmailOtp() {
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'We could not verify your email. Please try again.')
       setIsSubmitting(false)
+    }
+  }
+
+  const handleResend = async () => {
+    if (!pending || isSubmitting || isResending || resendSeconds > 0) return
+
+    setErrorMessage('')
+    setNoticeMessage('')
+    setIsResending(true)
+
+    try {
+      const result = await resendEmailVerificationOtp(pending.challengeId)
+      if ('alreadyVerified' in result) {
+        clearPendingEmailVerification()
+        window.location.replace('/login')
+        return
+      }
+
+      const updatedPending = { ...pending, ...result }
+      savePendingEmailVerification(updatedPending)
+      setPending(updatedPending)
+      setResendSeconds(60)
+      setNoticeMessage(result.message || 'A new verification code has been sent to your email.')
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to resend the code. Please try again.')
+    } finally {
+      setIsResending(false)
     }
   }
 
@@ -125,15 +164,19 @@ export default function VerifyEmailOtp() {
               </div>
 
               {errorMessage && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{errorMessage}</p>}
+              {noticeMessage && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{noticeMessage}</p>}
 
-              <button type="submit" disabled={isSubmitting || !pending} aria-busy={isSubmitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-xs font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-500 active:scale-[0.98] disabled:cursor-wait disabled:opacity-60 sm:h-12">
+              <button type="submit" disabled={isSubmitting || isResending || !pending} aria-busy={isSubmitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-xs font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-500 active:scale-[0.98] disabled:cursor-wait disabled:opacity-60 sm:h-12">
                 {isSubmitting ? 'Verifying...' : 'Verify and continue'}
                 <span aria-hidden="true">→</span>
               </button>
             </form>
 
             <div className="mt-5 border-t border-slate-200/70 pt-4 text-center">
-              <p className="text-xs font-semibold text-slate-600">Didn&apos;t receive or find the code? Sign in again to request a new one.</p>
+              <p className="text-xs font-semibold text-slate-600">Didn&apos;t receive or find the code?</p>
+              <button type="button" onClick={handleResend} disabled={!pending || isSubmitting || isResending || resendSeconds > 0} aria-busy={isResending} className="mt-2 text-xs font-extrabold text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-400">
+                {isResending ? 'Sending new code…' : resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : 'Resend code'}
+              </button>
               <a href="/login" className="mt-3 block text-xs font-extrabold text-blue-600 hover:underline">Back to sign in</a>
             </div>
           </div>

@@ -41,7 +41,7 @@ export default function RequestDetail() {
   }
 
   return <RequesterLayout title="Request details" subtitle="Your reference, submitted details, and request timeline.">
-    <a href="/borrower/my-requests" className="text-xs font-extrabold text-blue-700 hover:underline">← My Requests</a>
+    <a href="/requester/my-requests" className="text-xs font-extrabold text-blue-700 hover:underline">← My Requests</a>
     {loading ? <div className="grid min-h-64 place-items-center text-sm font-bold text-slate-400">Loading request…</div> : !request ? <div role="alert" className="mt-5 rounded-2xl border border-rose-100 bg-white p-6 text-sm font-bold text-rose-700">{error || 'Hindi makita ang request.'}</div> : <>
       <section className="relative mt-4 overflow-hidden rounded-3xl bg-[#09244a] p-5 text-white shadow-xl shadow-blue-950/15 sm:p-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />

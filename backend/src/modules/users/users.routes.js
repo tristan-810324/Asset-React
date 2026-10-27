@@ -7,7 +7,8 @@ const router = express.Router();
 const requireAdmin = requireRole('IT_ADMIN');
 
 router.use(authenticate, requireAdmin);
-router.get('/', usersController.listGsoAccounts);
-router.post('/', usersController.createGsoAccount);
+router.get('/positions', usersController.listAccountPositions);
+router.get('/', usersController.listSystemUsers);
+router.post('/', usersController.createSystemUser);
 
 module.exports = router;

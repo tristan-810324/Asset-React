@@ -140,7 +140,7 @@ export default function Login() {
 
               {emailVerified && (
                 <p role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
-                  Email verified. You can now sign in with your new borrower account.
+                  Email verified. You can now sign in with your new requester account.
                 </p>
               )}
 
