@@ -5,8 +5,8 @@ const departmentsController = require('./departments.controller');
 
 const router = express.Router();
 
-router.use(authenticate, requireRole('GSO_STAFF'));
-router.get('/', departmentsController.listDepartments);
-router.post('/', departmentsController.createDepartment);
+router.use(authenticate);
+router.get('/', requireRole('GSO_STAFF', 'BORROWER'), departmentsController.listDepartments);
+router.post('/', requireRole('GSO_STAFF'), departmentsController.createDepartment);
 
 module.exports = router;

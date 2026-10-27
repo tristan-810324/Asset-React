@@ -789,7 +789,7 @@ export default function EmployeeMasterData() {
             </span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Employee Master Data</h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-              Keep employee profiles for asset assignments, issuance tracking, and complete item custody history.
+              Keep employee profiles for asset assignments, issuance tracking, and complete item custody history. New requester profiles appear here after GSO approval.
             </p>
           </div>
           <span className="rounded-xl border border-white/10 bg-white/8 px-3.5 py-2 text-xs font-bold text-blue-100">

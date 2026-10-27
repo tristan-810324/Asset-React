@@ -1,6 +1,6 @@
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
-import { REQUEST_TYPE_LABELS, type RequestType } from './requesterApi'
+import { type RequestType } from './requesterApi'
 
 const cards: Array<{ type: RequestType; description: string; detail: string; accent: string }> = [
   { type: 'BORROWING', description: 'Borrow an Asset', detail: 'Request school equipment, follow approval, and track an issued item through return.', accent: 'bg-blue-50 text-blue-700' },

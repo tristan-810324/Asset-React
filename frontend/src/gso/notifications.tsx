@@ -1,24 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
+import {
+  notificationModules,
+  publishGsoNotifications,
+  readGsoNotifications,
+  subscribeToGsoNotifications,
+  type NotificationModule,
+  type NotificationPriority,
+  type NotificationRecord,
+} from './notificationStore'
 
-type NotificationModule = 'Requests' | 'Inventory' | 'Issuance' | 'Returns' | 'Maintenance' | 'System'
-type NotificationPriority = 'Urgent' | 'Normal' | 'Low'
 type NotificationStatusFilter = 'All' | 'Unread' | 'Read'
-type NotificationRecord = {
-  id: string
-  module: NotificationModule
-  title: string
-  message: string
-  createdAt: string
-  priority: NotificationPriority
-  read: boolean
-  actionLabel: string
-  href: string
-}
 type IconName = 'arrow' | 'bell' | 'box' | 'check' | 'clock' | 'close' | 'clipboard' | 'inbox' | 'search' | 'system' | 'tool' | 'return'
 
-const modules: NotificationModule[] = ['Requests', 'Inventory', 'Issuance', 'Returns', 'Maintenance', 'System']
-const storageKey = 'gso-notifications-page-preview-v1'
+const modules = notificationModules
 
 const iconPaths: Record<IconName, ReactNode> = {
   arrow: <path d="M5 12h14m-6-6 6 6-6 6" />,
@@ -88,33 +83,6 @@ function createPreviewNotifications(): NotificationRecord[] {
   ]
 }
 
-function isNotificationRecord(value: unknown): value is NotificationRecord {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Partial<NotificationRecord>
-  return typeof record.id === 'string'
-    && typeof record.title === 'string'
-    && typeof record.message === 'string'
-    && typeof record.createdAt === 'string'
-    && typeof record.read === 'boolean'
-    && modules.includes(record.module as NotificationModule)
-    && ['Urgent', 'Normal', 'Low'].includes(record.priority || '')
-    && typeof record.actionLabel === 'string'
-    && typeof record.href === 'string'
-}
-
-function loadNotifications(): NotificationRecord[] {
-  const preview = createPreviewNotifications()
-  if (typeof window === 'undefined') return preview
-  try {
-    const saved = window.localStorage.getItem(storageKey)
-    if (!saved) return preview
-    const parsed: unknown = JSON.parse(saved)
-    return Array.isArray(parsed) && parsed.every(isNotificationRecord) ? parsed : preview
-  } catch {
-    return preview
-  }
-}
-
 function relativeTime(value: string) {
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000))
   if (elapsedMinutes < 1) return 'Just now'
@@ -144,7 +112,7 @@ function priorityStyle(priority: NotificationPriority) {
 }
 
 export default function Notifications() {
-  const [notifications, setNotifications] = useState<NotificationRecord[]>(loadNotifications)
+  const [notifications, setNotifications] = useState<NotificationRecord[]>(() => readGsoNotifications() ?? createPreviewNotifications())
   const [statusFilter, setStatusFilter] = useState<NotificationStatusFilter>('All')
   const [moduleFilter, setModuleFilter] = useState<NotificationModule | 'All modules'>('All modules')
   const [priorityFilter, setPriorityFilter] = useState<NotificationPriority | 'All priorities'>('All priorities')
@@ -152,12 +120,17 @@ export default function Notifications() {
   const [feedback, setFeedback] = useState('')
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(notifications))
-    } catch {
-      // Keep the page usable when browser storage is unavailable.
+    const unsubscribe = subscribeToGsoNotifications(setNotifications)
+    const storedNotifications = readGsoNotifications()
+    if (storedNotifications) {
+      setNotifications(storedNotifications)
+    } else {
+      const previewNotifications = createPreviewNotifications()
+      setNotifications(previewNotifications)
+      publishGsoNotifications(previewNotifications)
     }
-  }, [notifications])
+    return unsubscribe
+  }, [])
 
   const unreadCount = notifications.filter((notification) => !notification.read).length
   const todayCount = notifications.filter((notification) => dateGroup(notification.createdAt) === 'Today').length
@@ -189,22 +162,30 @@ export default function Notifications() {
   }, [filteredNotifications])
 
   const updateReadState = (id: string, read: boolean) => {
-    setNotifications((current) => current.map((notification) => notification.id === id ? { ...notification, read } : notification))
+    const updatedNotifications = notifications.map((notification) => notification.id === id ? { ...notification, read } : notification)
+    setNotifications(updatedNotifications)
+    publishGsoNotifications(updatedNotifications)
     setFeedback(read ? 'Notification marked as read.' : 'Notification marked as unread.')
   }
 
   const handleMarkAllRead = () => {
-    setNotifications((current) => current.map((notification) => ({ ...notification, read: true })))
+    const updatedNotifications = notifications.map((notification) => ({ ...notification, read: true }))
+    setNotifications(updatedNotifications)
+    publishGsoNotifications(updatedNotifications)
     setFeedback('All notifications marked as read.')
   }
 
   const handleDismiss = (id: string) => {
-    setNotifications((current) => current.filter((notification) => notification.id !== id))
+    const updatedNotifications = notifications.filter((notification) => notification.id !== id)
+    setNotifications(updatedNotifications)
+    publishGsoNotifications(updatedNotifications)
     setFeedback('Notification dismissed from this inbox.')
   }
 
   const handleRestorePreview = () => {
-    setNotifications(createPreviewNotifications())
+    const previewNotifications = createPreviewNotifications()
+    setNotifications(previewNotifications)
+    publishGsoNotifications(previewNotifications)
     setFeedback('Preview notifications restored.')
   }
 
@@ -217,46 +198,50 @@ export default function Notifications() {
 
   return (
     <GsoPageFrame activePage="Notifications" searchPlaceholder="Search notifications">
-      <section className="relative isolate overflow-hidden rounded-[28px] border border-[#183b63] bg-[#071d3b] px-5 py-6 text-white shadow-[0_24px_55px_-30px_rgba(7,29,59,0.72)] sm:px-7 sm:py-7">
-        <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(ellipse_at_85%_20%,rgba(56,146,255,0.34),transparent_34%),radial-gradient(ellipse_at_70%_110%,rgba(34,211,238,0.16),transparent_40%)]" />
-        <div aria-hidden="true" className="absolute -right-12 -top-28 h-72 w-72 rounded-full border border-white/6ight-16 sm:-top-40 sm:h-96 sm:w-96" />
-        <div className="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+      <section className="relative isolate overflow-hidden rounded-3xl border border-blue-100 bg-white px-5 py-6 shadow-sm shadow-blue-950/5 sm:px-7 sm:py-7">
+        <div aria-hidden="true" className="absolute inset-y-0 right-0 w-2/5 bg-[radial-gradient(ellipse_at_85%_25%,rgba(59,130,246,0.14),transparent_60%),radial-gradient(ellipse_at_70%_100%,rgba(34,211,238,0.1),transparent_55%)]" />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="max-w-2xl">
-            <span className="inline-flex items-center gap-2 rounded-full border border-sky-200/15 bg-sky-300/8 px-3 py-1.5 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-sky-100">
+            <span className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-extrabold uppercase tracking-[0.13em] text-blue-700">
               <Icon name="bell" className="h-3.5 w-3.5" /> GSO / Notification center
             </span>
-            <h1 className="mt-4 text-3xl font-black tracking-[-0.04em] sm:text-4xl">Notifications</h1>
-            <p className="mt-2 max-w-xl text-sm font-medium leading-6 text-blue-100/85">
-              Requests, inventory changes, and follow-ups in one clear view.
+            <h1 className="mt-4 text-3xl font-black tracking-[-0.04em] text-slate-950 sm:text-4xl">Notifications</h1>
+            <p className="mt-2 max-w-xl text-sm font-medium leading-6 text-slate-600">
+              See requests, inventory changes, and follow-ups together. Start with the unread updates.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleMarkAllRead}
-            disabled={unreadCount === 0}
-            className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white px-4 py-2.5 text-xs font-extrabold text-[#08244a] shadow-lg shadow-slate-950/15 transition hover:-translate-y-0.5 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0"
-          >
-            <Icon name="check" className="h-4 w-4" /> Mark all as read
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-2.5 text-sm font-bold text-blue-800">
+              <Icon name="bell" className="h-4 w-4" /> {unreadCount} unread
+            </span>
+            <button
+              type="button"
+              onClick={handleMarkAllRead}
+              disabled={unreadCount === 0}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-extrabold text-white shadow-sm shadow-blue-900/15 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+            >
+              <Icon name="check" className="h-4 w-4" /> Mark all as read
+            </button>
+          </div>
         </div>
       </section>
 
-      <section className="mt-4 grid gap-3 sm:grid-cols-3" aria-label="Notification summary">
+      <section className="mt-5 grid gap-4 sm:grid-cols-3" aria-label="Notification summary">
         <SummaryCard label="Total notifications" value={notifications.length} detail="In your inbox" icon="inbox" tone="blue" />
         <SummaryCard label="Unread" value={unreadCount} detail="Needs your attention" icon="bell" tone="violet" />
         <SummaryCard label="Received today" value={todayCount} detail="Across all modules" icon="system" tone="emerald" />
       </section>
 
-      <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(230px,0.7fr)]">
-        <section className="min-w-0 overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-[0_16px_45px_-34px_rgba(15,23,42,0.42)]" aria-labelledby="notification-list-title">
+      <div className="mt-5 grid items-start gap-5 xl:grid-cols-[minmax(0,1.7fr)_minmax(250px,0.7fr)]">
+        <section className="min-w-0 overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm shadow-slate-900/5" aria-labelledby="notification-list-title">
           <div className="border-b border-slate-100 p-4 sm:p-5">
             <div className="flex flex-col gap-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 id="notification-list-title" className="text-base font-black tracking-tight text-slate-950">Your inbox</h2>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.62rem] font-extrabold text-slate-500">{filteredNotifications.length} updates</span>
+                  <h2 id="notification-list-title" className="text-lg font-black tracking-tight text-slate-950">Your inbox</h2>
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-extrabold text-slate-600">{filteredNotifications.length} updates</span>
                 </div>
-                <p className="mt-1 text-xs font-medium text-slate-500">Find an update or narrow the feed by module and priority.</p>
+                <p className="mt-1 text-sm font-medium text-slate-500">Search updates or filter by module, status, and priority.</p>
               </div>
               <div className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_auto_auto]">
                 <label className="relative min-w-0">
@@ -267,7 +252,7 @@ export default function Notifications() {
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
                     placeholder="Search notifications"
-                    className="h-10 w-full rounded-xl border border-slate-200/90 bg-slate-50/70 pl-10 pr-3 text-xs font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/80"
+                    className="h-11 w-full rounded-xl border border-slate-200/90 bg-slate-50/70 pl-10 pr-3 text-sm font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100/80"
                   />
                 </label>
                 <label>
@@ -275,7 +260,7 @@ export default function Notifications() {
                   <select
                     value={moduleFilter}
                     onChange={(event) => setModuleFilter(event.target.value as NotificationModule | 'All modules')}
-                    className="h-10 w-full rounded-xl border border-slate-200/90 bg-white px-3 text-xs font-bold text-slate-600 outline-none transition hover:border-slate-300 focus:border-blue-300 focus:ring-4 focus:ring-blue-100/80 sm:w-auto"
+                    className="h-11 w-full rounded-xl border border-slate-200/90 bg-white px-3 text-sm font-bold text-slate-600 outline-none transition hover:border-slate-300 focus:border-blue-300 focus:ring-4 focus:ring-blue-100/80 sm:w-auto"
                   >
                     <option>All modules</option>
                     {modules.map((module) => <option key={module}>{module}</option>)}
@@ -286,7 +271,7 @@ export default function Notifications() {
                   <select
                     value={priorityFilter}
                     onChange={(event) => setPriorityFilter(event.target.value as NotificationPriority | 'All priorities')}
-                    className="h-10 w-full rounded-xl border border-slate-200/90 bg-white px-3 text-xs font-bold text-slate-600 outline-none transition hover:border-slate-300 focus:border-blue-300 focus:ring-4 focus:ring-blue-100/80 sm:w-auto"
+                    className="h-11 w-full rounded-xl border border-slate-200/90 bg-white px-3 text-sm font-bold text-slate-600 outline-none transition hover:border-slate-300 focus:border-blue-300 focus:ring-4 focus:ring-blue-100/80 sm:w-auto"
                   >
                     <option>All priorities</option>
                     <option>Urgent</option>
@@ -297,8 +282,8 @@ export default function Notifications() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="inline-flex flex-wrap gap-1 rounded-xl bg-slate-100/80 p-1" role="tablist" aria-label="Filter notification status">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+              <div className="inline-flex flex-wrap gap-1 rounded-xl bg-slate-100/80 p-1" role="group" aria-label="Filter notification status">
                 {(['All', 'Unread', 'Read'] as const).map((filter) => {
                   const count = filter === 'All'
                     ? notifications.length
@@ -308,10 +293,9 @@ export default function Notifications() {
                     <button
                       key={filter}
                       type="button"
-                      role="tab"
-                      aria-selected={active}
+                      aria-pressed={active}
                       onClick={() => setStatusFilter(filter)}
-                      className={`rounded-lg px-3 py-2 text-[0.68rem] font-extrabold transition ${active ? 'bg-white text-slate-950 shadow-sm shadow-slate-900/10' : 'text-slate-500 hover:text-slate-800'}`}
+                      className={`rounded-lg px-3 py-2 text-sm font-extrabold transition ${active ? 'bg-white text-slate-950 shadow-sm shadow-slate-900/10' : 'text-slate-500 hover:text-slate-800'}`}
                     >
                       {filter} <span className={active ? 'ml-1 text-blue-700' : 'ml-1 text-slate-400'}>{count}</span>
                     </button>
@@ -319,9 +303,9 @@ export default function Notifications() {
                 })}
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-[0.68rem] font-semibold text-slate-400">Showing {filteredNotifications.length}</span>
+                <span className="text-xs font-semibold text-slate-500">Showing {filteredNotifications.length}</span>
                 {hasFilters && (
-                  <button type="button" onClick={clearFilters} className="rounded-lg px-2 py-1.5 text-[0.68rem] font-extrabold text-blue-700 transition hover:bg-blue-50 hover:text-blue-900">
+                  <button type="button" onClick={clearFilters} className="rounded-lg px-2.5 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50 hover:text-blue-900">
                     Clear filters
                   </button>
                 )}
@@ -329,15 +313,15 @@ export default function Notifications() {
             </div>
           </div>
 
-          {feedback && <p role="status" className="border-b border-blue-100 bg-blue-50/70 px-4 py-2 text-[0.68rem] font-bold text-blue-800">{feedback}</p>}
+          {feedback && <p role="status" className="border-b border-blue-100 bg-blue-50/70 px-4 py-2.5 text-sm font-bold text-blue-800">{feedback}</p>}
 
           <div className="inventory-list-scrollbar max-h-144 space-y-4 overflow-auto overscroll-contain border-t border-slate-100 p-3 sm:p-4">
             {groupedNotifications.length > 0 ? groupedNotifications.map((group) => (
               <section key={group.label} aria-label={`${group.label} notifications`}>
                 <div className="sticky top-0 z-10 mb-2 flex items-center gap-2 bg-white/95 py-1.5 backdrop-blur">
-                  <h3 className="rounded-md bg-slate-100 px-2 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.13em] text-slate-500">{group.label}</h3>
+                  <h3 className="rounded-md bg-slate-100 px-2.5 py-1.5 text-xs font-extrabold uppercase tracking-[0.1em] text-slate-600">{group.label}</h3>
                   <span className="h-px flex-1 bg-slate-100" />
-                  <span className="rounded-full bg-slate-50 px-2 py-1 text-[0.6rem] font-bold text-slate-400">{group.notifications.length}</span>
+                  <span className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-bold text-slate-500">{group.notifications.length}</span>
                 </div>
                 <div className="space-y-2.5">
                   {group.notifications.map((notification) => {
@@ -345,38 +329,38 @@ export default function Notifications() {
                     return (
                       <article
                         key={notification.id}
-                        className={`relative overflow-hidden rounded-2xl border p-3.5 transition duration-200 hover:-translate-y-px sm:p-4 ${notification.read ? 'border-slate-200/80 bg-white hover:border-slate-300 hover:shadow-md hover:shadow-slate-900/4' : 'border-blue-200/80 bg-linear-to-br from-blue-50/80 via-white to-white shadow-sm shadow-blue-950/4 hover:border-blue-300'}`}
+                        className={`relative overflow-hidden rounded-2xl border p-4 transition duration-200 hover:-translate-y-px sm:p-5 ${notification.read ? 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-md hover:shadow-slate-900/5' : 'border-blue-200 bg-blue-50/40 shadow-sm shadow-blue-950/5 hover:border-blue-300'}`}
                       >
                         {!notification.read && <span aria-hidden="true" className="absolute inset-y-4 left-0 w-1 rounded-r-full bg-blue-500" />}
                         <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3.5 gap-y-3 xl:grid-cols-[auto_minmax(0,1fr)_auto]">
-                          <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-inset ring-black/3 sm:h-11 sm:w-11 ${appearance.iconTone}`}>
+                          <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl ring-1 ring-inset ring-black/3 sm:h-12 sm:w-12 ${appearance.iconTone}`}>
                             <Icon name={appearance.icon} className="h-4 w-4" />
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <h4 className={`text-[0.8rem] font-extrabold leading-5 ${notification.read ? 'text-slate-700' : 'text-slate-950'}`}>{notification.title}</h4>
-                              <span className={`rounded-full px-2 py-0.5 text-[0.58rem] font-extrabold ring-1 ring-inset ${priorityStyle(notification.priority)}`}>{notification.priority}</span>
-                              {!notification.read && <span className="inline-flex items-center gap-1 rounded-full bg-blue-100/80 px-2 py-0.5 text-[0.56rem] font-extrabold uppercase tracking-wide text-blue-700"><span className="h-1.5 w-1.5 rounded-full bg-blue-600" />New</span>}
+                              <h4 className={`text-sm font-extrabold leading-6 ${notification.read ? 'text-slate-700' : 'text-slate-950'}`}>{notification.title}</h4>
+                              <span className={`rounded-full px-2.5 py-1 text-xs font-extrabold ring-1 ring-inset ${priorityStyle(notification.priority)}`}>{notification.priority}</span>
+                              {!notification.read && <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold uppercase tracking-wide text-blue-800"><span className="h-1.5 w-1.5 rounded-full bg-blue-600" />New</span>}
                             </div>
-                            <p className="mt-1.5 text-xs leading-5 text-slate-600">{notification.message}</p>
+                            <p className="mt-1.5 text-sm leading-6 text-slate-600">{notification.message}</p>
                             <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                              <span className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[0.6rem] font-extrabold ${appearance.badgeTone}`}>
-                                <Icon name={appearance.icon} className="h-3 w-3" />{notification.module}
+                              <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-extrabold ${appearance.badgeTone}`}>
+                                <Icon name={appearance.icon} className="h-3.5 w-3.5" />{notification.module}
                               </span>
-                              <span className="inline-flex items-center gap-1.5 text-[0.62rem] font-semibold text-slate-400">
+                              <time dateTime={notification.createdAt} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500">
                                 <Icon name="clock" className="h-3 w-3" />{relativeTime(notification.createdAt)}
-                              </span>
+                              </time>
                             </div>
                           </div>
                           <div className="col-span-2 flex flex-wrap items-center gap-1.5 border-t border-slate-200/70 pt-2.5 xl:col-span-1 xl:flex-col xl:items-stretch xl:justify-center xl:border-l xl:border-t-0 xl:pl-3.5 xl:pt-0">
-                              <a href={notification.href} onClick={() => updateReadState(notification.id, true)} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg bg-[#155eef] px-3 py-2 text-[0.65rem] font-extrabold text-white shadow-sm shadow-blue-900/15 transition hover:bg-[#0d4dcc]">
+                              <a href={notification.href} onClick={() => updateReadState(notification.id, true)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#155eef] px-3.5 py-2 text-xs font-extrabold text-white shadow-sm shadow-blue-900/15 transition hover:bg-[#0d4dcc]">
                                 {notification.actionLabel}<Icon name="arrow" className="h-3 w-3" />
                               </a>
-                              <button type="button" onClick={() => updateReadState(notification.id, !notification.read)} className="min-h-8 rounded-lg px-2 py-1.5 text-[0.62rem] font-bold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800">
+                              <button type="button" onClick={() => updateReadState(notification.id, !notification.read)} className="min-h-9 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-100 hover:text-slate-900">
                                 Mark as {notification.read ? 'unread' : 'read'}
                               </button>
-                              <button type="button" onClick={() => handleDismiss(notification.id)} className="ml-auto inline-flex min-h-8 items-center gap-1 rounded-lg px-2 py-1.5 text-[0.62rem] font-bold text-slate-400 transition hover:bg-rose-50 hover:text-rose-700 xl:ml-0 xl:justify-center" aria-label={`Dismiss: ${notification.title}`}>
-                                <Icon name="close" className="h-3.5 w-3.5" /> <span className="xl:hidden">Dismiss</span>
+                              <button type="button" onClick={() => handleDismiss(notification.id)} className="ml-auto inline-flex min-h-9 items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-bold text-slate-500 transition hover:bg-rose-50 hover:text-rose-700 xl:ml-0 xl:justify-center" aria-label={`Dismiss: ${notification.title}`}>
+                                <Icon name="close" className="h-3.5 w-3.5" /> <span>Dismiss</span>
                               </button>
                           </div>
                         </div>
@@ -399,15 +383,15 @@ export default function Notifications() {
           </div>
         </section>
 
-        <aside>
-          <section className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-[0_16px_45px_-34px_rgba(15,23,42,0.42)] sm:p-5" aria-labelledby="module-activity-title">
+        <aside className="xl:sticky xl:top-24">
+          <section className="rounded-3xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-900/5 sm:p-5" aria-labelledby="module-activity-title">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-blue-600">Sources</p>
-                <h2 id="module-activity-title" className="mt-1 text-base font-black tracking-tight text-slate-950">Activity by module</h2>
-                <p className="mt-1 text-xs font-medium text-slate-500">Select a source to filter the feed.</p>
+                <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-blue-600">Sources</p>
+                <h2 id="module-activity-title" className="mt-1 text-lg font-black tracking-tight text-slate-950">Activity by module</h2>
+                <p className="mt-1 text-sm font-medium text-slate-500">Select a source to filter the feed.</p>
               </div>
-              <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-500">{moduleFilter === 'All modules' ? 'All' : 'Filtered'}</span>
+              <span className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-extrabold uppercase tracking-wide text-slate-500">{moduleFilter === 'All modules' ? 'All' : 'Filtered'}</span>
             </div>
             <div className="mt-4 space-y-1.5">
               {moduleCounts.map(({ module, count }) => {
@@ -421,16 +405,16 @@ export default function Notifications() {
                     onClick={() => setModuleFilter(selected ? 'All modules' : module)}
                     className={`group w-full rounded-xl border p-2.5 text-left transition duration-150 ${selected ? 'border-blue-200 bg-blue-50/70 shadow-sm shadow-blue-900/4' : 'border-transparent hover:border-slate-200 hover:bg-slate-50'}`}
                   >
-                    <span className="flex items-center gap-2.5">
-                      <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${appearance.iconTone}`}>
-                        <Icon name={appearance.icon} className="h-3.5 w-3.5" />
+                    <span className="flex items-center gap-3">
+                      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${appearance.iconTone}`}>
+                        <Icon name={appearance.icon} className="h-4 w-4" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center justify-between gap-2">
-                          <span className={`truncate text-[0.68rem] font-extrabold transition ${selected ? 'text-blue-900' : 'text-slate-600 group-hover:text-slate-900'}`}>{module}</span>
-                          <span className={`grid h-6 min-w-6 place-items-center rounded-md px-1 text-[0.6rem] font-extrabold ${selected ? 'bg-white text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{count}</span>
+                          <span className={`truncate text-sm font-extrabold transition ${selected ? 'text-blue-900' : 'text-slate-600 group-hover:text-slate-900'}`}>{module}</span>
+                          <span className={`grid h-7 min-w-7 place-items-center rounded-lg px-1.5 text-xs font-extrabold ${selected ? 'bg-white text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{count}</span>
                         </span>
-                        <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-slate-100">
+                        <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-slate-100">
                           <span className={`block h-full rounded-full transition-all duration-300 ${appearance.barTone}`} style={{ width: `${Math.max(count > 0 ? 9 : 0, count / maxModuleCount * 100)}%` }} />
                         </span>
                       </span>
@@ -453,16 +437,16 @@ function SummaryCard({ label, value, detail, icon, tone }: { label: string; valu
     emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
   }
   return (
-    <article className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_12px_32px_-27px_rgba(15,23,42,0.4)] transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_35px_-27px_rgba(15,23,42,0.3)] sm:p-5">
+    <article className="group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-900/5 transition duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md hover:shadow-blue-900/5 sm:p-5">
       <div className="absolute -right-6 -top-8 h-20 w-20 rounded-full bg-slate-100/70 blur-2xl transition group-hover:bg-blue-100/70" />
       <div className="relative flex items-start justify-between gap-2.5">
         <div>
-          <p className="text-xs font-bold text-slate-500">{label}</p>
-          <p className="mt-2 text-2xl font-black tracking-[-0.04em] text-slate-950">{value}</p>
+          <p className="text-sm font-bold text-slate-600">{label}</p>
+          <p className="mt-2 text-3xl font-black tracking-[-0.04em] text-slate-950">{value}</p>
         </div>
-        <span className={`grid h-10 w-10 place-items-center rounded-xl ring-1 ring-inset ${tones[tone]}`}><Icon name={icon} className="h-[1.1rem] w-[1.1rem]" /></span>
+        <span className={`grid h-11 w-11 place-items-center rounded-xl ring-1 ring-inset ${tones[tone]}`}><Icon name={icon} className="h-5 w-5" /></span>
       </div>
-      <p className="relative mt-2 text-[0.68rem] font-semibold text-slate-400">{detail}</p>
+      <p className="relative mt-2 text-xs font-semibold text-slate-500">{detail}</p>
     </article>
   )
 }

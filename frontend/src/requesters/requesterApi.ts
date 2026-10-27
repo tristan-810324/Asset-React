@@ -60,9 +60,14 @@ export type RequesterIdentity = {
   accountName: string
   accountEmail: string
   employeeCode: string
+  firstName: string
+  middleName: string
+  lastName: string
+  suffix: string
   department: string
   position: string
   contactNumber: string
+  pictureData: string | null
   status: RequesterIdentityStatus
   reviewNote: string
   submittedAt: string | null
@@ -75,7 +80,11 @@ export type RequesterIdentity = {
   employeeRecordMatch: boolean
 }
 
-export type RequesterIdentityInput = Pick<RequesterIdentity, 'employeeCode' | 'department' | 'position' | 'contactNumber'>
+export type RequesterIdentityInput = Pick<RequesterIdentity, 'employeeCode' | 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'department' | 'position' | 'contactNumber' | 'pictureData'>
+
+export async function listRequesterDepartments() {
+  return apiRequest<{ departments: Array<{ id: string; name: string }> }>('/departments')
+}
 
 export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
   BORROWING: 'Borrow an Asset',

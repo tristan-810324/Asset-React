@@ -17,6 +17,7 @@ import {
   type InventoryChangeRecord,
   type InventoryItemRecord,
 } from './inventoryApi'
+import { addGsoNotification } from './notificationStore'
 
 type ItemHistoryEntry = {
   previous: string
@@ -231,8 +232,7 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
       </td>
       <td style="width:180px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong style="color:#0f172a;">Unit ${escapeHTML(item.unitCost)}</strong><br>
-        <span style="font-size:9pt;color:#475569;">Acquired ${escapeHTML(item.acquisitionCost)}</span><br>
-        <span style="font-size:9pt;color:#64748b;">Assessed ${escapeHTML(item.currentValue)}</span>
+        <span style="font-size:9pt;color:#475569;">Acquired ${escapeHTML(item.acquisitionCost)}</span>
       </td>
       <td style="width:220px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong>${escapeHTML(item.availableQuantity)} available / ${escapeHTML(item.quantity)} total ${escapeHTML(item.unit)}</strong><br>
@@ -352,8 +352,7 @@ function generateInventoryWord(data: InventoryItem[], selectedDate: string) {
       </td>
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong>Unit ${escapeHTML(item.unitCost)}</strong><br>
-        <span style="font-size:9pt;color:#475569;">Acquired ${escapeHTML(item.acquisitionCost)}</span><br>
-        <span style="font-size:9pt;color:#64748b;">Assessed ${escapeHTML(item.currentValue)}</span>
+        <span style="font-size:9pt;color:#475569;">Acquired ${escapeHTML(item.acquisitionCost)}</span>
       </td>
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong>${escapeHTML(item.availableQuantity)} available / ${escapeHTML(item.quantity)} total ${escapeHTML(item.unit)}</strong><br>
@@ -467,6 +466,7 @@ function getChangeDetails(change: InventoryChangeRecord) {
 
   const fields = new Set([...Object.keys(change.oldValues), ...Object.keys(change.newValues)])
   return [...fields]
+    .filter((field) => !['dateAcquired', 'timeAcquired'].includes(field))
     .filter((field) => JSON.stringify(change.oldValues[field]) !== JSON.stringify(change.newValues[field]))
     .map((field) => {
       const label = changeFieldLabels[field] || field.replace(/([A-Z])/g, ' $1')
@@ -529,7 +529,7 @@ function buildItemConditionHistory(changeHistory: InventoryChangeRecord[]): Item
     }
   })
 
-  return history.reverse()
+  return history
 }
 
 function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
@@ -579,8 +579,6 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
 }
 
 export default function ItemsMasterData() {
-  // View mode tab state
-  const [activeTab, setActiveTab] = useState<'add_and_view' | 'full_inventory'>('full_inventory')
   const [showAddItemModal, setShowAddItemModal] = useState(false)
 
   // Dynamic categories state
@@ -654,6 +652,21 @@ export default function ItemsMasterData() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [isSavingItem, setIsSavingItem] = useState(false)
   const [inventoryLoadError, setInventoryLoadError] = useState('')
+
+  const showActionAlert = (message: string, title = 'Notice') => {
+    window.alert(`${title}\n\n${message}`)
+  }
+
+  const notifyAction = (title: string, message: string) => {
+    addGsoNotification({
+      module: 'Inventory',
+      title,
+      message,
+      actionLabel: 'View inventory',
+      href: '/gso/items',
+    })
+    showActionAlert(message, title)
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -733,6 +746,10 @@ export default function ItemsMasterData() {
     })
   }
 
+  const closeAddItemModal = () => {
+    setShowAddItemModal(false)
+  }
+
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault()
     const name = newCategoryName.trim()
@@ -751,6 +768,7 @@ export default function ItemsMasterData() {
         itemName: '',
       }))
       setNewCategoryName('')
+      notifyAction('Category added', `Category "${category.name}" was added.`)
     } catch (error) {
       setCategoryManagerError(error instanceof Error ? error.message : 'Unable to add the category.')
     } finally {
@@ -778,6 +796,7 @@ export default function ItemsMasterData() {
           itemName: itemName.name,
         }))
       }
+      notifyAction('Item name added', `Item name "${itemName.name}" was added.`)
     } catch (error) {
       setItemNameManagerError(error instanceof Error ? error.message : 'Unable to add this item name.')
     } finally {
@@ -798,6 +817,7 @@ export default function ItemsMasterData() {
           setFormData((current) => ({ ...current, itemName: '' }))
         }
       }
+      notifyAction('Item name removed', `Item name "${deletedItemName.name}" was removed.`)
     } catch (error) {
       setItemNameManagerError(error instanceof Error ? error.message : 'Unable to delete this item name.')
     } finally {
@@ -826,6 +846,7 @@ export default function ItemsMasterData() {
       setEditingCategoryId(null)
       setEditingCategoryName('')
       setEditingCategoryReason('')
+      notifyAction('Category updated', `Category was renamed to "${renamed.name}".`)
     } catch (error) {
       setCategoryManagerError(error instanceof Error ? error.message : 'Unable to rename the category.')
     } finally {
@@ -839,6 +860,7 @@ export default function ItemsMasterData() {
 
     setIsDeletingCategory(true)
     setCategoryManagerError('')
+    const deletedCategoryName = categoryToDelete.name
     try {
       await deleteInventoryCategory(categoryToDelete.id, categoryDeleteReason.trim())
       const remainingCategories = categories.filter((entry) => entry.id !== categoryToDelete.id)
@@ -855,6 +877,7 @@ export default function ItemsMasterData() {
       setEditFormData((current) => current.category === categoryToDelete.name ? { ...current, category: fallbackCategory } : current)
       setCategoryToDelete(null)
       setCategoryDeleteReason('')
+      notifyAction('Category removed', `Category "${deletedCategoryName}" was removed.`)
     } catch (error) {
       setCategoryManagerError(error instanceof Error ? error.message : 'Unable to delete the category.')
     } finally {
@@ -955,6 +978,7 @@ export default function ItemsMasterData() {
       setItems((current) => current.map((item) => item.id === updatedItem.id ? updatedItem : item))
       setSelectedItem(updatedItem)
       setShowItemEditModal(false)
+      notifyAction('Inventory item updated', `"${updatedItem.name}" (${updatedItem.code}) was updated successfully.`)
     } catch (error) {
       setItemEditError(error instanceof Error ? error.message : 'Unable to update the inventory item.')
     } finally {
@@ -964,14 +988,14 @@ export default function ItemsMasterData() {
 
   const handleSaveItem = async () => {
     if (!formData.itemCode.trim() || !formData.itemName.trim() || !formData.description.trim()) {
-      alert('Enter the item code, item name, and item description.')
+      showActionAlert('Enter the item code, item name, and item description.', 'Unable to save item')
       return
     }
 
     const unitCost = formData.unitCost ? Number(formData.unitCost) : 0
     const quantity = formData.quantity ? Number(formData.quantity) : 1
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_INDIVIDUAL_ITEMS_PER_SAVE) {
-      alert(`Enter a whole number from 1 to ${MAX_INDIVIDUAL_ITEMS_PER_SAVE} for the number of individual items.`)
+      showActionAlert(`Enter a whole number from 1 to ${MAX_INDIVIDUAL_ITEMS_PER_SAVE} for the number of individual items.`, 'Invalid quantity')
       return
     }
 
@@ -1004,9 +1028,13 @@ export default function ItemsMasterData() {
       setItems(nextItems)
       setInventoryLoadError('')
       handleClearForm(nextItems, formData.category)
-      alert(`${quantity} individual ${quantity === 1 ? 'item was' : 'items were'} saved to the GSO inventory successfully.`)
+      closeAddItemModal()
+      notifyAction(
+        quantity === 1 ? 'Inventory item added' : 'Inventory items added',
+        `${quantity} ${quantity === 1 ? 'item was' : 'items were'} added to inventory successfully.`,
+      )
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Unable to save the item. Please try again.')
+      showActionAlert(error instanceof Error ? error.message : 'Unable to save the item. Please try again.', 'Unable to save item')
     } finally {
       setIsSavingItem(false)
     }
@@ -1037,7 +1065,7 @@ export default function ItemsMasterData() {
   const fullInventoryItems = selectedInventoryDate
     ? filteredItems.filter((item) => item.dateAcquiredValue?.slice(0, 10) === selectedInventoryDate)
     : filteredItems
-  const displayedItems = activeTab === 'add_and_view' ? filteredItems.slice(0, 4) : fullInventoryItems
+  const displayedItems = fullInventoryItems
   const formCategoryItemNames = categoryItemNameOptionsFor(formData.category, categories, itemNameOptions)
   const requestedIndividualItemCount = Number(formData.quantity)
   const formItemCodes = inventoryItemCodes(formData.category, requestedIndividualItemCount, items)
@@ -1081,32 +1109,14 @@ export default function ItemsMasterData() {
           </span>
         </div>
 
-        {/* WORKSPACE NAVIGATION TABS */}
+        {/* INVENTORY ACTION */}
         <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
           <button
             type="button"
-            onClick={() => {
-              setActiveTab('add_and_view')
-              setShowAddItemModal(true)
-            }}
-            className={`rounded-xl px-4 py-2 text-xs font-extrabold transition ${
-              activeTab === 'add_and_view'
-                ? 'bg-white text-blue-950 shadow-md'
-                : 'bg-white/10 text-blue-100 hover:bg-white/20'
-            }`}
+            onClick={() => setShowAddItemModal(true)}
+            className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50"
           >
             + Add & Overview
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('full_inventory')}
-            className={`rounded-xl px-4 py-2 text-xs font-extrabold transition ${
-              activeTab === 'full_inventory'
-                ? 'bg-white text-blue-950 shadow-md'
-                : 'bg-white/10 text-blue-100 hover:bg-white/20'
-            }`}
-          >
-              + View All Inventory List ({items.length})
           </button>
         </div>
       </section>
@@ -1115,7 +1125,7 @@ export default function ItemsMasterData() {
       {showAddItemModal && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6"
-          onClick={() => setShowAddItemModal(false)}
+          onClick={closeAddItemModal}
         >
         <section
           role="dialog"
@@ -1141,7 +1151,7 @@ export default function ItemsMasterData() {
               </button>
               <button
                 type="button"
-                onClick={() => setShowAddItemModal(false)}
+                onClick={closeAddItemModal}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50"
               >
                 Close
@@ -1663,16 +1673,14 @@ export default function ItemsMasterData() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">
-              {activeTab === 'add_and_view' ? 'Recent Inventory Preview' : 'Full Inventory Master List'}
+              Full Inventory Master List
             </h2>
             <p className="mt-1 text-xs font-medium text-slate-500">
               Click on any row to open full item details and condition history log.
             </p>
-            {activeTab === 'full_inventory' && (
-              <span className="mt-2 inline-flex rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
-                {fullInventoryItems.length} item(s) found
-              </span>
-            )}
+            <span className="mt-2 inline-flex rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
+              {fullInventoryItems.length} item(s) found
+            </span>
             {inventoryLoadError && (
               <p role="alert" className="mt-2 text-xs font-semibold text-rose-600">
                 {inventoryLoadError}
@@ -1680,8 +1688,6 @@ export default function ItemsMasterData() {
             )}
           </div>
           <div className="flex flex-wrap items-end gap-2">
-            {activeTab === 'full_inventory' && (
-              <>
                 <label className="block w-40">
                   <span className="mb-1 block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-500">Filter by date</span>
                   <input
@@ -1724,25 +1730,10 @@ export default function ItemsMasterData() {
                   </svg>
                   Generate Word
                 </button>
-              </>
-            )}
-            {activeTab === 'add_and_view' && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('full_inventory')}
-                className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-extrabold text-white transition hover:bg-blue-700"
-              >
-                See All Items →
-              </button>
-            )}
           </div>
         </div>
 
         <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-6">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-[0.65rem] font-extrabold uppercase tracking-[0.12em] text-slate-500">Search and filter inventory</h3>
-            <p className="text-[0.65rem] font-medium text-slate-400">Narrow the list by item, category, condition, or status.</p>
-          </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <label className="block">
               <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
@@ -1869,7 +1860,6 @@ export default function ItemsMasterData() {
                   <td className="whitespace-nowrap px-5 py-4">
                     <span className="block text-xs font-bold text-slate-700">Unit {item.unitCost}</span>
                     <span className="mt-1 block text-[0.65rem] text-slate-500">Acquired {item.acquisitionCost}</span>
-                    <span className="mt-1 block text-[0.62rem] text-slate-400">Assessed {item.currentValue}</span>
                   </td>
                   <td className="px-5 py-4">
                     <span className="block whitespace-nowrap text-xs font-extrabold text-slate-700">
@@ -1906,19 +1896,19 @@ export default function ItemsMasterData() {
             {/* Modal Header */}
             <div className="flex items-start justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-3">
-                <span className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-50 text-xs font-black text-blue-700">
+                <span className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-50 text-sm font-black text-blue-700">
                   {selectedItem.initials}
                 </span>
                 <div>
-                  <h3 className="text-base font-black text-slate-900">{selectedItem.name}</h3>
-                  <p className="mt-1 text-xs font-medium text-slate-500">{selectedItem.description}</p>
-                  <p className="text-xs font-bold text-slate-400">{selectedItem.code} · {selectedItem.category}</p>
+                  <h3 className="text-lg font-black text-slate-900">{selectedItem.name}</h3>
+                  <p className="mt-1 text-sm font-medium text-slate-500">{selectedItem.description}</p>
+                  <p className="text-sm font-bold text-slate-400">{selectedItem.code} · {selectedItem.category}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedItem(null)}
-                className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-50"
+                className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-500 hover:bg-slate-50"
               >
                 ✕ Close
               </button>
@@ -1927,38 +1917,38 @@ export default function ItemsMasterData() {
             {/* Modal Content Grid */}
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.62rem] font-extrabold uppercase text-slate-400">Acquisition & Stock</span>
-                <p className="mt-1.5 text-xs font-bold text-slate-700">Date Acquired: {selectedItem.acquired} ({selectedItem.time})</p>
-                <p className="mt-1 text-xs font-bold text-slate-700">Quantity: {selectedItem.quantity} {selectedItem.unit}</p>
-                <p className="mt-1 text-xs font-bold text-slate-700">Custodian: {selectedItem.assignedTo}</p>
+                <span className="block text-xs font-extrabold uppercase text-slate-500">Acquisition & Stock</span>
+                <p className="mt-1.5 text-sm font-bold leading-relaxed text-slate-700">Date Acquired: {selectedItem.acquired} ({selectedItem.time})</p>
+                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Quantity: {selectedItem.quantity} {selectedItem.unit}</p>
+                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Custodian: {selectedItem.assignedTo}</p>
                 {/* SEPARATE FIELD FOR ISSUANCE DATE AND TIME */}
-                <p className="mt-1.5 border-t border-slate-200/60 pt-1.5 text-xs font-bold text-blue-800">
+                <p className="mt-1.5 border-t border-slate-200/60 pt-1.5 text-sm font-bold leading-relaxed text-blue-800">
                   Date Issued: {selectedItem.dateIssued !== '—' ? `${selectedItem.dateIssued} (${selectedItem.timeIssued})` : selectedItem.status === 'Pending Approval' ? 'Pending employee approval' : 'Not Issued (In Storage)'}
                 </p>
               </div>
 
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.62rem] font-extrabold uppercase text-slate-400">Valuation & Status</span>
-                <p className="mt-1.5 text-xs font-bold text-slate-700">Unit Cost: {selectedItem.unitCost}</p>
-                <p className="mt-1 text-xs font-bold text-slate-700">Total Cost: {selectedItem.acquisitionCost}</p>
-                <p className="mt-1 text-xs font-bold text-slate-700">Current Value: {selectedItem.currentValue}</p>
+                <span className="block text-xs font-extrabold uppercase text-slate-500">Valuation & Status</span>
+                <p className="mt-1.5 text-sm font-bold leading-relaxed text-slate-700">Unit Cost: {selectedItem.unitCost}</p>
+                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Total Cost: {selectedItem.acquisitionCost}</p>
+                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Current Value: {selectedItem.currentValue}</p>
               </div>
             </div>
 
             {/* Status & Condition Badges */}
-            <div className="mt-4 flex gap-3">
-              <span className={`rounded-full px-3 py-1 text-xs font-extrabold ${selectedItem.conditionTone}`}>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <span className={`rounded-full px-3 py-1 text-sm font-extrabold ${selectedItem.conditionTone}`}>
                 Condition: {selectedItem.condition}
               </span>
-              <span className={`rounded-full px-3 py-1 text-xs font-extrabold ${selectedItem.statusTone}`}>
+              <span className={`rounded-full px-3 py-1 text-sm font-extrabold ${selectedItem.statusTone}`}>
                 Status: {selectedItem.status}
               </span>
             </div>
 
             <div className="mt-6 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
               <div>
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Item History</h4>
-                <p className="mt-0.5 text-[0.7rem] text-slate-400">View condition, issuance, return, and item change history.</p>
+                <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">Item History</h4>
+                <p className="mt-0.5 text-sm text-slate-500">View condition, issuance, return, and item change history.</p>
               </div>
               <button
                 type="button"
@@ -1966,7 +1956,7 @@ export default function ItemsMasterData() {
                   setItemHistoryTab('condition')
                   setShowItemHistoryModal(true)
                 }}
-                className="shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-100"
+                className="shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-extrabold text-blue-700 transition hover:bg-blue-100"
               >
                 View History
               </button>
@@ -1976,7 +1966,7 @@ export default function ItemsMasterData() {
                 <button
                   type="button"
                   onClick={beginEditSelectedItem}
-                  className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-100"
+                  className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-extrabold text-blue-700 hover:bg-blue-100"
                 >
                   Edit Information
                 </button>
@@ -1984,7 +1974,7 @@ export default function ItemsMasterData() {
               <button
                 type="button"
                 onClick={() => setSelectedItem(null)}
-                className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-blue-700"
+                className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-extrabold text-white hover:bg-blue-700"
               >
                 Done
               </button>
@@ -2066,21 +2056,28 @@ export default function ItemsMasterData() {
                 )
               ) : selectedItem.changeHistory && selectedItem.changeHistory.length > 0 ? (
                 <div className="space-y-2">
-                  {selectedItem.changeHistory.map((change, index) => (
-                    <div key={`${change.changedAt}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                      <p className="text-xs font-semibold text-slate-700">{change.reason}</p>
-                      {getChangeDetails(change).length > 0 && (
-                        <ul className="mt-1 space-y-0.5 text-[0.68rem] text-slate-500">
-                          {getChangeDetails(change).map((detail) => (
-                            <li key={detail}>{detail}</li>
-                          ))}
-                        </ul>
-                      )}
-                      <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
-                        By {change.changedBy || 'GSO Staff'} · {formatCreatedAt(change.changedAt)}
-                      </p>
-                    </div>
-                  ))}
+                  {[...selectedItem.changeHistory]
+                    .sort((left, right) => new Date(left.changedAt).getTime() - new Date(right.changedAt).getTime())
+                    .map((change, index) => (
+                      <div key={`${change.changedAt}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                        <p className="text-xs font-bold text-slate-800">
+                          {change.action === 'updated' ? 'Item updated' : change.reason}
+                        </p>
+                        {change.action === 'updated' && change.reason && (
+                          <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-500">Reason: {change.reason}</p>
+                        )}
+                        {getChangeDetails(change).length > 0 && (
+                          <ul className="mt-1 space-y-0.5 text-[0.68rem] text-slate-500">
+                            {getChangeDetails(change).map((detail) => (
+                              <li key={detail}>{detail}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
+                          {change.action === 'updated' ? 'Edited by' : 'By'} {change.changedBy || 'Unknown user'} · {formatCreatedAt(change.changedAt)}
+                        </p>
+                      </div>
+                    ))}
                 </div>
               ) : (
                 <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
@@ -2119,7 +2116,7 @@ export default function ItemsMasterData() {
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item Code</span>
-                <input name="itemCode" required maxLength={100} value={editFormData.itemCode} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+                <input name="itemCode" required maxLength={100} value={editFormData.itemCode} readOnly aria-readonly="true" className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-600 outline-none" />
               </label>
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Category</span>
@@ -2150,11 +2147,6 @@ export default function ItemsMasterData() {
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition Cost</span>
                 <input type="number" min="0" step="0.01" name="acquisitionCost" value={editFormData.acquisitionCost} onChange={handleEditInputChange} readOnly aria-readonly="true" className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Current Assessed Value</span>
-                <input type="number" min="0" max={editFormData.acquisitionCost === '' ? undefined : Number(editFormData.acquisitionCost)} step="0.01" name="currentValue" value={editFormData.currentValue} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-                <span className="mt-1 block text-[0.6rem] text-slate-400">Maximum: {formatMoney(editFormData.acquisitionCost)}</span>
               </label>
               <label className="block">
                 <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Quantity</span>
