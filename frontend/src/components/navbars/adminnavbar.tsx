@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-type AdminNavIcon = 'activity' | 'bell' | 'chevron-down' | 'close' | 'database' | 'grid' | 'history' | 'logout' | 'mail' | 'menu' | 'search' | 'settings' | 'shield' | 'user' | 'users'
+type AdminNavIcon = 'activity' | 'bell' | 'chevron-down' | 'close' | 'database' | 'grid' | 'history' | 'logout' | 'mail' | 'menu' | 'search' | 'settings' | 'shield' | 'user'
 
 const iconPaths: Record<AdminNavIcon, ReactNode> = {
   activity: <path d="M3 12h4l3-8 4 16 3-8h4" />,
@@ -65,13 +65,6 @@ const iconPaths: Record<AdminNavIcon, ReactNode> = {
       <path d="M4 21a8 8 0 0 1 16 0" />
     </>
   ),
-  users: (
-    <>
-      <path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-      <circle cx="10" cy="7" r="4" />
-      <path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
-    </>
-  ),
 }
 
 function Icon({ name, className = 'h-[1.15rem] w-[1.15rem]' }: { name: AdminNavIcon; className?: string }) {
@@ -80,7 +73,6 @@ function Icon({ name, className = 'h-[1.15rem] w-[1.15rem]' }: { name: AdminNavI
 
 const navigation: { name: string; icon: AdminNavIcon; href?: string }[] = [
   { name: 'Overview', icon: 'grid', href: '/admin' },
-  { name: 'User management', icon: 'users', href: '/admin/users' },
   { name: 'Roles & permissions', icon: 'shield' },
   { name: 'Audit logs', icon: 'activity', href: '/admin/audit-logs' },
   { name: 'Security logs', icon: 'shield' },

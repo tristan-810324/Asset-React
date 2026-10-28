@@ -1,5 +1,7 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import GsoNavbar, { GsoPageHeader, type GsoNavigationItem } from '../components/navbars/gsonavbar'
+import { listEmployees, type EmployeeProfile } from './employeesApi'
+import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 
 type IconName =
   | 'archive'
@@ -144,20 +146,12 @@ function Icon({ name, className = 'h-5 w-5' }: { name: IconName; className?: str
   )
 }
 
-// Chart segment colors are intentionally muted to keep the dashboard calm.
-const departmentDistribution = [
-  { dept: 'Registrar Office', count: 340, percentage: 27, color: '#1e3a8a' },
-  { dept: 'IT Services', count: 285, percentage: 23, color: '#1d4ed8' },
-  { dept: 'Science Department', count: 210, percentage: 17, color: '#3b82f6' },
-  { dept: 'Finance Office', count: 180, percentage: 14, color: '#0ea5e9' },
-  { dept: 'GSO Storage (Unassigned)', count: 233, percentage: 19, color: '#94a3b8' },
-]
-
-const conditionBreakdown = [
-  { condition: 'New / Good', count: 1040, percent: '83.3%', tone: 'bg-emerald-50 text-emerald-700', color: '#10b981' },
-  { condition: 'Fair (Usable)', count: 120, percent: '9.6%', tone: 'bg-amber-50 text-amber-700', color: '#f59e0b' },
-  { condition: 'Needs Repair', count: 62, percent: '5.0%', tone: 'bg-rose-50 text-rose-700', color: '#f43f5e' },
-  { condition: 'Unserviceable', count: 26, percent: '2.1%', tone: 'bg-slate-100 text-slate-600', color: '#94a3b8' },
+const departmentChartColors = ['#1e3a8a', '#1d4ed8', '#3b82f6', '#0ea5e9', '#64748b', '#8b5cf6']
+const conditionGroups = [
+  { condition: 'New / Good', values: new Set(['new', 'good']), tone: 'bg-emerald-50 text-emerald-700', color: '#10b981' },
+  { condition: 'Fair (Usable)', values: new Set(['fair']), tone: 'bg-amber-50 text-amber-700', color: '#f59e0b' },
+  { condition: 'Needs Repair / Maintenance', values: new Set(['needs repair', 'under maintenance']), tone: 'bg-rose-50 text-rose-700', color: '#f43f5e' },
+  { condition: 'Unserviceable / Retired', values: new Set(['unserviceable', 'retired']), tone: 'bg-slate-100 text-slate-600', color: '#94a3b8' },
 ]
 
 export default function GsoDashboard() {
@@ -165,6 +159,48 @@ export default function GsoDashboard() {
   const [activePage] = useState<GsoNavigationItem>('Overview')
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notice, setNotice] = useState('')
+  const [inventoryItems, setInventoryItems] = useState<InventoryItemRecord[]>([])
+  const [inventoryLoading, setInventoryLoading] = useState(true)
+  const [inventoryError, setInventoryError] = useState('')
+  const [employees, setEmployees] = useState<EmployeeProfile[]>([])
+  const [employeesLoading, setEmployeesLoading] = useState(true)
+  const [employeesError, setEmployeesError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    void listInventoryItems()
+      .then((items) => {
+        if (!active) return
+        setInventoryItems(items)
+        setInventoryError('')
+      })
+      .catch((error: unknown) => {
+        if (active) setInventoryError(error instanceof Error ? error.message : 'Unable to load inventory.')
+      })
+      .finally(() => {
+        if (active) setInventoryLoading(false)
+      })
+
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void listEmployees()
+      .then(({ employees: records }) => {
+        if (!active) return
+        setEmployees(records)
+        setEmployeesError('')
+      })
+      .catch((error: unknown) => {
+        if (active) setEmployeesError(error instanceof Error ? error.message : 'Unable to load employee departments.')
+      })
+      .finally(() => {
+        if (active) setEmployeesLoading(false)
+      })
+
+    return () => { active = false }
+  }, [])
 
   const today = new Intl.DateTimeFormat('en-PH', {
     weekday: 'long',
@@ -177,7 +213,114 @@ export default function GsoDashboard() {
     setNotice(`${label} action selected.`)
   }
 
-  const departmentChartGradient = `conic-gradient(${departmentDistribution.reduce<{ end: number; stops: string[] }>(
+  const inventorySummary = useMemo(() => {
+    const totals = inventoryItems.reduce((summary, item) => {
+      const quantity = Number(item.quantity)
+      const count = Number.isFinite(quantity) && quantity > 0 ? quantity : 0
+      const availableValue = Number(item.availableQuantity)
+      const available = Number.isFinite(availableValue) && availableValue > 0 ? Math.min(count, availableValue) : 0
+      const activeQuantity = Math.max(0, count - available)
+      const condition = item.condition.trim().toLowerCase()
+      const status = item.status.trim().toLowerCase()
+      summary.total += count
+      if (condition === 'unserviceable') summary.unserviceable += count
+      if (condition === 'needs repair' || condition === 'under maintenance') summary.maintenance += count
+      if (status === 'available' && (condition === 'new' || condition === 'good' || condition === 'fair')) summary.storage += available
+      if (status === 'issued' || status === 'borrowed') summary.currentlyIssued += activeQuantity || count
+      else if (status === 'available' && activeQuantity > 0 && item.assignedTo?.trim()) summary.currentlyIssued += activeQuantity
+      return summary
+    }, { total: 0, operational: 0, unserviceable: 0, currentlyIssued: 0, storage: 0, maintenance: 0 })
+    totals.operational = Math.max(0, totals.total - totals.unserviceable)
+    return {
+      ...totals,
+      operationalPercent: totals.total === 0 ? '0.0' : ((totals.operational / totals.total) * 100).toFixed(1),
+      deployedPercent: totals.total === 0 ? '0.0' : ((totals.currentlyIssued / totals.total) * 100).toFixed(1),
+    }
+  }, [inventoryItems])
+
+  const employeeDepartmentByName = useMemo(() => {
+    const departmentsByName = new Map<string, Set<string>>()
+    employees.forEach((employee) => {
+      const employeeName = `${employee.firstName} ${employee.lastName}`.trim().toLowerCase()
+      if (!employeeName) return
+      const departments = departmentsByName.get(employeeName) ?? new Set<string>()
+      if (employee.department.trim()) departments.add(employee.department.trim())
+      departmentsByName.set(employeeName, departments)
+    })
+    return new Map(Array.from(departmentsByName, ([name, departments]) => [
+      name,
+      departments.size === 1 ? Array.from(departments)[0] : 'Other / Unmapped',
+    ]))
+  }, [employees])
+
+  const departmentDistribution = useMemo(() => {
+    const counts = new Map<string, number>()
+    const addCount = (department: string, count: number) => {
+      if (count <= 0) return
+      counts.set(department, (counts.get(department) || 0) + count)
+    }
+
+    inventoryItems.forEach((item) => {
+      const quantity = Number(item.quantity)
+      const totalQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 0
+      const availableValue = Number(item.availableQuantity)
+      const availableQuantity = Number.isFinite(availableValue) && availableValue > 0
+        ? Math.min(totalQuantity, availableValue)
+        : 0
+      const assignedQuantity = Math.max(0, totalQuantity - availableQuantity)
+      const status = item.status.trim().toLowerCase()
+      const assignedTo = item.assignedTo?.trim() || ''
+
+      if (availableQuantity > 0) addCount('GSO Storage (Unassigned)', availableQuantity)
+      if (assignedQuantity <= 0) return
+      if (status === 'pending approval' || status === 'reserved') {
+        addCount('Pending / Reserved', assignedQuantity)
+      } else if (assignedTo.toLowerCase() === 'multiple employees') {
+        addCount('Multiple employees', assignedQuantity)
+      } else if (assignedTo && !['in storage', '—', '-', 'for repair', 'under maintenance'].includes(assignedTo.toLowerCase())) {
+        addCount(employeeDepartmentByName.get(assignedTo.toLowerCase()) || 'Other / Unmapped', assignedQuantity)
+      } else {
+        addCount('Other / Unmapped', assignedQuantity)
+      }
+    })
+
+    return Array.from(counts, ([dept, count], index) => ({
+      dept,
+      count,
+      percentage: inventorySummary.total > 0 ? (count / inventorySummary.total) * 100 : 0,
+      color: departmentChartColors[index % departmentChartColors.length],
+    })).sort((left, right) => right.count - left.count)
+  }, [employeeDepartmentByName, inventoryItems, inventorySummary.total])
+
+  const conditionBreakdown = useMemo(() => {
+    const grouped = conditionGroups.map((group) => {
+      const count = inventoryItems.reduce((total, item) => {
+        const quantity = Number(item.quantity)
+        const itemQuantity = Number.isFinite(quantity) && quantity > 0 ? quantity : 0
+        return group.values.has(item.condition.trim().toLowerCase()) ? total + itemQuantity : total
+      }, 0)
+      return {
+        ...group,
+        count,
+        percentage: inventorySummary.total > 0 ? (count / inventorySummary.total) * 100 : 0,
+      }
+    })
+    const categorizedQuantity = grouped.reduce((total, group) => total + group.count, 0)
+    const otherQuantity = Math.max(0, inventorySummary.total - categorizedQuantity)
+    if (otherQuantity > 0) {
+      grouped.push({
+        condition: 'Other / Unspecified',
+        values: new Set<string>(),
+        tone: 'bg-slate-100 text-slate-600',
+        color: '#64748b',
+        count: otherQuantity,
+        percentage: inventorySummary.total > 0 ? (otherQuantity / inventorySummary.total) * 100 : 0,
+      })
+    }
+    return grouped.map((group) => ({ ...group, percent: `${group.percentage.toFixed(1)}%` }))
+  }, [inventoryItems, inventorySummary.total])
+
+  const departmentChartGradient = departmentDistribution.length > 0 ? `conic-gradient(${departmentDistribution.reduce<{ end: number; stops: string[] }>(
     (gradient, item) => {
       const nextEnd = gradient.end + item.percentage
       gradient.stops.push(`${item.color} ${gradient.end}% ${nextEnd}%`)
@@ -185,7 +328,7 @@ export default function GsoDashboard() {
       return gradient
     },
     { end: 0, stops: [] },
-  ).stops.join(', ')})`
+  ).stops.join(', ')})` : 'conic-gradient(#e2e8f0 0% 100%)'
 
   return (
     <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
@@ -232,17 +375,21 @@ export default function GsoDashboard() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Total Cataloged Assets</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">1,268</p>
+                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
+                    {inventoryLoading || inventoryError ? '—' : inventorySummary.total.toLocaleString('en-PH')}
+                  </p>
                 </div>
                 <span className="grid h-10 w-10 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700 shadow-sm shadow-blue-900/5">
                   <Icon name="cube" className="h-5 w-5" />
                 </span>
               </div>
               <div className="mt-4 flex items-center gap-2">
-                <span className="rounded-lg bg-emerald-50 px-2 py-0.5 text-[0.65rem] font-extrabold text-emerald-700">
-                  97.9% Operational
+                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'}`}>
+                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : `${inventorySummary.operationalPercent}% Operational`}
                 </span>
-                <span className="text-[0.68rem] text-slate-400 font-medium">· 26 unserviceable</span>
+                <span className="text-[0.68rem] text-slate-400 font-medium" title={inventoryError || undefined}>
+                  {inventoryLoading ? 'Loading asset conditions…' : inventoryError ? 'Unable to load asset conditions' : `· ${inventorySummary.unserviceable.toLocaleString('en-PH')} unserviceable`}
+                </span>
               </div>
             </article>
 
@@ -250,15 +397,17 @@ export default function GsoDashboard() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Currently Issued</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">1,015</p>
+                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
+                    {inventoryLoading || inventoryError ? '—' : inventorySummary.currentlyIssued.toLocaleString('en-PH')}
+                  </p>
                 </div>
                 <span className="grid h-10 w-10 place-items-center rounded-xl border border-sky-100 bg-sky-50 text-sky-700 shadow-sm shadow-sky-900/5">
                   <Icon name="user-check" className="h-5 w-5" />
                 </span>
               </div>
               <div className="mt-4 flex items-center gap-2">
-                <span className="rounded-lg bg-blue-50 px-2 py-0.5 text-[0.65rem] font-extrabold text-blue-700">
-                  80.1% Deployed
+                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-700'}`}>
+                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : `${inventorySummary.deployedPercent}% Deployed`}
                 </span>
                 <span className="text-[0.68rem] text-slate-400 font-medium">to active personnel</span>
               </div>
@@ -268,15 +417,17 @@ export default function GsoDashboard() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Storage Inventory</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">233</p>
+                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
+                    {inventoryLoading || inventoryError ? '—' : inventorySummary.storage.toLocaleString('en-PH')}
+                  </p>
                 </div>
                 <span className="grid h-10 w-10 place-items-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-700 shadow-sm shadow-emerald-900/5">
                   <Icon name="building" className="h-5 w-5" />
                 </span>
               </div>
               <div className="mt-4 flex items-center gap-2">
-                <span className="rounded-lg bg-emerald-50 px-2 py-0.5 text-[0.65rem] font-extrabold text-emerald-700">
-                  Available Stock
+                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'}`}>
+                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : 'Available Stock'}
                 </span>
                 <span className="text-[0.68rem] text-slate-400 font-medium">ready for issuance</span>
               </div>
@@ -286,15 +437,17 @@ export default function GsoDashboard() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Maintenance Queue</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">20</p>
+                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
+                    {inventoryLoading || inventoryError ? '—' : inventorySummary.maintenance.toLocaleString('en-PH')}
+                  </p>
                 </div>
                 <span className="grid h-10 w-10 place-items-center rounded-xl border border-amber-100 bg-amber-50 text-amber-700 shadow-sm shadow-amber-900/5">
                   <Icon name="tool" className="h-5 w-5" />
                 </span>
               </div>
               <div className="mt-4 flex items-center gap-2">
-                <span className="rounded-lg bg-amber-50 px-2 py-0.5 text-[0.65rem] font-extrabold text-amber-700">
-                  In Repair Stream
+                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-amber-50 text-amber-700'}`}>
+                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : 'In Repair Stream'}
                 </span>
                 <span className="text-[0.68rem] text-slate-400 font-medium">· needs technician</span>
               </div>
@@ -312,31 +465,42 @@ export default function GsoDashboard() {
                 </div>
               </div>
 
-              <div className="mt-6 flex min-h-60 flex-col items-center justify-center gap-3 sm:flex-row sm:gap-5">
-                <div
-                  role="img"
-                  aria-label="Doughnut chart showing asset distribution by department"
-                  className="relative h-40 w-40 shrink-0 rounded-full sm:h-40 sm:w-40"
-                  style={{ background: departmentChartGradient }}
-                >
-                  <div className="absolute inset-[23%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner shadow-slate-200/60">
-                    <span className="text-[0.58rem] font-bold uppercase tracking-[0.12em] text-slate-400">Department</span>
-                    <span className="mt-0.5 text-lg font-black leading-none text-slate-800">100%</span>
-                  </div>
-                </div>
-
-                <div className="w-full space-y-1 sm:min-w-0">
-                  {departmentDistribution.map((item) => (
-                    <div key={item.dept} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg px-2 py-1.5">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
-                        <span className="truncate text-xs font-semibold text-slate-700" title={item.dept}>{item.dept}</span>
+              <div className="mt-6 flex min-h-60 items-center justify-center">
+                {inventoryLoading || employeesLoading ? (
+                  <p className="text-sm font-bold text-slate-400">Loading inventory distribution…</p>
+                ) : inventoryError ? (
+                  <p role="alert" className="text-sm font-bold text-rose-600">Unable to load inventory distribution.</p>
+                ) : departmentDistribution.length === 0 ? (
+                  <p className="text-sm font-semibold text-slate-400">No cataloged assets to distribute yet.</p>
+                ) : (
+                  <div className="flex w-full flex-col items-center justify-center gap-3 sm:flex-row sm:gap-5">
+                    <div
+                      role="img"
+                      aria-label="Doughnut chart showing live asset distribution by department"
+                      className="relative h-40 w-40 shrink-0 rounded-full sm:h-40 sm:w-40"
+                      style={{ background: departmentChartGradient }}
+                    >
+                      <div className="absolute inset-[23%] flex flex-col items-center justify-center rounded-full bg-white text-center shadow-inner shadow-slate-200/60">
+                        <span className="text-[0.58rem] font-bold uppercase tracking-[0.12em] text-slate-400">Department</span>
+                        <span className="mt-0.5 text-lg font-black leading-none text-slate-800">100%</span>
                       </div>
-                      <span className="text-xs font-medium tabular-nums text-slate-500">{item.count}</span>
-                      <span className="min-w-[2.65rem] text-right text-xs font-extrabold tabular-nums text-slate-700">{item.percentage}%</span>
                     </div>
-                  ))}
-                </div>
+
+                    <div className="w-full space-y-1 sm:min-w-0">
+                      {departmentDistribution.map((item) => (
+                        <div key={item.dept} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg px-2 py-1.5">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
+                            <span className="truncate text-xs font-semibold text-slate-700" title={item.dept}>{item.dept}</span>
+                          </div>
+                          <span className="text-xs font-medium tabular-nums text-slate-500">{item.count.toLocaleString('en-PH')}</span>
+                          <span className="min-w-[2.65rem] text-right text-xs font-extrabold tabular-nums text-slate-700">{item.percentage.toFixed(1)}%</span>
+                        </div>
+                      ))}
+                      {employeesError && <p className="px-2 pt-2 text-[0.62rem] font-medium text-amber-700">Some assigned items could not be matched to employee departments.</p>}
+                    </div>
+                  </div>
+                )}
               </div>
             </article>
 
@@ -350,36 +514,46 @@ export default function GsoDashboard() {
               </div>
 
               <div className="mt-6 min-h-60 rounded-2xl border border-slate-100 bg-slate-50/60 p-4 sm:p-5">
-                <div
-                  role="img"
-                  aria-label="Stacked bar chart showing physical asset condition percentages"
-                  className="flex h-4 w-full overflow-hidden rounded-full bg-slate-200"
-                >
-                  {conditionBreakdown.map((item) => (
-                    <span
-                      key={item.condition}
-                      title={`${item.condition}: ${item.percent}`}
-                      style={{ width: item.percent, backgroundColor: item.color }}
-                    />
-                  ))}
-                </div>
-
-                <div className="mt-7 grid grid-cols-2 gap-x-5 gap-y-6">
-                  {conditionBreakdown.map((item) => (
-                    <div key={item.condition} className="min-w-0">
-                      <div className="flex min-h-8 items-start gap-2">
-                        <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
-                        <span className="text-[0.62rem] font-extrabold uppercase leading-snug tracking-wider text-slate-400">{item.condition}</span>
-                      </div>
-                      <div className="mt-1 flex items-baseline justify-between gap-2">
-                        <span className="text-2xl font-black leading-none tabular-nums text-slate-800">{item.count}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-[0.62rem] font-extrabold ${item.tone}`}>
-                          {item.percent}
-                        </span>
-                      </div>
+                {inventoryLoading ? (
+                  <div className="grid min-h-48 place-items-center text-sm font-bold text-slate-400">Loading asset conditions…</div>
+                ) : inventoryError ? (
+                  <div role="alert" className="grid min-h-48 place-items-center text-sm font-bold text-rose-600">Unable to load asset conditions.</div>
+                ) : inventorySummary.total === 0 ? (
+                  <div className="grid min-h-48 place-items-center text-sm font-semibold text-slate-400">No cataloged assets yet.</div>
+                ) : (
+                  <>
+                    <div
+                      role="img"
+                      aria-label="Stacked bar chart showing live physical asset condition percentages"
+                      className="flex h-4 w-full overflow-hidden rounded-full bg-slate-200"
+                    >
+                      {conditionBreakdown.map((item) => (
+                        <span
+                          key={item.condition}
+                          title={`${item.condition}: ${item.percent}`}
+                          style={{ width: `${item.percentage}%`, backgroundColor: item.color }}
+                        />
+                      ))}
                     </div>
-                  ))}
-                </div>
+
+                    <div className="mt-7 grid grid-cols-2 gap-x-5 gap-y-6">
+                      {conditionBreakdown.map((item) => (
+                        <div key={item.condition} className="min-w-0">
+                          <div className="flex min-h-8 items-start gap-2">
+                            <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: item.color }} />
+                            <span className="text-[0.62rem] font-extrabold uppercase leading-snug tracking-wider text-slate-400">{item.condition}</span>
+                          </div>
+                          <div className="mt-1 flex items-baseline justify-between gap-2">
+                            <span className="text-2xl font-black leading-none tabular-nums text-slate-800">{item.count.toLocaleString('en-PH')}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-[0.62rem] font-extrabold ${item.tone}`}>
+                              {item.percent}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
 
             </article>

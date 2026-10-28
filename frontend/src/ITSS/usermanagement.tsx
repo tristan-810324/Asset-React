@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { clearAuthSession } from '../auth/authApi'
-import AdminNavbar, { AdminPageHeader } from '../components/navbars/adminnavbar'
+import ITSSNavbar from '../components/navbars/itssnavbar'
 import {
   createSystemUser,
   listSystemUsers,
@@ -37,7 +36,6 @@ function roleLabel(role: string) {
 }
 
 export default function UserManagement() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [accounts, setAccounts] = useState<SystemUserAccount[]>([])
   const [positions, setPositions] = useState<string[]>([])
   const [search, setSearch] = useState('')
@@ -98,23 +96,13 @@ export default function UserManagement() {
     }
   }
 
-  const handleSignOut = () => {
-    clearAuthSession()
-    window.location.replace('/login')
-  }
-
   return (
-    <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
-      <AdminNavbar activePath="/admin/users" mobileMenuOpen={mobileMenuOpen} onMobileMenuClose={() => setMobileMenuOpen(false)} />
-      <section className="min-h-screen lg:pl-72">
-        <AdminPageHeader pageName="User management" subtitle="All system accounts, roles, and positions" onOpenMenu={() => setMobileMenuOpen(true)} onSignOut={handleSignOut} />
-
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-9">
+    <ITSSNavbar currentPage="User management" title="User management" subtitle="All system accounts, roles, and positions">
           <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
             <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-sky-300" />IT Admin workspace</div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-sky-300" />IT Staff workspace</div>
                 <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">System user management</h1>
                 <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account in the system and create requester, IT staff, or GSO staff accounts with a listed employee position.</p>
               </div>
@@ -165,8 +153,6 @@ export default function UserManagement() {
               <p className="mt-3 flex items-center gap-2 text-[0.68rem] leading-relaxed text-slate-400"><Icon name="clock" className="h-3.5 w-3.5 shrink-0" />Email is verified once on the first successful sign-in. Existing verified accounts continue to sign in directly.</p>
             </article>
           </section>
-        </div>
-      </section>
-    </main>
+    </ITSSNavbar>
   )
 }
