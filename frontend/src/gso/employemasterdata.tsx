@@ -127,8 +127,7 @@ function readEmployeePicture(file: File): Promise<string> {
 }
 
 export default function EmployeeMasterData() {
-  // Navigation tab state: 'directory' or 'add_employee'
-  const [activeTab, setActiveTab] = useState<'directory' | 'add_employee'>('directory')
+  const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false)
 
   // Dynamic departments state
   const [departments, setDepartments] = useState<DepartmentItem[]>(initialDepartments)
@@ -158,6 +157,7 @@ export default function EmployeeMasterData() {
 
   // Selected employee modal state
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRecord | null>(null)
+  const [openEmployeeMenuId, setOpenEmployeeMenuId] = useState<string | null>(null)
   const [availableInventoryStock, setAvailableInventoryStock] = useState<InventoryItemRecord[]>([])
   const [isLoadingInventory, setIsLoadingInventory] = useState(true)
   const [inventoryLoadError, setInventoryLoadError] = useState('')
@@ -292,6 +292,12 @@ export default function EmployeeMasterData() {
       picture: null,
       status: 'Active',
     })
+    setEmployeeSaveError('')
+  }
+
+  const closeAddEmployeeModal = () => {
+    setShowAddEmployeeModal(false)
+    setEmployeeSaveError('')
   }
 
   const handleAddDepartment = async (e: React.FormEvent) => {
@@ -427,7 +433,7 @@ export default function EmployeeMasterData() {
       setPersistedEmployeeIds((current) => new Set(current).add(savedEmployee.id))
       setEmployeeDataError('')
       handleClearForm()
-      setActiveTab('directory')
+      setShowAddEmployeeModal(false)
       alert('The new employee was added successfully!')
     } catch (error) {
       setEmployeeSaveError(error instanceof Error ? error.message : 'Unable to save the employee profile.')
@@ -435,18 +441,19 @@ export default function EmployeeMasterData() {
   }
 
   // Open Edit Employee Modal
-  const beginEditSelectedEmployee = () => {
-    if (!selectedEmployee) return
+  const beginEditSelectedEmployee = (employee: EmployeeRecord | null = selectedEmployee) => {
+    if (!employee) return
+    setSelectedEmployee(employee)
     setEditEmployeeData({
-      empCode: selectedEmployee.id,
-      department: selectedEmployee.department,
-      lastName: selectedEmployee.lastName,
-      middleName: selectedEmployee.middleName,
-      firstName: selectedEmployee.firstName,
-      suffix: selectedEmployee.suffix,
-      position: selectedEmployee.position,
-      email: selectedEmployee.email,
-      status: selectedEmployee.status,
+      empCode: employee.id,
+      department: employee.department,
+      lastName: employee.lastName,
+      middleName: employee.middleName,
+      firstName: employee.firstName,
+      suffix: employee.suffix,
+      position: employee.position,
+      email: employee.email,
+      status: employee.status,
       reason: '',
     })
     setEmployeeEditError('')
@@ -797,29 +804,17 @@ export default function EmployeeMasterData() {
           </span>
         </div>
 
-        {/* WORKSPACE NAVIGATION TABS - SWAPPED POSITION */}
+        {/* EMPLOYEE ACTION */}
         <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
           <button
             type="button"
-            onClick={() => setActiveTab('add_employee')}
-            className={`rounded-xl px-4 py-2 text-xs font-extrabold transition ${
-              activeTab === 'add_employee'
-                ? 'bg-white text-blue-950 shadow-md'
-                : 'bg-white/10 text-blue-100 hover:bg-white/20'
-            }`}
+            onClick={() => {
+              setEmployeeSaveError('')
+              setShowAddEmployeeModal(true)
+            }}
+            className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50"
           >
             + Add Employee
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('directory')}
-            className={`rounded-xl px-4 py-2 text-xs font-extrabold transition ${
-              activeTab === 'directory'
-                ? 'bg-white text-blue-950 shadow-md'
-                : 'bg-white/10 text-blue-100 hover:bg-white/20'
-            }`}
-          >
-            + Master Employee Directory ({employees.length})
           </button>
         </div>
       </section>
@@ -830,23 +825,42 @@ export default function EmployeeMasterData() {
         </p>
       )}
 
-      {/* TAB 1: ADD EMPLOYEE FORM SECTION (SWAPPED CONTAINER POSITION TO TOP) */}
-      {activeTab === 'add_employee' && (
-        <section className="mt-6 rounded-2xl border border-blue-100 bg-blue-50/30 p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+      {/* ADD EMPLOYEE MODAL */}
+      {showAddEmployeeModal && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6"
+          onClick={closeAddEmployeeModal}
+        >
+        <section
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-employee-modal-title"
+          onClick={(event) => event.stopPropagation()}
+          className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-blue-100 bg-white p-5 shadow-2xl shadow-slate-950/20 sm:p-6"
+        >
           <div className="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
             <div>
-              <h2 className="text-base font-black text-slate-900">Add Employee Form</h2>
+              <h2 id="add-employee-modal-title" className="text-base font-black text-slate-900">Add Employee Form</h2>
               <p className="mt-0.5 text-xs font-medium text-slate-500">
                 Fill in the required information to register a new employee profile.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowDepartmentModal(true)}
-              className="inline-flex items-center gap-1.5 self-start rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50 sm:self-auto"
-            >
-              <span>+ Add Department</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setShowDepartmentModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50"
+              >
+                + Add Department
+              </button>
+              <button
+                type="button"
+                onClick={closeAddEmployeeModal}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
           </div>
 
           {employeeSaveError && (
@@ -999,6 +1013,7 @@ export default function EmployeeMasterData() {
             </button>
           </div>
         </section>
+        </div>
       )}
 
       {/* SEARCH AND FILTER CONTROL SECTION (SWAPPED CONTAINER POSITION TO BOTTOM) */}
@@ -1046,15 +1061,6 @@ export default function EmployeeMasterData() {
             </label>
           </div>
 
-          {activeTab === 'directory' && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('add_employee')}
-              className="mt-2 self-start rounded-xl bg-blue-600 px-4 py-3 text-xs font-black text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 sm:mt-5 sm:self-auto"
-            >
-              + Add Employee Button
-            </button>
-          )}
         </div>
       </section>
 
@@ -1242,7 +1248,7 @@ export default function EmployeeMasterData() {
         </div>
       )}
 
-      {/* MASTER TABLE DIRECTORY */}
+      {/* EMPLOYEE CARD DIRECTORY */}
       <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
@@ -1256,69 +1262,100 @@ export default function EmployeeMasterData() {
           </span>
         </div>
 
-        <div className="overflow-x-auto border-t border-slate-100">
-          <table className="w-full min-w-5xl table-fixed text-left">
-            <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
-              <tr>
-                <th className="w-[24%] px-4 py-3.5">Employee</th>
-                <th className="w-[12%] px-4 py-3.5">Employee Code</th>
-                <th className="w-[14%] px-4 py-3.5">Department</th>
-                <th className="w-[13%] px-4 py-3.5">Position</th>
-                <th className="w-[22%] px-4 py-3.5">School Email</th>
-                <th className="w-[7%] px-4 py-3.5 text-center">Items</th>
-                <th className="w-[8%] px-4 py-3.5">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredEmployees.map((emp) => (
-                <tr
+        <div className="border-t border-slate-100 bg-slate-50/50 p-4 sm:p-5">
+          {filteredEmployees.length > 0 ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+              {filteredEmployees.map((emp, index) => (
+                <article
                   key={emp.id}
-                  onClick={() => handleOpenEmployeeProfile(emp)}
-                  className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50/50"
+                  className="relative rounded-xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-900/5 transition duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
                 >
-                  <td className="px-4 py-3.5">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-100 text-xs font-black text-blue-700">
-                        {emp.initials}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs font-extrabold text-slate-800" title={`${emp.firstName} ${emp.lastName}`}>
-                          {emp.firstName} {emp.lastName}
-                        </span>
-                        <span
-                          className="mt-0.5 block truncate text-[0.62rem] font-medium text-slate-500"
-                          title={`Middle name: ${emp.middleName || '-'} | Suffix: ${emp.suffix || '-'}`}
+                  <div className="absolute right-2 top-2 z-10">
+                    <button
+                      type="button"
+                      aria-label={`Actions for ${emp.firstName} ${emp.lastName}`}
+                      aria-expanded={openEmployeeMenuId === emp.id}
+                      onClick={() => setOpenEmployeeMenuId((current) => current === emp.id ? null : emp.id)}
+                      className="grid h-7 w-7 place-items-center rounded-lg text-lg leading-none text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                    >
+                      ⋮
+                    </button>
+                    {openEmployeeMenuId === emp.id && (
+                      <div role="menu" className="absolute right-0 top-8 w-40 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 text-left shadow-xl">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOpenEmployeeMenuId(null)
+                            handleOpenEmployeeProfile(emp)
+                          }}
+                          className="w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
                         >
-                          Middle: {emp.middleName || '-'} <span className="px-1 text-slate-300">|</span> Suffix: {emp.suffix || '-'}
-                        </span>
-                      </span>
-                    </div>
-                  </td>
-                  <td className="truncate px-4 py-3.5 text-xs font-bold text-slate-500" title={emp.id}>{emp.id}</td>
-                  <td className="px-4 py-3.5 text-xs font-bold text-slate-700">{emp.department}</td>
-                  <td className="truncate px-4 py-3.5 text-xs font-medium text-slate-600" title={emp.position}>{emp.position}</td>
-                  <td className="truncate px-4 py-3.5 text-xs font-medium text-blue-600" title={emp.email}>{emp.email}</td>
-                  <td className="px-4 py-3.5 text-center">
-                    <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-lg bg-blue-50 px-2 text-xs font-extrabold text-blue-700">
-                      {emp.assigned}
+                          View profile
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOpenEmployeeMenuId(null)
+                            beginEditSelectedEmployee(emp)
+                          }}
+                          className="w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                        >
+                          Edit information
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenEmployeeMenuId(null)
+                      handleOpenEmployeeProfile(emp)
+                    }}
+                    aria-label={`Open ${emp.firstName} ${emp.lastName}'s employee profile`}
+                    className="w-full rounded-lg px-1 pb-1 pt-4 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                  >
+                    <span
+                      className={`mx-auto grid h-16 w-16 place-items-center rounded-full border-2 text-xl font-semibold shadow-sm ${
+                        index % 2 === 0
+                          ? 'border-[#d6b333] bg-[#17377f] text-white'
+                          : 'border-[#17377f] bg-[#d6b333] text-[#17377f]'
+                      }`}
+                    >
+                      {emp.initials}
                     </span>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${emp.statusTone}`}>
+                    <span className="mt-3 block truncate text-xs font-bold text-slate-900" title={`${emp.firstName} ${emp.middleName} ${emp.lastName} ${emp.suffix}`.trim()}>
+                      {emp.firstName} {emp.lastName}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[0.6rem] font-medium text-slate-400" title={emp.id}>
+                      Employee · {emp.id}
+                    </span>
+                    <span className="mx-auto mt-3 flex min-h-7 max-w-full items-center justify-center rounded-full bg-[#17377f] px-3 text-[0.58rem] font-semibold text-white" title={emp.position}>
+                      <span className="truncate">{emp.position || 'Employee'}</span>
+                    </span>
+                    <span className="mt-2 block truncate text-[0.62rem] font-semibold text-slate-500" title={emp.department}>
+                      {emp.department}
+                    </span>
+                  </button>
+
+                  <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 px-1 pt-3">
+                    <span className="truncate text-[0.6rem] font-semibold text-slate-500">
+                      {emp.assigned} assigned item{emp.assigned === 1 ? '' : 's'}
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2 py-1 text-[0.55rem] font-extrabold ${emp.statusTone}`}>
                       {emp.status}
                     </span>
-                  </td>
-                </tr>
+                  </div>
+                </article>
               ))}
-              {filteredEmployees.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">
-                    No employees match the selected filters.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-dashed border-slate-200 bg-white px-5 py-10 text-center text-xs font-semibold text-slate-400">
+              {isLoadingEmployees ? 'Loading employee profiles…' : 'No employees match the selected filters.'}
+            </p>
+          )}
         </div>
       </section>
 
@@ -1530,7 +1567,7 @@ export default function EmployeeMasterData() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={beginEditSelectedEmployee}
+                  onClick={() => beginEditSelectedEmployee()}
                   className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-100"
                 >
                   Edit Profile
