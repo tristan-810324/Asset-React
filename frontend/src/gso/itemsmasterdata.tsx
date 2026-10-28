@@ -1111,9 +1111,7 @@ export default function ItemsMasterData() {
               Catalog assets and consumable stock with their condition, quantity, valuation, and current availability status.
             </p>
           </div>
-          <span className="rounded-xl border border-white/10 bg-white/8 px-3.5 py-2 text-xs font-bold text-blue-100">
-            Catalog · Assets · Stock
-          </span>
+         
         </div>
 
         {/* INVENTORY ACTION */}
@@ -1740,14 +1738,14 @@ export default function ItemsMasterData() {
           </div>
         </div>
 
-        <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-6">
+        <div className="border-t border-slate-200 bg-slate-50/70 px-5 py-4 sm:px-6">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">
                 Search inventory
               </span>
               <div className="relative">
-                <svg aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <svg aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="10.75" cy="10.75" r="5.75" />
                   <path d="m15.1 15.1 4.15 4.15" />
                 </svg>
@@ -1756,20 +1754,20 @@ export default function ItemsMasterData() {
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   placeholder="Item name, code, or assigned recipient"
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3.5 text-xs font-semibold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                  className="h-11 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-3.5 text-xs font-semibold text-slate-800 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-500 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                 />
               </div>
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Category</span>
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Category</span>
               <select
                 value={selectedCategoryFilter}
                 onChange={(event) => {
                   setSelectedCategoryFilter(event.target.value)
                   setSelectedItemNameFilter('all')
                 }}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="all">All categories</option>
                 {categories.map((category) => (
@@ -1779,12 +1777,12 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Specific item name</span>
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Specific item name</span>
               <select
                 value={selectedItemNameFilter}
                 disabled={selectedCategoryFilter === 'all'}
                 onChange={(event) => setSelectedItemNameFilter(event.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500"
               >
                 <option value="all">{selectedCategoryFilter === 'all' ? 'Choose a category first' : 'All item names'}</option>
                 {itemNameFilterOptions.map((name) => (
@@ -1794,11 +1792,11 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition</span>
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Condition</span>
               <select
                 value={selectedConditionFilter}
                 onChange={(event) => setSelectedConditionFilter(event.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="all">All Conditions</option>
                 {conditions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
@@ -1806,11 +1804,11 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Status</span>
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Status</span>
               <select
                 value={selectedStatusFilter}
                 onChange={(event) => setSelectedStatusFilter(event.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="all">All Statuses</option>
                 <option value="Available">Available</option>

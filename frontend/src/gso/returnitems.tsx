@@ -466,9 +466,7 @@ export default function ReturnItems() {
               Review verified employee returns, return conditions, and current item status.
             </p>
           </div>
-          <span className="rounded-xl border border-white/10 bg-white/8 px-3.5 py-2 text-xs font-bold text-blue-100">
-            Custody · Returned Assets
-          </span>
+          
         </div>
         <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Issuance and return records">
           <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">

@@ -554,9 +554,7 @@ export default function IssuanceRecord() {
               Review active asset assignments and employee acknowledgments.
             </p>
           </div>
-          <span className="rounded-xl border border-white/10 bg-white/8 px-3.5 py-2 text-xs font-bold text-blue-100">
-            Custody · Employee Assets
-          </span>
+         
         </div>
 
         {/* WORKSPACE NAVIGATION TABS */}

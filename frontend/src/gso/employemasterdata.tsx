@@ -796,12 +796,10 @@ export default function EmployeeMasterData() {
             </span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Employee Master Data</h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-              Keep employee profiles for asset assignments, issuance tracking, and complete item custody history. New requester profiles appear here after GSO approval.
+              Manage profiles, assignments, and custody history. GSO-approved requesters appear here.
             </p>
           </div>
-          <span className="rounded-xl border border-white/10 bg-white/8 px-3.5 py-2 text-xs font-bold text-blue-100">
-            Personnel · Custody · Issuances
-          </span>
+         
         </div>
 
         {/* EMPLOYEE ACTION */}
@@ -1016,54 +1014,6 @@ export default function EmployeeMasterData() {
         </div>
       )}
 
-      {/* SEARCH AND FILTER CONTROL SECTION (SWAPPED CONTAINER POSITION TO BOTTOM) */}
-      <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="grid flex-1 gap-3 sm:grid-cols-2">
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
-                  Filter (by Department)
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowDepartmentModal(true)}
-                  className="text-[0.65rem] font-extrabold text-blue-600 hover:underline"
-                >
-                  + Add Department
-                </button>
-              </div>
-              <select
-                value={selectedDeptFilter}
-                onChange={(e) => setSelectedDeptFilter(e.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              >
-                <option value="all">All Departments</option>
-                {departments.map((dept) => (
-                  <option key={dept.id} value={dept.name}>
-                    {dept.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">
-                Search Bar
-              </span>
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search name, code, or email..."
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-          </div>
-
-        </div>
-      </section>
-
       {/* MODAL FOR CREATING & MANAGING DEPARTMENTS (EDITABLE LIKE ITEMS MASTER DATA) */}
       {showDepartmentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
@@ -1250,16 +1200,60 @@ export default function EmployeeMasterData() {
 
       {/* EMPLOYEE CARD DIRECTORY */}
       <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
+        <div className="flex flex-col items-start gap-2 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Employee Directory</h2>
-            <p className="mt-1 text-xs font-medium text-slate-500">
+            <p className="mt-1 text-xs font-medium text-slate-600">
               Select an employee profile to review assigned items and history.
             </p>
           </div>
           <span className="rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
             {isLoadingEmployees ? 'Loading employee directory…' : `${filteredEmployees.length} employee(s) found`}
           </span>
+        </div>
+
+        <div className="grid gap-4 border-t border-slate-200 bg-slate-50/70 px-5 py-4 sm:grid-cols-2 sm:px-6">
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">
+                Filter (by Department)
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowDepartmentModal(true)}
+                className="text-[0.65rem] font-extrabold text-blue-600 hover:underline"
+              >
+                + Add Department
+              </button>
+            </div>
+            <select
+              value={selectedDeptFilter}
+              onChange={(e) => setSelectedDeptFilter(e.target.value)}
+              aria-label="Filter employees by department"
+              className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            >
+              <option value="all">All Departments</option>
+              {departments.map((dept) => (
+                <option key={dept.id} value={dept.name}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">
+              Search Bar
+            </span>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search name, code, or email..."
+              aria-label="Search employee name, code, or email"
+              className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-semibold text-slate-800 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-500 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+            />
+          </label>
         </div>
 
         <div className="border-t border-slate-100 bg-slate-50/50 p-4 sm:p-5">
