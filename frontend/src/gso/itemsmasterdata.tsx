@@ -1842,7 +1842,13 @@ export default function ItemsMasterData() {
                 >
                   <td className="px-5 py-4 sm:px-6">
                     <div className="flex min-w-52 items-center gap-3">
-                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-blue-50 text-[0.65rem] font-black text-blue-700">
+                      <span
+                        className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-xs font-black shadow-sm ${
+                          index % 2 === 0
+                            ? 'border-[#d6b333] bg-[#17377f] text-white'
+                            : 'border-[#17377f] bg-[#d6b333] text-[#17377f]'
+                        }`}
+                      >
                         {item.initials}
                       </span>
                       <span className="min-w-0">
