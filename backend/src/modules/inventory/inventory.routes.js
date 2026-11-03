@@ -16,6 +16,7 @@ router.delete('/item-names/:id', inventoryController.deleteCategoryItemName);
 router.get('/items', inventoryController.listItems);
 router.post('/items/bulk', inventoryController.createItems);
 router.post('/items', inventoryController.createItem);
+router.post('/items/:id/restock', inventoryController.restockItem);
 router.put('/items/:id', inventoryController.updateItem);
 
 module.exports = router;

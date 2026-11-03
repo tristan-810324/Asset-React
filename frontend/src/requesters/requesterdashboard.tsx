@@ -1,15 +1,27 @@
 import { useEffect, useMemo, useState } from 'react'
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
-import { listMyRequests, REQUEST_TYPE_LABELS, type ServiceRequest } from './requesterApi'
+import {
+  decideMyIssuanceBatch,
+  listMyPendingIssuanceBatches,
+  listMyRequests,
+  REQUEST_TYPE_LABELS,
+  type RequesterIssuanceApproval,
+  type ServiceRequest,
+} from './requesterApi'
 
 const statusTone = (status: string) => ['Approved', 'Ready for Pickup', 'Returned', 'Completed', 'Closed'].includes(status) ? 'bg-emerald-50 text-emerald-700' : ['Rejected', 'Cancelled', 'For Repair'].includes(status) ? 'bg-rose-50 text-rose-700' : status === 'Needs Information' ? 'bg-amber-50 text-amber-800' : ['Issued', 'In Progress', 'Return Requested'].includes(status) ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-700'
 
 function RequesterDashboardContent() {
   const { identity, openIdentityPrompt, user } = useRequesterIdentity()
   const [requests, setRequests] = useState<ServiceRequest[]>([])
+  const [pendingIssuances, setPendingIssuances] = useState<RequesterIssuanceApproval[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [issuanceLoading, setIssuanceLoading] = useState(true)
+  const [issuanceError, setIssuanceError] = useState('')
+  const [issuanceDecisionMessage, setIssuanceDecisionMessage] = useState('')
+  const [activeIssuanceDecision, setActiveIssuanceDecision] = useState('')
 
   useEffect(() => {
     let active = true
@@ -22,6 +34,36 @@ function RequesterDashboardContent() {
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    let active = true
+    listMyPendingIssuanceBatches()
+      .then((batches) => {
+        if (active) setPendingIssuances(batches)
+      })
+      .catch((reason: unknown) => {
+        if (active) setIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-load ang pending issuance approvals.')
+      })
+      .finally(() => { if (active) setIssuanceLoading(false) })
+    return () => { active = false }
+  }, [])
+
+  async function handleIssuanceDecision(batchId: string, action: 'approve' | 'reject') {
+    setActiveIssuanceDecision(batchId)
+    setIssuanceError('')
+    setIssuanceDecisionMessage('')
+    try {
+      const decision = await decideMyIssuanceBatch(batchId, action)
+      setPendingIssuances((current) => current.filter((batch) => batch.id !== batchId))
+      setIssuanceDecisionMessage(decision.status === 'Issued'
+        ? `Approved. ${decision.generatedTagCount} unique barcode${decision.generatedTagCount === 1 ? '' : 's'} generated for the issued unit${decision.generatedTagCount === 1 ? '' : 's'}.`
+        : 'Issuance request rejected. The reserved stock has been released.')
+    } catch (reason) {
+      setIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-save ang issuance decision.')
+    } finally {
+      setActiveIssuanceDecision('')
+    }
+  }
 
   const needsAction = useMemo(() => requests.filter((request) => request.status === 'Needs Information').length, [requests])
   const activeLoans = useMemo(() => requests.filter((request) => request.requestType === 'BORROWING' && ['Ready for Pickup', 'Issued', 'Return Requested', 'For Repair'].includes(request.status)).length, [requests])
@@ -38,6 +80,33 @@ function RequesterDashboardContent() {
     {identity?.status !== 'Verified' && <section className="mt-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-extrabold text-amber-950">{identity?.status === 'Pending' ? 'Your identity details are with GSO for review' : identity?.status === 'Needs Correction' ? 'GSO asked you to correct your identity details' : 'Complete your staff details before sending a request'}</p><p className="mt-1 text-xs text-amber-900">You can browse the dashboard while waiting. Request submission will be available after GSO verification.</p></div><button type="button" onClick={openIdentityPrompt} className="shrink-0 rounded-xl bg-amber-900 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-amber-950">{identity?.status === 'Pending' ? 'View status' : 'Complete identity'}</button></section>}
 
     {identity?.status === 'Verified' && <section role="status" className="mt-4 flex flex-col gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-extrabold text-emerald-950">GSO verified your staff identity</p><p className="mt-1 text-xs leading-relaxed text-emerald-900">Your profile is now linked to Employee Master Data, and you can submit school requests.</p></div><a href="/requester/request-center" className="shrink-0 rounded-xl bg-emerald-700 px-4 py-2.5 text-center text-xs font-extrabold text-white transition hover:bg-emerald-800">Open Request Center</a></section>}
+
+    {identity?.status === 'Verified' && <section className="mt-6 rounded-2xl border border-blue-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="issuance-approvals-title">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+        <div><h2 id="issuance-approvals-title" className="text-base font-black tracking-tight text-slate-900">Issuance approvals</h2><p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">Email is a notification only. Review and approve or reject each request here. Unique barcodes are generated after approval.</p></div>
+        <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700">{pendingIssuances.length} pending</span>
+      </div>
+      {issuanceDecisionMessage && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-800">{issuanceDecisionMessage}</p>}
+      {issuanceError && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-bold text-rose-700">{issuanceError}</p>}
+      {issuanceLoading ? <p role="status" className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-xs font-semibold text-slate-500">Loading issuance approvals...</p>
+        : pendingIssuances.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs font-semibold text-slate-500">No pending issuance requests.</p>
+          : <div className="mt-4 space-y-3">{pendingIssuances.map((batch) => <article key={batch.id} className="rounded-xl border border-slate-200 p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><p className="text-sm font-extrabold text-slate-900">GSO issuance request</p><p className="mt-1 text-xs font-semibold text-slate-600">For {batch.employeeName} · {batch.employeeCode}</p><p className="mt-1 text-[0.68rem] text-slate-500">Requested by {batch.requestedBy || 'GSO'} · {new Date(batch.requestedAt).toLocaleString('en-PH')}</p></div>
+              <p className="rounded-full bg-amber-50 px-2.5 py-1.5 text-[0.62rem] font-extrabold text-amber-800">Expires {new Date(batch.expiresAt).toLocaleString('en-PH')}</p>
+            </div>
+            <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100">
+              {batch.items.map((item) => <li key={item.issuanceId} className="px-3 py-3">
+                <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-extrabold text-slate-800">{item.itemName}</p><p className="mt-0.5 text-[0.68rem] font-semibold text-slate-500">{item.itemCode} · {item.condition}</p></div><span className="text-xs font-extrabold text-slate-700">{item.quantity} {item.unitOfMeasure}</span></div>
+                {item.notes && <p className="mt-1.5 text-[0.68rem] text-slate-500">GSO note: {item.notes}</p>}
+              </li>)}
+            </ul>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" disabled={activeIssuanceDecision === batch.id} onClick={() => void handleIssuanceDecision(batch.id, 'reject')} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-extrabold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50">Reject</button>
+              <button type="button" disabled={activeIssuanceDecision === batch.id} onClick={() => void handleIssuanceDecision(batch.id, 'approve')} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50">{activeIssuanceDecision === batch.id ? 'Saving decision...' : 'Approve issuance'}</button>
+            </div>
+          </article>)}</div>}
+    </section>}
 
     {error && <p role="alert" className="mt-4 rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700">{error}</p>}
     <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Requester overview">

@@ -100,13 +100,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS employee_issuances_one_active_item_idx
     ON employee_issuances (item_id)
     WHERE status IN ('Pending', 'Issued');
 
--- Keep the employee examples already shown in the directory available after it loads from PostgreSQL.
-INSERT INTO employees (employee_code, first_name, last_name, department, position, email, status)
-VALUES
-    ('EMP-1042', 'Ana', 'Santos', 'Registrar Office', 'Records Officer', 'ana.santos@dyci.edu.ph', 'Active'),
-    ('EMP-1128', 'Marco', 'Villanueva', 'IT Services', 'Support Technician', 'marco.villanueva@dyci.edu.ph', 'Active'),
-    ('EMP-1186', 'Liza', 'Mendoza', 'Science Department', 'Lab Coordinator', 'liza.mendoza@dyci.edu.ph', 'Active'),
-    ('EMP-1214', 'Rafael', 'Cruz', 'Finance Office', 'Accounting Assistant', 'rafael.cruz@dyci.edu.ph', 'Inactive')
-ON CONFLICT DO NOTHING;
 
 COMMIT;

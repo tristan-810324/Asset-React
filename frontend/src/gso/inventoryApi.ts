@@ -21,12 +21,40 @@ export type InventoryChangeRecord = {
   changedBy: string | null
 }
 
+export type InventoryTrackingMode = 'individual' | 'quantity'
+
+export type InventoryAssetTag = {
+  tagCode: string
+  unitNumber: number
+  serialNumber: string | null
+  location: string
+  condition: string
+  lifecycleStatus: string
+  custodyStatus: string
+}
+
+export type InventoryReceiptRecord = {
+  id: string
+  quantity: number
+  unitCost: number | string
+  totalCost: number | string
+  dateAcquired: string | null
+  timeAcquired: string | null
+  referenceNumber: string
+  createdAt: string
+}
+
 export type InventoryItemRecord = {
   id: string
   itemCode: string
   category: string
   itemName: string
   description: string
+  trackingMode: InventoryTrackingMode
+  serialNumber: string | null
+  storageLocation: string
+  assetTags: InventoryAssetTag[]
+  receiptHistory: InventoryReceiptRecord[]
   dateAcquired: string | null
   timeAcquired: string | null
   unitCost: number | string
@@ -50,6 +78,10 @@ export type NewInventoryItem = {
   category: string
   itemName: string
   description: string
+  trackingMode: InventoryTrackingMode
+  serialNumber?: string | null
+  receiptReference?: string
+  storageLocation?: string
   dateAcquired: string
   timeAcquired: string
   unitCost: number
@@ -143,6 +175,24 @@ export async function updateInventoryItem(id: string, item: UpdatedInventoryItem
   const result = await apiRequest<{ item: InventoryItemRecord }>(`/inventory/items/${encodeURIComponent(id)}`, {
     method: 'PUT',
     body: JSON.stringify(item),
+  })
+  return result.item
+}
+
+export async function restockInventoryItem(
+  id: string,
+  receipt: {
+    quantity: number
+    unitCost: number
+    dateAcquired: string
+    timeAcquired: string
+    condition: string
+    receiptReference: string
+  },
+) {
+  const result = await apiRequest<{ item: InventoryItemRecord }>(`/inventory/items/${encodeURIComponent(id)}/restock`, {
+    method: 'POST',
+    body: JSON.stringify(receipt),
   })
   return result.item
 }

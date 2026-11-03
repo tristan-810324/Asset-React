@@ -24,6 +24,11 @@ const updateItem = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { item } });
 });
 
+const restockItem = asyncHandler(async (req, res) => {
+  const item = await inventoryService.restockItem(req.params.id, req.body, req.user);
+  res.status(201).json({ success: true, data: { item } });
+});
+
 const listCategories = asyncHandler(async (req, res) => {
   const categories = await inventoryService.listCategories();
   res.json({ success: true, data: { categories } });
@@ -64,6 +69,7 @@ module.exports = {
   createItem,
   createItems,
   updateItem,
+  restockItem,
   listCategories,
   createCategory,
   renameCategory,

@@ -16,6 +16,7 @@ import ITSSDashboard from './ITSS/itssdashboard'
 import GsoDashboard from './gso/gsodashboard'
 import BorrowingPage from './gso/borrowing'
 import EmployeeMasterData from './gso/employemasterdata'
+import MainIssuance from './gso/mainissuance'
 import IssuanceRecord from './gso/issuancerecord'
 import ReturnItems from './gso/returnitems'
 import ToRepaired from './gso/torepaired'
@@ -36,6 +37,7 @@ import VerifyEmailOtp from './auth/verifyemailotp'
 
 import LandingHome from './landing/home'
 import { ApiError, clearAuthSession, dashboardPathForRoles, getCurrentUser, hasAuthToken } from './auth/authApi'
+import USBScannerMonitor from './components/scanner/USBScannerMonitor'
 
 function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; children: ReactNode }) {
   const [status, setStatus] = useState<'checking' | 'ready' | 'error'>('checking')
@@ -76,7 +78,14 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
     return () => { active = false }
   }, [requiredRole])
 
-  if (status === 'ready') return children
+  if (status === 'ready') {
+    return (
+      <>
+        {children}
+        <USBScannerMonitor />
+      </>
+    )
+  }
 
   return (
     <main className="grid min-h-screen place-items-center bg-slate-50 px-6 font-['Plus_Jakarta_Sans'] text-slate-900">
@@ -126,6 +135,9 @@ export default function App() {
   }
   if (path === '/gso/issuance') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><IssuanceRecord /></ProtectedDashboard>
+  }
+  if (path === '/gso/main-issuance') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><MainIssuance /></ProtectedDashboard>
   }
   if (path === '/gso/return-items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ReturnItems /></ProtectedDashboard>

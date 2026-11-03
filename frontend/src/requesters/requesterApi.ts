@@ -82,6 +82,33 @@ export type RequesterIdentity = {
 
 export type RequesterIdentityInput = Pick<RequesterIdentity, 'employeeCode' | 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'department' | 'position' | 'contactNumber' | 'pictureData'>
 
+export type RequesterIssuanceApproval = {
+  id: string
+  status: string
+  requestedAt: string
+  expiresAt: string
+  employeeCode: string
+  employeeName: string
+  requestedBy: string | null
+  items: Array<{
+    issuanceId: string
+    itemCode: string
+    itemName: string
+    condition: string
+    quantity: number
+    unitOfMeasure: string
+    notes: string
+  }>
+}
+
+export type RequesterIssuanceDecision = {
+  status: string
+  employeeName: string
+  employeeCode: string
+  generatedTagCount: number
+  alreadyDecided?: boolean
+}
+
 export async function listRequesterDepartments() {
   return apiRequest<{ departments: Array<{ id: string; name: string }> }>('/departments')
 }
@@ -100,6 +127,17 @@ export function listCatalogAssets() {
 
 export function listMyRequests() {
   return apiRequest<{ requests: ServiceRequest[] }>('/requests/mine').then((data) => data.requests)
+}
+
+export function listMyPendingIssuanceBatches() {
+  return apiRequest<{ batches: RequesterIssuanceApproval[] }>('/issuances/mine/pending').then((data) => data.batches)
+}
+
+export function decideMyIssuanceBatch(batchId: string, action: 'approve' | 'reject') {
+  return apiRequest<{ decision: RequesterIssuanceDecision }>(`/issuances/mine/${encodeURIComponent(batchId)}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  }).then((data) => data.decision)
 }
 
 export function getMyRequest(id: string) {

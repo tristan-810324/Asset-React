@@ -23,6 +23,14 @@ function requiredText(value, label, maxLength) {
   return normalized;
 }
 
+function optionalText(value, label, maxLength) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value !== 'string') invalid(`${label} ay dapat text.`);
+  const normalized = value.trim();
+  if (normalized.length > maxLength) invalid(`${label} ay hindi dapat lumampas sa ${maxLength} characters.`);
+  return normalized;
+}
+
 function optionalDate(value) {
   if (value === undefined || value === null || value === '') return null;
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -75,17 +83,23 @@ function validateCreateInventoryItems(input) {
   }
 
   const items = input.items.map(validateCreateInventoryItem);
-  if (items.some((item) => item.quantity !== 1)) {
+  if (items.some((item) => item.quantity !== 1 || item.trackingMode !== 'individual')) {
     invalid('Bawat record sa batch ay dapat kumatawan sa isang item lamang.');
   }
 
   const itemCodes = new Set();
+  const serialNumbers = new Set();
   for (const item of items) {
     const normalizedCode = item.itemCode.toLowerCase();
     if (itemCodes.has(normalizedCode)) {
       invalid('Bawat individual item ay dapat may unique na Item Code.');
     }
     itemCodes.add(normalizedCode);
+    const normalizedSerial = item.serialNumber.toLowerCase();
+    if (normalizedSerial && serialNumbers.has(normalizedSerial)) {
+      invalid('Bawat manufacturer serial number ay dapat unique.');
+    }
+    if (normalizedSerial) serialNumbers.add(normalizedSerial);
   }
 
   return items;
@@ -93,6 +107,24 @@ function validateCreateInventoryItems(input) {
 
 function validateUpdateInventoryItem(input) {
   return validateInventoryItem(input, true);
+}
+
+function validateRestockInventoryItem(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    invalid('Hindi valid ang bulk stock receipt details.');
+  }
+  const quantity = nonnegativeInteger(input.quantity, 'Restock quantity', 0);
+  if (quantity < 1) invalid('Ang restock quantity ay dapat whole number na hindi bababa sa 1.');
+  const condition = input.condition || 'Good';
+  if (typeof condition !== 'string' || !conditions.has(condition)) invalid('Pumili ng valid na item condition.');
+  return {
+    quantity,
+    unitCost: nonnegativeAmount(input.unitCost, 'Cost per unit'),
+    dateAcquired: optionalDate(input.dateAcquired),
+    timeAcquired: optionalTime(input.timeAcquired),
+    condition,
+    receiptReference: optionalText(input.receiptReference, 'Receipt reference', 120),
+  };
 }
 
 function validateInventoryItem(input, includeReason) {
@@ -117,6 +149,24 @@ function validateInventoryItem(input, includeReason) {
     ? null
     : nonnegativeAmount(input.currentValue, 'Current assessed value');
 
+  const trackingMode = input.trackingMode === undefined && includeReason
+    ? undefined
+    : input.trackingMode === undefined ? 'individual' : input.trackingMode;
+  if (trackingMode !== undefined && !['individual', 'quantity'].includes(trackingMode)) {
+    invalid('Pumili ng valid na inventory tracking mode.');
+  }
+  const serialNumber = optionalText(input.serialNumber, 'Manufacturer serial number', 120);
+  const receiptReference = optionalText(input.receiptReference, 'Receipt reference', 120);
+  const storageLocation = includeReason
+    ? undefined
+    : optionalText(input.storageLocation, 'Storage location', 160);
+  if (serialNumber && trackingMode !== 'individual') {
+    invalid('Manufacturer serial number ay para lamang sa per-unit assets.');
+  }
+  if (serialNumber && quantity !== 1) {
+    invalid('Isang manufacturer serial number lamang ang maaaring ilagay sa bawat per-unit record.');
+  }
+
   if (!includeReason && currentValue !== null && currentValue > acquisitionCost) {
     invalid('Current assessed value cannot exceed the calculated acquisition cost.');
   }
@@ -126,6 +176,10 @@ function validateInventoryItem(input, includeReason) {
     category: requiredText(input.category || 'Others', 'Category', 120),
     itemName: requiredText(input.itemName, 'Item Name', 500),
     description: requiredText(input.description, 'Item Description', 500),
+    serialNumber,
+    receiptReference,
+    ...(storageLocation === undefined ? {} : { storageLocation: storageLocation || 'GSO Storage' }),
+    ...(trackingMode === undefined ? {} : { trackingMode }),
     dateAcquired: optionalDate(input.dateAcquired),
     timeAcquired: optionalTime(input.timeAcquired),
     unitCost,
@@ -168,6 +222,7 @@ function validateCreateCategoryItemName(input) {
 module.exports = {
   validateCreateInventoryItem,
   validateCreateInventoryItems,
+  validateRestockInventoryItem,
   validateUpdateInventoryItem,
   validateCreateCategory,
   validateCategoryChange,

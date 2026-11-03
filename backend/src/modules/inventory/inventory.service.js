@@ -2,6 +2,7 @@ const inventoryRepository = require('./inventory.repository');
 const {
   validateCreateInventoryItem,
   validateCreateInventoryItems,
+  validateRestockInventoryItem,
   validateUpdateInventoryItem,
   validateCreateCategory,
   validateCategoryChange,
@@ -38,6 +39,12 @@ async function createItem(input, user) {
     if (error.code === '23505' && error.constraint === 'item_catalog_code_lower_unique_idx') {
       throw Object.assign(new Error('May inventory item na gumagamit ng Item Code na iyan.'), { status: 409 });
     }
+    if (error.code === '23505' && error.constraint === 'asset_unit_tags_serial_number_lower_unique_idx') {
+      throw Object.assign(new Error('May asset nang gumagamit ng manufacturer serial number na iyan.'), { status: 409 });
+    }
+    if (error.code === '23505' && error.constraint === 'item_catalog_serial_number_lower_unique_idx') {
+      throw Object.assign(new Error('May inventory item nang gumagamit ng manufacturer serial number na iyan.'), { status: 409 });
+    }
     throw error;
   }
 }
@@ -55,8 +62,20 @@ async function createItems(input, user) {
     if (error.code === '23505' && error.constraint === 'item_catalog_code_lower_unique_idx') {
       throw Object.assign(new Error('May inventory item na gumagamit ng isa sa mga Item Code na iyan. I-refresh ang page at subukan muli.'), { status: 409 });
     }
+    if (error.code === '23505' && error.constraint === 'asset_unit_tags_serial_number_lower_unique_idx') {
+      throw Object.assign(new Error('May asset nang gumagamit ng isa sa mga manufacturer serial number na iyan.'), { status: 409 });
+    }
+    if (error.code === '23505' && error.constraint === 'item_catalog_serial_number_lower_unique_idx') {
+      throw Object.assign(new Error('May inventory item nang gumagamit ng isa sa mga manufacturer serial number na iyan.'), { status: 409 });
+    }
     throw error;
   }
+}
+
+async function restockItem(idValue, input, user) {
+  const id = validateId(idValue, 'item ID');
+  const receipt = validateRestockInventoryItem(input);
+  return inventoryRepository.restockItem(id, { ...receipt, recordedByUserId: user.id });
 }
 
 async function updateItem(idValue, input, user) {
@@ -138,6 +157,7 @@ module.exports = {
   listItems,
   createItem,
   createItems,
+  restockItem,
   updateItem,
   listCategories,
   createCategory,

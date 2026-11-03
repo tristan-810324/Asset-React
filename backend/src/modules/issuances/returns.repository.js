@@ -304,6 +304,239 @@ async function confirmReturnByGso({
   }
 }
 
+async function confirmScannedTagReturn({ tagCode, condition, reason, tokenHash, requestedByUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const tagResult = await client.query(
+      `SELECT tag.id AS tag_id, tag.tag_code, tag.item_id, tag.issuance_id,
+              tag.unit_number, tag.condition AS current_tag_condition,
+              tag.lifecycle_status, tag.custody_status, tag.assigned_employee_id,
+              tag.assigned_user_id, tag.location,
+              item.item_code, item.description, item.inventory_status,
+              item.condition AS current_item_condition
+         FROM asset_unit_tags AS tag
+         JOIN item_catalog AS item ON item.id = tag.item_id
+        WHERE tag.tag_code = $1
+        FOR UPDATE OF tag, item`,
+      [tagCode],
+    );
+    const tag = tagResult.rows[0];
+    if (!tag) throw notFound('Walang item o barcode na tumutugma sa code na ito.');
+    if (tag.custody_status !== 'Issued' || !tag.issuance_id || !tag.assigned_employee_id) {
+      throw conflict('Hindi kasalukuyang naka-issue sa employee ang item na ito. I-check ang custody status bago mag-return.');
+    }
+    if (tag.lifecycle_status === 'Disposed') {
+      throw conflict('Disposed na ang item na ito at hindi na puwedeng i-return sa stock.');
+    }
+
+    const issuanceResult = await client.query(
+      `SELECT issue.id, issue.employee_id, issue.item_id, issue.status,
+              issue.quantity, issue.returned_quantity, issue.unit_of_measure,
+              employee.employee_code, employee.first_name, employee.last_name,
+              employee.email AS employee_email
+         FROM employee_issuances AS issue
+         JOIN employees AS employee ON employee.id = issue.employee_id
+        WHERE issue.id = $1
+          AND issue.employee_id = $2
+          AND issue.item_id = $3
+        FOR UPDATE OF issue`,
+      [tag.issuance_id, tag.assigned_employee_id, tag.item_id],
+    );
+    const issuance = issuanceResult.rows[0];
+    if (!issuance || issuance.status !== 'Issued') {
+      throw conflict('Hindi na active ang issuance na nakatala sa barcode na ito. I-refresh ang item records.');
+    }
+    const outstandingQuantity = Number(issuance.quantity) - Number(issuance.returned_quantity);
+    if (outstandingQuantity < 1) {
+      throw conflict('Wala nang outstanding na item quantity sa issuance na ito.');
+    }
+
+    const pendingReturnResult = await client.query(
+      `SELECT id
+         FROM employee_issuance_returns
+        WHERE issuance_id = $1 AND status = 'Pending'
+        ORDER BY requested_at DESC, id DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [issuance.id],
+    );
+    const pendingReturn = pendingReturnResult.rows[0];
+    if (pendingReturn) {
+      await client.query(
+        `UPDATE employee_issuance_returns
+            SET status = 'Expired',
+                decision_note = 'Superseded by a GSO-confirmed barcode return.',
+                decided_at = NOW()
+          WHERE id = $1 AND status = 'Pending'`,
+        [pendingReturn.id],
+      );
+    }
+
+    const destination = ['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(condition)
+      ? 'To Be Repaired'
+      : 'GSO Storage';
+    const decisionNote = 'Return verified and confirmed by GSO via barcode scan.';
+    const returnedResult = await client.query(
+      `INSERT INTO employee_issuance_returns (
+         issuance_id, asset_unit_tag_id, requested_by_user_id, status, token_hash,
+         token_expires_at, return_condition, reason, decision_note, decided_at, quantity
+       ) VALUES ($1, $2, $3, 'Returned', $4, NOW(), $5, $6, $7, NOW(), 1)
+       RETURNING id, status, requested_at AS "requestedAt", decided_at AS "decidedAt"`,
+      [issuance.id, tag.tag_id, requestedByUserId, tokenHash, condition, reason, decisionNote],
+    );
+
+    const issuanceUpdate = await client.query(
+      `UPDATE employee_issuances
+          SET returned_quantity = returned_quantity + 1,
+              status = CASE WHEN returned_quantity + 1 >= quantity THEN 'Returned' ELSE 'Issued' END
+        WHERE id = $1 AND status = 'Issued' AND returned_quantity + 1 <= quantity`,
+      [issuance.id],
+    );
+    const tagUpdate = await client.query(
+      `UPDATE asset_unit_tags
+          SET custody_status = 'Available',
+              assigned_employee_id = NULL,
+              assigned_user_id = NULL,
+              issuance_id = NULL,
+              condition = $2,
+              location = $3,
+              last_inspected_at = NOW(),
+              last_inspected_by_user_id = $4,
+              last_inspection_note = $5,
+              updated_at = NOW()
+        WHERE id = $1 AND custody_status = 'Issued'`,
+      [tag.tag_id, condition, destination, requestedByUserId, reason],
+    );
+    if (issuanceUpdate.rowCount !== 1 || tagUpdate.rowCount !== 1) {
+      throw conflict('Nagbago ang custody record habang kinukumpirma ang return. I-scan muli ang barcode.');
+    }
+
+    const inventoryStatus = await refreshInventoryStatus(client, tag.item_id);
+    const record = {
+      item_id: tag.item_id,
+      item_code: tag.item_code,
+      description: tag.description,
+      employee_id: issuance.employee_id,
+      employee_code: issuance.employee_code,
+      employee_name: `${issuance.first_name} ${issuance.last_name}`,
+      quantity: 1,
+    };
+    await writeReturnAuditLog(client, record, {
+      changedByUserId: requestedByUserId,
+      reason: `Barcode ${tag.tag_code} returned by GSO for ${issuance.employee_code}; routed to ${destination}. ${reason}`,
+      oldValues: {
+        tagCode: tag.tag_code,
+        custodyStatus: 'Issued',
+        location: tag.location,
+        condition: tag.current_tag_condition,
+        issuanceStatus: 'Issued',
+        inventoryStatus: tag.inventory_status,
+      },
+      newValues: {
+        tagCode: tag.tag_code,
+        custodyStatus: 'Available',
+        location: destination,
+        condition,
+        returnStatus: 'Returned',
+        issuanceStatus: Number(issuance.returned_quantity) + 1 >= Number(issuance.quantity) ? 'Returned' : 'Issued',
+        inventoryStatus,
+      },
+    });
+
+    await client.query('COMMIT');
+    return {
+      id: returnedResult.rows[0].id,
+      status: returnedResult.rows[0].status,
+      requestedAt: returnedResult.rows[0].requestedAt,
+      decidedAt: returnedResult.rows[0].decidedAt,
+      tagCode: tag.tag_code,
+      employeeCode: issuance.employee_code,
+      employeeName: record.employee_name,
+      employeeEmail: issuance.employee_email,
+      itemCode: tag.item_code,
+      itemName: tag.description,
+      condition,
+      destination,
+      remainingQuantity: outstandingQuantity - 1,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function completeTaggedAssetRepair({ tagCode, changedByUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const tagResult = await client.query(
+      `SELECT tag.id, tag.tag_code, tag.item_id, tag.condition,
+              tag.lifecycle_status, tag.custody_status, tag.location,
+              item.item_code, item.description
+         FROM asset_unit_tags AS tag
+         JOIN item_catalog AS item ON item.id = tag.item_id
+        WHERE tag.tag_code = $1
+        FOR UPDATE OF tag, item`,
+      [tagCode],
+    );
+    const tag = tagResult.rows[0];
+    if (!tag) throw notFound('Walang item o barcode na tumutugma sa code na ito.');
+    if (tag.custody_status !== 'Available' || tag.lifecycle_status !== 'Active'
+      || !['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(tag.condition)) {
+      throw conflict('Hindi na nasa active repair queue ang unit na ito. I-refresh ang repair records.');
+    }
+
+    const repairCompletionReason = 'Repair completed from the To Be Repaired module; item condition updated to Good.';
+    await client.query(
+      `UPDATE asset_unit_tags
+          SET condition = 'Good',
+              location = 'GSO Storage',
+              last_inspected_at = NOW(),
+              last_inspected_by_user_id = $2,
+              last_inspection_note = $3,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [tag.id, changedByUserId, repairCompletionReason],
+    );
+    const inventoryStatus = await refreshInventoryStatus(client, tag.item_id);
+    await writeReturnAuditLog(client, {
+      item_id: tag.item_id,
+      item_code: tag.item_code,
+      description: tag.description,
+      employee_id: null,
+    }, {
+      changedByUserId,
+      reason: repairCompletionReason,
+      oldValues: {
+        tagCode: tag.tag_code,
+        condition: tag.condition,
+        lifecycleStatus: tag.lifecycle_status,
+        custodyStatus: tag.custody_status,
+        location: tag.location,
+      },
+      newValues: {
+        tagCode: tag.tag_code,
+        condition: 'Good',
+        lifecycleStatus: tag.lifecycle_status,
+        custodyStatus: tag.custody_status,
+        location: 'GSO Storage',
+        inventoryStatus,
+      },
+    });
+
+    await client.query('COMMIT');
+    return { tagCode: tag.tag_code, condition: 'Good', location: 'GSO Storage' };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function markReturnEmailSent(returnId) {
   await pool.query(
     `UPDATE employee_issuance_returns
@@ -497,6 +730,28 @@ async function resolveReturnApproval({ tokenHash, action }) {
     if (issuanceUpdate.rowCount !== 1 || itemUpdate.rowCount !== 1) {
       throw conflict('Hindi na active ang item issuance. Makipag-ugnayan sa GSO para ma-check ang return request.');
     }
+    await client.query(
+      `WITH units_to_return AS (
+         SELECT id
+           FROM asset_unit_tags
+          WHERE issuance_id = $1
+            AND assigned_employee_id = $2
+            AND custody_status = 'Issued'
+          ORDER BY unit_number
+          LIMIT $3
+          FOR UPDATE
+       )
+       UPDATE asset_unit_tags AS tag
+          SET custody_status = 'Available',
+              assigned_employee_id = NULL,
+              assigned_user_id = NULL,
+              issuance_id = NULL,
+              condition = $4,
+              updated_at = NOW()
+         FROM units_to_return
+        WHERE tag.id = units_to_return.id`,
+      [row.issuance_id, row.employee_id, row.quantity, row.return_condition],
+    );
     const inventoryStatus = await refreshInventoryStatus(client, row.item_id);
     const nextIssuanceStatus = Number(row.returned_quantity) + Number(row.quantity) >= Number(row.issued_quantity)
       ? 'Returned'
@@ -587,6 +842,8 @@ async function expirePendingReturns() {
 module.exports = {
   createPendingReturn,
   confirmReturnByGso,
+  confirmScannedTagReturn,
+  completeTaggedAssetRepair,
   markReturnEmailSent,
   markReturnEmailFailed,
   lookupReturnApproval,

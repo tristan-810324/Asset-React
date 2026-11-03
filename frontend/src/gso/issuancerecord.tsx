@@ -560,7 +560,10 @@ export default function IssuanceRecord() {
         {/* WORKSPACE NAVIGATION TABS */}
         <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Issuance and return records">
           <a href="/gso/issuance" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
-            +  Main Issuances ({mainIssuances.length})
+            + Issuances Records ({mainIssuances.length})
+          </a>
+          <a href="/gso/main-issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+            + Main Issuance
           </a>
           <a href="/gso/return-items" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
             + Returned Items ({returnedItemsCount})

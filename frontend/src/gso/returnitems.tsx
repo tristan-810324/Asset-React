@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { listDepartments, listEmployees } from './employeesApi'
-import { listEmployeeIssuances } from './issuancesApi'
+import {
+  confirmTaggedAssetReturn,
+  createEmployeeReturn,
+  getAssetTagForInspection,
+  listEmployeeIssuances,
+  type AssetTagInspectionRecord,
+} from './issuancesApi'
 import { listInventoryItems } from './inventoryApi'
 
 const initialDepartments = [
@@ -14,8 +20,12 @@ const initialDepartments = [
   'Human Resources',
 ]
 
+const assetTagCodePattern = /^(?:AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})|[A-Z0-9]{13}|[A-F0-9]{20})$/i
+const barcodeScanQuietPeriodMs = 220
+
 type ReturnedItemRecord = {
   code: string
+  tagCode: string | null
   asset: string
   category: string
   returnedBy: string
@@ -26,6 +36,16 @@ type ReturnedItemRecord = {
   issuedTo: string
   status: string
   statusTone: string
+}
+
+type BulkReturnOption = {
+  id: string
+  employeeCode: string
+  employeeName: string
+  itemCode: string
+  itemName: string
+  quantity: number
+  unitOfMeasure: string
 }
 
 function formatReturnedDateTime(value: string) {
@@ -39,6 +59,17 @@ function formatReturnedDateTime(value: string) {
       hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila',
     }).format(date),
   }
+}
+
+function formatBorrowerHistoryDate(value: string | null) {
+  if (!value) return '--'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Manila',
+  }).format(date)
 }
 
 function returnedDateKey(value: string) {
@@ -62,6 +93,7 @@ function returnedConditionTone(condition: string) {
 function returnedStatusTone(status: string) {
   const normalizedStatus = status.toLowerCase()
   if (normalizedStatus === 'available' || normalizedStatus === 'in storage') return 'bg-blue-50 text-blue-700'
+  if (normalizedStatus === 'to be repaired') return 'bg-rose-50 text-rose-700'
   if (normalizedStatus === 'issued') return 'bg-amber-50 text-amber-700'
   return 'bg-slate-100 text-slate-600'
 }
@@ -97,6 +129,33 @@ export default function ReturnItems() {
   const [isLoadingReturns, setIsLoadingReturns] = useState(true)
   const [returnLoadError, setReturnLoadError] = useState('')
   const [selectedItem, setSelectedItem] = useState<ReturnedItemRecord | null>(null)
+  const [returnsRefreshToken, setReturnsRefreshToken] = useState(0)
+  const [scannerCode, setScannerCode] = useState('')
+  const scannerInputRef = useRef<HTMLInputElement>(null)
+  const scannerLookupTimerRef = useRef<number | null>(null)
+  const barcodeLookupInFlightRef = useRef(false)
+  const [hasScannerFocus, setHasScannerFocus] = useState(false)
+  const [scannedTag, setScannedTag] = useState<AssetTagInspectionRecord | null>(null)
+  const [isLookingUpBarcode, setIsLookingUpBarcode] = useState(false)
+  const [isConfirmingReturn, setIsConfirmingReturn] = useState(false)
+  const [barcodeError, setBarcodeError] = useState('')
+  const [returnMessage, setReturnMessage] = useState('')
+  const [returnCondition, setReturnCondition] = useState('Good')
+  const [returnNote, setReturnNote] = useState('')
+  const [bulkReturnOptions, setBulkReturnOptions] = useState<BulkReturnOption[]>([])
+  const [selectedBulkReturnId, setSelectedBulkReturnId] = useState('')
+  const [bulkReturnQuantity, setBulkReturnQuantity] = useState('1')
+  const [bulkReturnCondition, setBulkReturnCondition] = useState('Good')
+  const [bulkReturnReason, setBulkReturnReason] = useState('Bulk stock return processed by GSO.')
+  const [isSubmittingBulkReturn, setIsSubmittingBulkReturn] = useState(false)
+  const [bulkReturnError, setBulkReturnError] = useState('')
+  const [bulkReturnMessage, setBulkReturnMessage] = useState('')
+
+  useEffect(() => () => {
+    if (scannerLookupTimerRef.current !== null) {
+      window.clearTimeout(scannerLookupTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     let isMounted = true
@@ -115,6 +174,33 @@ export default function ReturnItems() {
           employees.map((employee) => listEmployeeIssuances(employee.id)),
         )
         if (!isMounted) return
+        const inventoryItemsByCode = new Map(inventoryItems.map((item) => [item.itemCode.toLowerCase(), item]))
+        const quantityReturnOptions: BulkReturnOption[] = employeeHistories.flatMap((history, index) => {
+          if (history.status !== 'fulfilled') return []
+          const employee = employees[index]
+          if (!employee) return []
+          const pendingReturnCodes = new Set(history.value.history
+            .filter((entry) => entry.event === 'Return Pending Approval')
+            .map((entry) => entry.code.toLowerCase()))
+          return history.value.assignedItems.flatMap((assignedItem) => {
+            if (pendingReturnCodes.has(assignedItem.code.toLowerCase())) return []
+            const inventoryItem = inventoryItemsByCode.get(assignedItem.code.toLowerCase())
+            if (!inventoryItem || inventoryItem.trackingMode !== 'quantity') return []
+            return [{
+              id: assignedItem.id,
+              employeeCode: employee.id,
+              employeeName: `${employee.firstName} ${employee.lastName}`,
+              itemCode: assignedItem.code,
+              itemName: assignedItem.name,
+              quantity: assignedItem.quantity,
+              unitOfMeasure: assignedItem.unitOfMeasure,
+            }]
+          })
+        })
+        setBulkReturnOptions(quantityReturnOptions)
+        setSelectedBulkReturnId((current) => quantityReturnOptions.some((option) => option.id === current)
+          ? current
+          : quantityReturnOptions[0]?.id || '')
         const confirmedIssuancesCount = inventoryItems.reduce(
           (count, item) => count + (item.changeHistory || []).filter((change) => change.action === 'issued').length,
           0,
@@ -145,23 +231,30 @@ export default function ReturnItems() {
               const employeeHistory = historyResult?.status === 'fulfilled'
                 ? historyResult.value.history
                 : []
-              const matchingReturn = employeeHistory.find((entry) =>
-                entry.event === 'Returned'
-                && entry.code.toLowerCase() === item.itemCode.toLowerCase()
-                && entry.date === returnedAt.date,
-              ) || employeeHistory.find((entry) =>
-                entry.event === 'Returned' && entry.code.toLowerCase() === item.itemCode.toLowerCase(),
-              )
+              const tagCode = typeof change.newValues.tagCode === 'string' ? change.newValues.tagCode : null
+              const matchingReturn = (tagCode
+                ? employeeHistory.find((entry) => entry.event === 'Returned' && entry.assetTagCode === tagCode)
+                : undefined) || employeeHistory.find((entry) =>
+                  entry.event === 'Returned'
+                  && entry.code.toLowerCase() === item.itemCode.toLowerCase()
+                  && entry.date === returnedAt.date,
+                ) || employeeHistory.find((entry) =>
+                  entry.event === 'Returned' && entry.code.toLowerCase() === item.itemCode.toLowerCase(),
+                )
               const condition = typeof change.newValues.condition === 'string'
                 ? change.newValues.condition
                 : item.condition
               const inventoryStatus = item.status || 'Returned'
-              const status = inventoryStatus.toLowerCase() === 'available' ? 'In Storage' : inventoryStatus
+              const repairConditions = ['needs repair', 'under maintenance', 'unserviceable']
+              const status = tagCode
+                ? repairConditions.includes(condition.toLowerCase()) ? 'To Be Repaired' : 'In Storage'
+                : inventoryStatus.toLowerCase() === 'available' ? 'In Storage' : inventoryStatus
 
               return {
                 timestamp: new Date(change.changedAt).getTime() || 0,
                 record: {
                   code: item.itemCode,
+                  tagCode,
                   asset: item.description,
                   category: item.category,
                   returnedBy: employee
@@ -197,12 +290,149 @@ export default function ReturnItems() {
 
     void loadReturnedItems()
     return () => { isMounted = false }
-  }, [])
+  }, [returnsRefreshToken])
+
+  function focusScannerInput(delay = 0) {
+    window.setTimeout(() => scannerInputRef.current?.focus(), delay)
+  }
+
+  async function lookupScannedTag(value: string) {
+    const tagCode = value.trim().toUpperCase()
+    if (!tagCode) {
+      setBarcodeError('Scan or enter an item barcode first.')
+      return
+    }
+    if (barcodeLookupInFlightRef.current || scannedTag || isConfirmingReturn) return
+
+    if (scannerLookupTimerRef.current !== null) {
+      window.clearTimeout(scannerLookupTimerRef.current)
+      scannerLookupTimerRef.current = null
+    }
+
+    barcodeLookupInFlightRef.current = true
+    setScannerCode('')
+    setIsLookingUpBarcode(true)
+    setBarcodeError('')
+    setReturnMessage('')
+    let foundTag = false
+    try {
+      const tag = await getAssetTagForInspection(tagCode)
+      if (tag.custodyStatus !== 'Issued' || !tag.employeeCode) {
+        throw new Error(`${tag.tagCode} is not currently assigned to an employee.`)
+      }
+      setScannedTag(tag)
+      foundTag = true
+      setReturnCondition(['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(tag.condition) ? tag.condition : 'Good')
+      setReturnNote('')
+    } catch (error) {
+      setScannedTag(null)
+      setBarcodeError(error instanceof Error ? error.message : 'Could not find that item barcode.')
+    } finally {
+      barcodeLookupInFlightRef.current = false
+      setIsLookingUpBarcode(false)
+      if (!foundTag) focusScannerInput()
+    }
+  }
+
+  function handleScannerInputChange(value: string) {
+    setScannerCode(value)
+    if (scannerLookupTimerRef.current !== null) {
+      window.clearTimeout(scannerLookupTimerRef.current)
+      scannerLookupTimerRef.current = null
+    }
+
+    if (!assetTagCodePattern.test(value.trim())) return
+    scannerLookupTimerRef.current = window.setTimeout(() => {
+      scannerLookupTimerRef.current = null
+      void lookupScannedTag(value)
+    }, barcodeScanQuietPeriodMs)
+  }
+
+  function handleBarcodeLookup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void lookupScannedTag(scannerCode)
+  }
+
+  function closeScannedTagDialog() {
+    if (isConfirmingReturn) return
+    setScannedTag(null)
+    setScannerCode('')
+    setReturnNote('')
+    setBarcodeError('')
+    focusScannerInput()
+  }
+
+  async function handleBulkReturnSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const selectedReturn = bulkReturnOptions.find((option) => option.id === selectedBulkReturnId)
+    const quantity = Number(bulkReturnQuantity)
+    if (!selectedReturn) {
+      setBulkReturnError('Select an active bulk-stock issuance first.')
+      return
+    }
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > selectedReturn.quantity) {
+      setBulkReturnError(`Enter a whole quantity from 1 to ${selectedReturn.quantity} ${selectedReturn.unitOfMeasure}.`)
+      return
+    }
+    if (!bulkReturnReason.trim()) {
+      setBulkReturnError('Enter the return reason or inspection notes.')
+      return
+    }
+
+    setIsSubmittingBulkReturn(true)
+    setBulkReturnError('')
+    setBulkReturnMessage('')
+    try {
+      const request = await createEmployeeReturn(
+        selectedReturn.employeeCode,
+        selectedReturn.itemCode,
+        bulkReturnCondition,
+        bulkReturnReason.trim(),
+        selectedReturn.id,
+        quantity,
+      )
+      setBulkReturnMessage(request.emailSent
+        ? `GSO recorded the return of ${quantity} ${selectedReturn.unitOfMeasure} of ${selectedReturn.itemName}. A confirmation email was sent to ${selectedReturn.employeeName}.`
+        : `GSO recorded the return of ${quantity} ${selectedReturn.unitOfMeasure} of ${selectedReturn.itemName}, but the confirmation email could not be sent.`)
+      setBulkReturnQuantity('1')
+      setBulkReturnReason('')
+      setReturnsRefreshToken((current) => current + 1)
+    } catch (error) {
+      setBulkReturnError(error instanceof Error ? error.message : 'Unable to create this quantity return request.')
+    } finally {
+      setIsSubmittingBulkReturn(false)
+    }
+  }
+
+  async function handleReturnConfirmation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!scannedTag) return
+
+    setIsConfirmingReturn(true)
+    setBarcodeError('')
+    try {
+      const result = await confirmTaggedAssetReturn(scannedTag.tagCode, {
+        condition: returnCondition,
+        reason: returnNote,
+      })
+      setScannedTag(null)
+      setScannerCode('')
+      setReturnNote('')
+      setReturnMessage(`${result.tagCode} was returned for ${result.employeeName} and routed to ${result.destination}.`)
+      setReturnsRefreshToken((current) => current + 1)
+      focusScannerInput(50)
+    } catch (error) {
+      setBarcodeError(error instanceof Error ? error.message : 'Could not confirm this item return.')
+    } finally {
+      setIsConfirmingReturn(false)
+    }
+  }
 
   const filteredItems = returnedItems.filter((item) => {
     const query = searchQuery.toLowerCase()
     const matchesSearch = item.asset.toLowerCase().includes(query)
       || item.code.toLowerCase().includes(query)
+      || (item.tagCode?.toLowerCase().includes(query) ?? false)
       || item.returnedBy.toLowerCase().includes(query)
       || item.issuedTo.toLowerCase().includes(query)
     const matchesDepartment = selectedDeptFilter === 'all' || item.department === selectedDeptFilter
@@ -463,19 +693,143 @@ export default function ReturnItems() {
             </span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Returned Items</h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-              Review verified employee returns, return conditions, and current item status.
+              Scan a unique per-unit asset tag for physical assets. Record bulk stock returns by quantity.
             </p>
           </div>
           
         </div>
         <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Issuance and return records">
           <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-            + Main Issuances ({mainIssuancesCount})
+            + Issuances Records ({mainIssuancesCount})
+          </a>
+          <a href="/gso/main-issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+            + Main Issuance
           </a>
           <a href="/gso/return-items" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
             + Returned Items ({returnedItems.length})
           </a>
         </nav>
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6" aria-labelledby="return-scan-title">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="return-scan-title" className="text-sm font-black text-slate-900">Process an item return</h2>
+            <p className="mt-1 text-xs text-slate-500">This scanner handles individually tagged assets. Bulk stock is returned by quantity through the employee return approval.</p>
+          </div>
+          <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[0.62rem] font-extrabold text-blue-700">GSO confirmation</span>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
+          <div>
+            <p className="flex items-center gap-2 text-xs font-extrabold text-blue-900" role="status" aria-live="polite">
+              <span className={`h-2.5 w-2.5 rounded-full ${isLookingUpBarcode ? 'animate-pulse bg-amber-500' : hasScannerFocus ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              {isLookingUpBarcode ? 'Reading barcode...' : scannedTag ? 'Inspection in progress' : hasScannerFocus ? 'Scanner ready' : 'Scanner waiting for focus'}
+            </p>
+            <p className="mt-1 text-[0.68rem] text-slate-600">Scan the label on one unit. Item and borrower details will pop up automatically; no typing or scan button is needed.</p>
+          </div>
+          <button type="button" onClick={() => focusScannerInput()} disabled={isLookingUpBarcode || Boolean(scannedTag)} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">
+            Focus scanner
+          </button>
+        </div>
+        <form onSubmit={handleBarcodeLookup} aria-label="USB barcode scanner input" className="sr-only">
+          <input
+            ref={scannerInputRef}
+            type="text"
+            value={scannerCode}
+            onChange={(event) => handleScannerInputChange(event.target.value)}
+            onFocus={() => setHasScannerFocus(true)}
+            onBlur={() => setHasScannerFocus(false)}
+            autoComplete="off"
+            autoFocus
+            aria-label="Scan an individual asset barcode"
+            disabled={isLookingUpBarcode || Boolean(scannedTag) || isConfirmingReturn}
+          />
+          <button type="submit" tabIndex={-1} aria-hidden="true" />
+        </form>
+        {barcodeError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{barcodeError}</p>}
+        {returnMessage && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">{returnMessage}</p>}
+      </section>
+
+      <section className="mt-5 rounded-2xl border border-amber-100 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6" aria-labelledby="bulk-return-title">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="bulk-return-title" className="text-sm font-black text-slate-900">Return bulk stock by quantity</h2>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">Use this flow for quantity-tracked items. GSO records the returned quantity and condition, then sends the employee a confirmation email. Bulk stock shares one inventory condition; use per-unit tracking when units can differ.</p>
+          </div>
+          <span className="rounded-full bg-amber-50 px-3 py-1.5 text-[0.62rem] font-extrabold text-amber-700">No unit barcode required</span>
+        </div>
+        {bulkReturnOptions.length > 0 ? (
+          <form onSubmit={(event) => void handleBulkReturnSubmit(event)} className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="block sm:col-span-2">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Issued bulk item</span>
+              <select
+                value={selectedBulkReturnId}
+                onChange={(event) => {
+                  setSelectedBulkReturnId(event.target.value)
+                  setBulkReturnQuantity('1')
+                  setBulkReturnError('')
+                }}
+                disabled={isSubmittingBulkReturn}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
+              >
+                {bulkReturnOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.employeeName} · {option.itemName} ({option.itemCode}) · {option.quantity} {option.unitOfMeasure} outstanding
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Quantity to return</span>
+              <input
+                type="number"
+                min="1"
+                max={bulkReturnOptions.find((option) => option.id === selectedBulkReturnId)?.quantity || 1}
+                step="1"
+                value={bulkReturnQuantity}
+                onChange={(event) => setBulkReturnQuantity(event.target.value)}
+                disabled={isSubmittingBulkReturn}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition after return</span>
+              <select
+                value={bulkReturnCondition}
+                onChange={(event) => setBulkReturnCondition(event.target.value)}
+                disabled={isSubmittingBulkReturn}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
+              >
+                {['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].map((condition) => (
+                  <option key={condition} value={condition}>{condition}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Return reason / inspection notes</span>
+              <input
+                type="text"
+                value={bulkReturnReason}
+                onChange={(event) => setBulkReturnReason(event.target.value)}
+                maxLength={1000}
+                disabled={isSubmittingBulkReturn}
+                placeholder="Enter the return reason or inspection notes"
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
+              />
+            </label>
+            {bulkReturnError && <p role="alert" className="sm:col-span-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{bulkReturnError}</p>}
+            {bulkReturnMessage && <p role="status" className="sm:col-span-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">{bulkReturnMessage}</p>}
+            <div className="sm:col-span-2 flex justify-end">
+              <button type="submit" disabled={isSubmittingBulkReturn} className="rounded-xl bg-amber-600 px-5 py-3 text-xs font-extrabold text-white transition hover:bg-amber-700 disabled:cursor-wait disabled:opacity-60">
+                {isSubmittingBulkReturn ? 'Recording return…' : 'Record quantity return'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <p className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs font-semibold text-slate-500">
+            No active bulk-stock issuances are available to return by quantity.
+          </p>
+        )}
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
@@ -583,7 +937,8 @@ export default function ReturnItems() {
                 <tr key={`${item.code}-${item.returnedDate}-${index}`} onClick={() => setSelectedItem(item)} className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50/40">
                   <td className="px-5 py-4 sm:px-6">
                     <span className="block text-xs font-extrabold text-slate-800">{item.asset}</span>
-                    <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{item.code} · {item.category}</span>
+                    <span className="mt-1 block text-[0.62rem] font-bold text-slate-500">{item.tagCode || item.code} · {item.category}</span>
+                    {item.tagCode && <span className="mt-0.5 block text-[0.58rem] text-slate-400">Item code: {item.code}</span>}
                   </td>
                   <td className="px-5 py-4">
                     <span className="block text-xs font-bold text-slate-700">{item.returnedBy}</span>
@@ -615,6 +970,93 @@ export default function ReturnItems() {
         </div>
       </section>
 
+      {scannedTag && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
+          <section role="dialog" aria-modal="true" aria-labelledby="return-confirm-title" className="my-auto w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-600">{scannedTag.tagCode}</p>
+                <h2 id="return-confirm-title" className="mt-1 text-lg font-black text-slate-900">Confirm item return</h2>
+                <p className="mt-1 text-xs text-slate-500">Check the item and condition before saving.</p>
+              </div>
+              <button type="button" disabled={isConfirmingReturn} onClick={closeScannedTagDialog} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Close</button>
+            </div>
+
+            <div className="mt-4 grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 sm:grid-cols-2">
+              <div>
+                <span className="block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">Item</span>
+                <p className="mt-1 text-xs font-extrabold text-slate-800">{scannedTag.itemName}</p>
+                <p className="mt-0.5 text-[0.68rem] text-slate-500">{scannedTag.itemCode} · Unit {scannedTag.unitNumber}</p>
+              </div>
+              <div>
+                <span className="block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">Assigned to</span>
+                <p className="mt-1 text-xs font-extrabold text-slate-800">{scannedTag.employeeName}</p>
+                <p className="mt-0.5 text-[0.68rem] text-slate-500">{scannedTag.employeeCode}</p>
+              </div>
+              <div className="sm:col-span-2">
+                <span className="block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">Current condition</span>
+                <p className="mt-1 text-xs font-bold text-slate-800">{scannedTag.condition}</p>
+              </div>
+            </div>
+
+            <section className="mt-3 rounded-xl border border-blue-100 bg-white p-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-xs font-extrabold text-slate-800">Borrower history for this unit</h3>
+                <span className="text-[0.62rem] font-semibold text-slate-400">Latest first</span>
+              </div>
+              {(scannedTag.borrowerHistory || []).length > 0 ? (
+                <ol className="mt-3 max-h-48 space-y-2 overflow-y-auto pr-1">
+                  {(scannedTag.borrowerHistory ?? []).map((borrower, index) => (
+                    <li key={`${borrower.employeeCode}-${borrower.issuedAt}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-extrabold text-slate-800">{borrower.employeeName}</p>
+                          <p className="mt-0.5 text-[0.65rem] font-semibold text-slate-500">{borrower.employeeCode} | {borrower.department} | {borrower.position}</p>
+                          <p className="mt-0.5 break-all text-[0.62rem] text-slate-500">{borrower.email}</p>
+                        </div>
+                        <span className={`rounded-full px-2 py-1 text-[0.58rem] font-extrabold ${borrower.status === 'Issued' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'}`}>
+                          {borrower.status === 'Issued' ? 'Currently assigned' : 'Previous borrower'}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[0.62rem] text-slate-600">
+                        Issued {formatBorrowerHistoryDate(borrower.issuedAt)}
+                        {borrower.returnedAt ? ` | Returned ${formatBorrowerHistoryDate(borrower.returnedAt)}` : ''}
+                        {borrower.returnCondition ? ` | Return condition: ${borrower.returnCondition}` : ''}
+                      </p>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="mt-2 text-[0.68rem] text-slate-500">No borrower history has been recorded for this tag.</p>
+              )}
+            </section>
+
+            <form onSubmit={(event) => void handleReturnConfirmation(event)} className="mt-4 space-y-3">
+              <label className="block">
+                <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition after inspection</span>
+                <select value={returnCondition} onChange={(event) => setReturnCondition(event.target.value)} disabled={isConfirmingReturn} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
+                  <option>New</option><option>Good</option><option>Fair</option><option>Needs Repair</option><option>Under Maintenance</option><option>Unserviceable</option>
+                </select>
+              </label>
+              <div className={`rounded-xl border px-3 py-2.5 text-xs font-semibold ${['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(returnCondition) ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+                {['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(returnCondition)
+                  ? 'This item will be routed to To Be Repaired.'
+                  : 'This item will be returned to GSO Storage.'}
+              </div>
+              <label className="block">
+                <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Return notes (optional)</span>
+                <textarea maxLength={1000} value={returnNote} onChange={(event) => setReturnNote(event.target.value)} disabled={isConfirmingReturn} placeholder="Add a note about the item's condition" className="min-h-20 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+              </label>
+              {barcodeError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{barcodeError}</p>}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" disabled={isConfirmingReturn} onClick={closeScannedTagDialog} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={isConfirmingReturn} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-blue-700 disabled:opacity-50">{isConfirmingReturn ? 'Saving return…' : 'Confirm return'}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       {selectedItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
           <section role="dialog" aria-modal="true" aria-labelledby="returned-item-dialog-title" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
@@ -627,6 +1069,7 @@ export default function ReturnItems() {
                 <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Returned Asset</span>
                 <p className="mt-1 text-xs font-black text-slate-900">{selectedItem.asset}</p>
                 <p className="text-[0.65rem] font-bold text-slate-500">{selectedItem.code} · {selectedItem.category}</p>
+                {selectedItem.tagCode && <p className="mt-1 text-[0.65rem] font-bold text-blue-700">Barcode: {selectedItem.tagCode}</p>}
               </div>
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
                 <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Returned By</span>

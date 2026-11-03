@@ -6,18 +6,48 @@ const itemColumns = `
   i.category,
   i.item_name AS "itemName",
   i.description,
+  i.tracking_mode AS "trackingMode",
+  i.serial_number AS "serialNumber",
+  i.location AS "storageLocation",
+  COALESCE((
+    SELECT json_agg(json_build_object(
+      'tagCode', tag.tag_code,
+      'unitNumber', tag.unit_number,
+      'serialNumber', tag.serial_number,
+      'location', tag.location,
+      'condition', tag.condition,
+      'lifecycleStatus', tag.lifecycle_status,
+      'custodyStatus', tag.custody_status
+    ) ORDER BY tag.unit_number)
+      FROM asset_unit_tags AS tag
+     WHERE tag.item_id = i.id
+  ), '[]'::JSON) AS "assetTags",
+  COALESCE((
+    SELECT json_agg(json_build_object(
+      'id', receipt.id::TEXT,
+      'quantity', receipt.quantity,
+      'unitCost', receipt.unit_cost,
+      'totalCost', receipt.total_cost,
+      'dateAcquired', to_char(receipt.date_acquired, 'YYYY-MM-DD'),
+      'timeAcquired', to_char(receipt.time_acquired, 'HH24:MI'),
+      'referenceNumber', receipt.reference_number,
+      'createdAt', receipt.created_at
+    ) ORDER BY receipt.created_at DESC, receipt.id DESC)
+      FROM inventory_receipts AS receipt
+     WHERE receipt.item_id = i.id
+  ), '[]'::JSON) AS "receiptHistory",
   to_char(i.date_acquired, 'YYYY-MM-DD') AS "dateAcquired",
   to_char(i.time_acquired, 'HH24:MI') AS "timeAcquired",
   i.unit_cost AS "unitCost",
   i.acquisition_cost AS "acquisitionCost",
   i.current_value AS "currentValue",
   i.quantity,
-  GREATEST(i.quantity - COALESCE(stock_usage.active_quantity, 0), 0)::INTEGER AS "availableQuantity",
+  GREATEST(i.quantity - COALESCE(stock_usage.active_quantity, 0) - COALESCE(stock_usage.repair_quantity, 0), 0)::INTEGER AS "availableQuantity",
   i.unit_of_measure AS "unitOfMeasure",
   i.condition,
   CASE
     WHEN i.inventory_status = 'Borrowed' AND COALESCE(stock_usage.active_quantity, 0) = 0 THEN 'Borrowed'
-    WHEN i.quantity > COALESCE(stock_usage.active_quantity, 0) THEN 'Available'
+    WHEN i.quantity > COALESCE(stock_usage.active_quantity, 0) + COALESCE(stock_usage.repair_quantity, 0) THEN 'Available'
     WHEN COALESCE(stock_usage.pending_quantity, 0) > 0 THEN 'Pending Approval'
     WHEN COALESCE(stock_usage.reserved_quantity, 0) > 0 THEN 'Reserved'
     WHEN COALESCE(stock_usage.issued_quantity, 0) > 0 THEN 'Issued'
@@ -66,10 +96,11 @@ const itemColumns = `
                  'condition', issue.item_condition
                ) AS new_values,
                issue.decided_at AS changed_at,
-               employee.first_name || ' ' || employee.last_name AS changed_by,
+               issuer.name AS changed_by,
                issue.id AS sort_id
           FROM employee_issuances AS issue
           JOIN employees AS employee ON employee.id = issue.employee_id
+          LEFT JOIN users AS issuer ON issuer.id = issue.requested_by_user_id
          WHERE issue.item_id = i.id
            AND issue.status IN ('Issued', 'Returned')
            AND issue.decided_at IS NOT NULL
@@ -81,7 +112,8 @@ const itemColumns = `
                jsonb_build_object('inventoryStatus', 'Issued') AS old_values,
                jsonb_build_object(
                  'inventoryStatus', 'Available',
-                 'condition', return_request.return_condition
+                 'condition', return_request.return_condition,
+                 'tagCode', returned_tag.tag_code
                ) AS new_values,
                return_request.decided_at AS changed_at,
                employee.first_name || ' ' || employee.last_name AS changed_by,
@@ -89,6 +121,7 @@ const itemColumns = `
           FROM employee_issuance_returns AS return_request
           JOIN employee_issuances AS issue ON issue.id = return_request.issuance_id
           JOIN employees AS employee ON employee.id = issue.employee_id
+          LEFT JOIN asset_unit_tags AS returned_tag ON returned_tag.id = return_request.asset_unit_tag_id
          WHERE issue.item_id = i.id
            AND return_request.status = 'Returned'
            AND return_request.decided_at IS NOT NULL
@@ -148,6 +181,19 @@ function stockUsageJoin(includeRequesterInventory) {
            (COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
              + COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)
              + (${borrowerReserved}) + (${borrowerIssued}))::INTEGER AS active_quantity,
+           CASE
+             WHEN NOT EXISTS (SELECT 1 FROM asset_unit_tags AS existing_tag WHERE existing_tag.item_id = i.id)
+                  AND i.condition IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
+               THEN i.quantity
+             ELSE COALESCE((
+               SELECT COUNT(*)::INTEGER
+                 FROM asset_unit_tags AS repair_tag
+                WHERE repair_tag.item_id = i.id
+                  AND repair_tag.custody_status = 'Available'
+                  AND repair_tag.lifecycle_status <> 'Disposed'
+                  AND repair_tag.condition IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
+             ), 0)
+           END::INTEGER AS repair_quantity,
            COUNT(DISTINCT issue.employee_id) FILTER (WHERE issue.status IN ('Pending', 'Issued'))::INTEGER AS active_employee_count
       FROM employee_issuances AS issue
      WHERE issue.item_id = i.id
@@ -198,6 +244,25 @@ async function getItemById(queryable, id) {
   return result.rows[0] || null;
 }
 
+async function insertInventoryReceipt(client, itemId, receipt) {
+  await client.query(
+    `INSERT INTO inventory_receipts (
+       item_id, quantity, unit_cost, total_cost, date_acquired, time_acquired,
+       reference_number, recorded_by_user_id
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      itemId,
+      receipt.quantity,
+      receipt.unitCost,
+      receipt.acquisitionCost,
+      receipt.dateAcquired,
+      receipt.timeAcquired,
+      receipt.receiptReference || '',
+      receipt.createdByUserId,
+    ],
+  );
+}
+
 async function createItem({
   itemCode,
   category,
@@ -211,6 +276,10 @@ async function createItem({
   quantity,
   unitOfMeasure,
   condition,
+  trackingMode,
+  serialNumber,
+  receiptReference,
+  storageLocation,
   createdByUserId,
 }) {
   const client = await pool.connect();
@@ -220,9 +289,9 @@ async function createItem({
       `INSERT INTO item_catalog (
          item_code, category_id, category, item_name, description, date_acquired, time_acquired,
          unit_cost, acquisition_cost, current_value, quantity, unit_of_measure,
-         condition, created_by_user_id
+         condition, tracking_mode, location, serial_number, created_by_user_id
        )
-       SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+       SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
          FROM item_categories AS category_row
         WHERE lower(category_row.name) = lower($2)
        RETURNING id`,
@@ -239,6 +308,9 @@ async function createItem({
         quantity,
         unitOfMeasure,
         condition,
+        trackingMode,
+        storageLocation || 'GSO Storage',
+        serialNumber || null,
         createdByUserId,
       ],
     );
@@ -250,6 +322,15 @@ async function createItem({
     }
 
     const id = result.rows[0].id;
+    await insertInventoryReceipt(client, id, {
+      quantity,
+      unitCost,
+      acquisitionCost,
+      dateAcquired,
+      timeAcquired,
+      receiptReference,
+      createdByUserId,
+    });
     const created = await getItemById(client, id);
     await client.query(
       `INSERT INTO inventory_change_logs (
@@ -269,6 +350,9 @@ async function createItem({
         quantity: created.quantity,
         unitOfMeasure: created.unitOfMeasure,
         condition: created.condition,
+        trackingMode: created.trackingMode,
+        storageLocation: created.storageLocation,
+        receiptReference,
       }), createdByUserId],
     );
     const itemWithHistory = await getItemById(client, id);
@@ -293,9 +377,9 @@ async function createItems(items, { createdByUserId }) {
         `INSERT INTO item_catalog (
            item_code, category_id, category, item_name, description, date_acquired, time_acquired,
            unit_cost, acquisition_cost, current_value, quantity, unit_of_measure,
-           condition, created_by_user_id
+           condition, tracking_mode, location, serial_number, created_by_user_id
          )
-         SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+         SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
            FROM item_categories AS category_row
           WHERE lower(category_row.name) = lower($2)
          RETURNING id`,
@@ -312,6 +396,9 @@ async function createItems(items, { createdByUserId }) {
           item.quantity,
           item.unitOfMeasure,
           item.condition,
+          item.trackingMode,
+          item.storageLocation || 'GSO Storage',
+          item.serialNumber || null,
           createdByUserId,
         ],
       );
@@ -323,6 +410,15 @@ async function createItems(items, { createdByUserId }) {
       }
 
       const id = result.rows[0].id;
+      await insertInventoryReceipt(client, id, {
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        acquisitionCost: item.acquisitionCost,
+        dateAcquired: item.dateAcquired,
+        timeAcquired: item.timeAcquired,
+        receiptReference: item.receiptReference,
+        createdByUserId,
+      });
       const created = await getItemById(client, id);
       await client.query(
         `INSERT INTO inventory_change_logs (
@@ -342,6 +438,9 @@ async function createItems(items, { createdByUserId }) {
           quantity: created.quantity,
           unitOfMeasure: created.unitOfMeasure,
           condition: created.condition,
+          trackingMode: created.trackingMode,
+          storageLocation: created.storageLocation,
+          receiptReference: item.receiptReference || '',
         }), createdByUserId],
       );
       createdItems.push(await getItemById(client, id));
@@ -363,6 +462,7 @@ function itemSnapshot(item) {
     category: item.category,
     itemName: item.item_name,
     description: item.description,
+    trackingMode: item.tracking_mode,
     dateAcquired: item.date_acquired,
     timeAcquired: item.time_acquired,
     unitCost: item.unit_cost,
@@ -401,6 +501,51 @@ async function updateItem(id, item, { changedByUserId }) {
       throw Object.assign(new Error(`Quantity cannot be lower than ${activeIssuanceQuantity} units currently pending or issued.`), { status: 409 });
     }
 
+    const nextTrackingMode = item.trackingMode ?? previous.tracking_mode ?? 'individual';
+    const trackingModeChanged = nextTrackingMode !== (previous.tracking_mode ?? 'individual');
+    const tagCountResult = await client.query(
+      'SELECT COUNT(*)::INTEGER AS count FROM asset_unit_tags WHERE item_id = $1',
+      [id],
+    );
+    const existingTagCount = Number(tagCountResult.rows[0]?.count || 0);
+    if (trackingModeChanged) {
+      const issuanceHistoryResult = await client.query(
+        'SELECT EXISTS (SELECT 1 FROM employee_issuances WHERE item_id = $1) AS used',
+        [id],
+      );
+      const optionalTables = await client.query(
+        `SELECT to_regclass('public.service_request_assets') IS NOT NULL AS has_request_assets,
+                to_regclass('public.asset_movements') IS NOT NULL AS has_asset_movements`,
+      );
+      let hasRequesterHistory = false;
+      let hasMovementHistory = false;
+      if (optionalTables.rows[0]?.has_request_assets) {
+        const result = await client.query(
+          'SELECT EXISTS (SELECT 1 FROM service_request_assets WHERE item_id = $1) AS used',
+          [id],
+        );
+        hasRequesterHistory = Boolean(result.rows[0]?.used);
+      }
+      if (optionalTables.rows[0]?.has_asset_movements) {
+        const result = await client.query(
+          'SELECT EXISTS (SELECT 1 FROM asset_movements WHERE item_id = $1) AS used',
+          [id],
+        );
+        hasMovementHistory = Boolean(result.rows[0]?.used);
+      }
+      if (existingTagCount > 0
+        || issuanceHistoryResult.rows[0]?.used
+        || hasRequesterHistory
+        || hasMovementHistory) {
+        throw Object.assign(new Error('Hindi na mababago ang tracking mode matapos magkaroon ng asset tags o issuance history ang item.'), { status: 409 });
+      }
+    }
+    if (nextTrackingMode === 'individual'
+      && existingTagCount > 0
+      && item.quantity !== Number(previous.quantity)) {
+      throw Object.assign(new Error('Magdagdag ng bagong per-unit item record sa halip na baguhin ang quantity ng item na may asset tags na.'), { status: 409 });
+    }
+
     const costOrQuantityChanged = Number(previous.unit_cost) !== item.unitCost
       || Number(previous.quantity) !== item.quantity;
     const calculatedAcquisitionCost = Math.round((item.unitCost * item.quantity + Number.EPSILON) * 100) / 100;
@@ -430,7 +575,9 @@ async function updateItem(id, item, { changedByUserId }) {
               current_value = $10,
               quantity = $11,
               unit_of_measure = $12,
-              condition = $13
+              condition = $13,
+              tracking_mode = $14,
+              serial_number = CASE WHEN $14 = 'quantity' THEN NULL ELSE inventory_item.serial_number END
          FROM item_categories AS category_row
         WHERE inventory_item.id = $1
           AND lower(category_row.name) = lower($3)
@@ -449,12 +596,25 @@ async function updateItem(id, item, { changedByUserId }) {
         item.quantity,
         item.unitOfMeasure,
         item.condition,
+        nextTrackingMode,
       ],
     );
     if (!updateResult.rows[0]) {
       throw Object.assign(new Error('Hindi na makita ang piniling category. I-refresh ang page at pumili muli.'), {
         code: 'CATEGORY_NOT_FOUND',
       });
+    }
+
+    if (nextTrackingMode === 'individual') {
+      await client.query(
+        `UPDATE asset_unit_tags
+            SET condition = $2, updated_at = NOW()
+          WHERE item_id = $1
+            AND custody_status = 'Available'
+            AND lifecycle_status <> 'Disposed'
+            AND issuance_id IS NULL`,
+        [id, item.condition],
+      );
     }
 
     const updated = await getItemById(client, id);
@@ -482,8 +642,103 @@ async function updateItem(id, item, { changedByUserId }) {
           quantity: updated.quantity,
           unitOfMeasure: updated.unitOfMeasure,
           condition: updated.condition,
+          trackingMode: updated.trackingMode,
         }),
         changedByUserId,
+      ],
+    );
+
+    const itemWithHistory = await getItemById(client, id);
+    await client.query('COMMIT');
+    return itemWithHistory;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+async function restockItem(id, receipt) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const itemResult = await client.query(
+      'SELECT * FROM item_catalog WHERE id = $1 FOR UPDATE',
+      [id],
+    );
+    const previous = itemResult.rows[0];
+    if (!previous) throw Object.assign(new Error('Hindi na makita ang inventory item.'), { status: 404 });
+    if (previous.tracking_mode !== 'quantity') {
+      throw Object.assign(new Error('Bulk quantity items lamang ang maaaring i-restock sa SKU na ito.'), { status: 409 });
+    }
+    if (previous.condition !== receipt.condition) {
+      throw Object.assign(new Error('Magkaiba ang condition ng kasalukuyang bulk stock at bagong delivery. Gumawa ng hiwalay na stock record.'), { status: 409 });
+    }
+
+    const previousQuantity = Number(previous.quantity);
+    const nextQuantity = previousQuantity + receipt.quantity;
+    if (!Number.isInteger(nextQuantity) || nextQuantity > 2147483647) {
+      throw Object.assign(new Error('Lampas sa pinapayagang inventory quantity ang restock.'), { status: 400 });
+    }
+    const receiptTotal = Math.round((receipt.quantity * receipt.unitCost + Number.EPSILON) * 100) / 100;
+    const acquisitionCost = Math.round((Number(previous.acquisition_cost) + receiptTotal + Number.EPSILON) * 100) / 100;
+    if (!Number.isFinite(acquisitionCost) || acquisitionCost > 9999999999.99) {
+      throw Object.assign(new Error('Acquisition cost ay lampas sa pinapayagang halaga.'), { status: 400 });
+    }
+    const unitCost = Math.round((acquisitionCost / nextQuantity + Number.EPSILON) * 100) / 100;
+    const currentValue = previous.current_value === null
+      ? null
+      : Math.round((Number(previous.current_value) + receiptTotal + Number.EPSILON) * 100) / 100;
+    if (currentValue !== null && currentValue > acquisitionCost) {
+      throw Object.assign(new Error('Current assessed value cannot exceed the updated acquisition cost.'), { status: 400 });
+    }
+
+    await client.query(
+      `UPDATE item_catalog
+          SET quantity = $2,
+              unit_cost = $3,
+              acquisition_cost = $4,
+              current_value = $5,
+              date_acquired = COALESCE(date_acquired, $6),
+              time_acquired = COALESCE(time_acquired, $7)
+        WHERE id = $1`,
+      [id, nextQuantity, unitCost, acquisitionCost, currentValue, receipt.dateAcquired, receipt.timeAcquired],
+    );
+    await insertInventoryReceipt(client, id, {
+      quantity: receipt.quantity,
+      unitCost: receipt.unitCost,
+      acquisitionCost: receiptTotal,
+      dateAcquired: receipt.dateAcquired,
+      timeAcquired: receipt.timeAcquired,
+      receiptReference: receipt.receiptReference,
+      createdByUserId: receipt.recordedByUserId,
+    });
+
+    const updatedItem = await getItemById(client, id);
+    await client.query(
+      `INSERT INTO inventory_change_logs (
+         entity_type, entity_key, entity_name, item_id, action, reason,
+         old_values, new_values, changed_by_user_id
+       ) VALUES ('item', $1, $2, $3, 'updated', $4, $5::JSONB, $6::JSONB, $7)`,
+      [
+        String(id),
+        updatedItem.itemName,
+        id,
+        `Bulk stock restocked with ${receipt.quantity} ${previous.unit_of_measure}.`,
+        JSON.stringify(itemSnapshot(previous)),
+        JSON.stringify({
+          itemCode: updatedItem.itemCode,
+          trackingMode: updatedItem.trackingMode,
+          quantity: updatedItem.quantity,
+          unitCost: updatedItem.unitCost,
+          acquisitionCost: updatedItem.acquisitionCost,
+          currentValue: updatedItem.currentValue,
+          receiptQuantity: receipt.quantity,
+          receiptUnitCost: receipt.unitCost,
+          receiptTotalCost: receiptTotal,
+          receiptReference: receipt.receiptReference,
+        }),
+        receipt.recordedByUserId,
       ],
     );
 
@@ -676,6 +931,7 @@ module.exports = {
   listItems,
   createItem,
   createItems,
+  restockItem,
   updateItem,
   listCategories,
   createCategory,

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { listEmployees } from './employeesApi'
-import { listEmployeeIssuances } from './issuancesApi'
+import { completeTaggedAssetRepair, listEmployeeIssuances } from './issuancesApi'
 import { listInventoryItems, updateInventoryItem, type InventoryItemRecord } from './inventoryApi'
 
 type RepairQueueItem = {
   code: string
+  itemCode: string
+  tagCode: string | null
   asset: string
   category: string
   reportedBy: string
@@ -121,7 +123,11 @@ export default function ToRepaired() {
 
             const item = inventoryByCode.get(entry.code.toLowerCase())
             const condition = conditionFromReturnNote(entry.note, item?.condition || '')
-            const completionRecords = item?.changeHistory.filter((change) => change.reason === repairCompletionReason) ?? []
+            const tagCode = entry.assetTagCode || null
+            const completionRecords = item?.changeHistory.filter((change) =>
+              change.reason === repairCompletionReason
+              && (!tagCode || change.newValues.assetTagCode === tagCode),
+            ) ?? []
             const latestCompletionRecord = [...completionRecords].sort(
               (left, right) => repairHistoryTimestamp(left.changedAt) - repairHistoryTimestamp(right.changedAt),
             )[completionRecords.length - 1]
@@ -130,9 +136,6 @@ export default function ToRepaired() {
             const isRepairCompleted = entry.event === 'Returned' && completionTimestamp > 0 && reportTimestamp > 0 && completionTimestamp >= reportTimestamp
 
             if (!isRepairCondition(condition) && !isRepairCompleted) return []
-            if (entry.event === 'Returned' && item && !isRepairCondition(item.condition) && !isRepairCompleted) return []
-            if (entry.event === 'Returned' && item?.status.toLowerCase() === 'issued' && !isRepairCompleted) return []
-
             const isPendingApproval = entry.event === 'Return Pending Approval'
             const priority = priorityFromReturnNote(entry.note, condition)
             const repairStatus = isPendingApproval
@@ -142,7 +145,9 @@ export default function ToRepaired() {
                 : 'Pending Repair'
 
             return [{
-              code: entry.code,
+              code: tagCode || entry.code,
+              itemCode: entry.code,
+              tagCode,
               asset: item?.description || entry.item,
               category: item?.category || '—',
               reportedBy: `${employee.firstName} ${employee.lastName} (${employee.department})`,
@@ -224,7 +229,7 @@ export default function ToRepaired() {
   const handleMarkAsRepaired = async () => {
     if (!repairCompletionItem || isCompletingRepair) return
 
-    const inventoryItem = inventoryItems.find((item) => item.itemCode.toLowerCase() === repairCompletionItem.code.toLowerCase())
+    const inventoryItem = inventoryItems.find((item) => item.itemCode.toLowerCase() === repairCompletionItem.itemCode.toLowerCase())
     if (!inventoryItem) {
       setRepairActionError('The matching inventory record could not be found. Refresh the page and try again.')
       return
@@ -233,39 +238,51 @@ export default function ToRepaired() {
     setIsCompletingRepair(true)
     setRepairActionError('')
     try {
-      const updatedInventoryItem = await updateInventoryItem(inventoryItem.id, {
-        itemCode: inventoryItem.itemCode,
-        category: inventoryItem.category,
-        itemName: inventoryItem.itemName,
-        description: inventoryItem.description,
-        dateAcquired: inventoryItem.dateAcquired || '',
-        timeAcquired: inventoryItem.timeAcquired || '',
-        unitCost: Number(inventoryItem.unitCost),
-        acquisitionCost: Number(inventoryItem.acquisitionCost),
-        currentValue: inventoryItem.currentValue === null ? null : Number(inventoryItem.currentValue),
-        quantity: inventoryItem.quantity,
-        unitOfMeasure: inventoryItem.unitOfMeasure,
-        condition: 'Good',
-        reason: repairCompletionReason,
-      })
+      let completionTimestamp = new Date().toISOString()
+      if (repairCompletionItem.tagCode) {
+        await completeTaggedAssetRepair(repairCompletionItem.tagCode)
+      } else {
+        const updatedInventoryItem = await updateInventoryItem(inventoryItem.id, {
+          itemCode: inventoryItem.itemCode,
+          category: inventoryItem.category,
+          itemName: inventoryItem.itemName,
+          description: inventoryItem.description,
+          trackingMode: inventoryItem.trackingMode,
+          dateAcquired: inventoryItem.dateAcquired || '',
+          timeAcquired: inventoryItem.timeAcquired || '',
+          unitCost: Number(inventoryItem.unitCost),
+          acquisitionCost: Number(inventoryItem.acquisitionCost),
+          currentValue: inventoryItem.currentValue === null ? null : Number(inventoryItem.currentValue),
+          quantity: inventoryItem.quantity,
+          unitOfMeasure: inventoryItem.unitOfMeasure,
+          condition: 'Good',
+          reason: repairCompletionReason,
+        })
+        setInventoryItems((currentItems) => currentItems.map((item) => item.id === updatedInventoryItem.id ? updatedInventoryItem : item))
+        const completionRecords = updatedInventoryItem.changeHistory.filter((change) => change.reason === repairCompletionReason)
+        const latestCompletionRecord = [...completionRecords].sort(
+          (left, right) => repairHistoryTimestamp(left.changedAt) - repairHistoryTimestamp(right.changedAt),
+        )[completionRecords.length - 1]
+        completionTimestamp = latestCompletionRecord?.changedAt || completionTimestamp
+      }
 
-      setInventoryItems((currentItems) => currentItems.map((item) => item.id === updatedInventoryItem.id ? updatedInventoryItem : item))
-      setRepairItems((currentItems) => currentItems.filter((item) => item.code.toLowerCase() !== repairCompletionItem.code.toLowerCase()))
-      const completionRecords = updatedInventoryItem.changeHistory.filter((change) => change.reason === repairCompletionReason)
-      const latestCompletionRecord = [...completionRecords].sort(
-        (left, right) => repairHistoryTimestamp(left.changedAt) - repairHistoryTimestamp(right.changedAt),
-      )[completionRecords.length - 1]
+      setRepairItems((currentItems) => currentItems.filter((item) =>
+        item.code.toLowerCase() !== repairCompletionItem.code.toLowerCase()
+        || item.dateReported !== repairCompletionItem.dateReported,
+      ))
       const completedRepair: RepairQueueItem = {
         ...repairCompletionItem,
         repairStatus: 'Repaired / Complete',
         repairStatusTone: 'bg-emerald-50 text-emerald-700',
-        dateCompleted: formatRepairCompletionDate(latestCompletionRecord?.changedAt || new Date().toISOString()),
+        dateCompleted: formatRepairCompletionDate(completionTimestamp),
       }
       setRepairHistoryItems((currentItems) => [
         completedRepair,
         ...currentItems.filter((item) => !(item.code.toLowerCase() === completedRepair.code.toLowerCase() && item.dateReported === completedRepair.dateReported)),
       ])
-      setRepairActionMessage(`${repairCompletionItem.asset} is marked as repaired and is now listed as Good in Items Master Data.`)
+      setRepairActionMessage(repairCompletionItem.tagCode
+        ? `${repairCompletionItem.asset} (${repairCompletionItem.tagCode}) is repaired and returned to GSO Storage.`
+        : `${repairCompletionItem.asset} is marked as repaired and is now listed as Good in Items Master Data.`)
       setRepairCompletionItem(null)
     } catch (error) {
       setRepairActionError(error instanceof Error ? error.message : 'Unable to complete this repair. Please try again.')
@@ -827,7 +844,9 @@ export default function ToRepaired() {
               <div>
                 <h3 id="repair-completion-title" className="text-sm font-black text-slate-900">Complete Repair</h3>
                 <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  Mark <span className="font-bold text-slate-700">{repairCompletionItem.asset}</span> ({repairCompletionItem.code}) as repaired? Its condition in Items Master Data will be updated to Good.
+                  {repairCompletionItem.tagCode
+                    ? <>Mark <span className="font-bold text-slate-700">{repairCompletionItem.asset}</span> ({repairCompletionItem.tagCode}) as repaired and return this unit to GSO Storage?</>
+                    : <>Mark <span className="font-bold text-slate-700">{repairCompletionItem.asset}</span> ({repairCompletionItem.code}) as repaired? Its condition in Items Master Data will be updated to Good.</>}
                 </p>
               </div>
             </div>

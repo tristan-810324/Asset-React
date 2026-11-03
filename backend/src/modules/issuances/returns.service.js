@@ -180,6 +180,40 @@ async function createEmployeeReturn(input, user) {
   };
 }
 
+async function confirmScannedTagReturn(tagCodeValue, input, user) {
+  if (typeof tagCodeValue !== 'string' || !/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/i.test(tagCodeValue.trim())) {
+    throw httpError(400, 'I-scan ang unique barcode ng physical unit bago kumpirmahin ang return.');
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw httpError(400, 'Hindi valid ang item return confirmation.');
+  }
+  const condition = requiredText(input.condition, 'condition pagkatapos ng GSO inspection', 40);
+  if (!returnConditions.has(condition) || condition === 'Retired') {
+    throw httpError(400, 'Pumili ng valid na return condition.');
+  }
+  const reason = typeof input.reason === 'string' && input.reason.trim()
+    ? requiredText(input.reason, 'return notes', 1000)
+    : `GSO confirmed the item return in condition: ${condition}.`;
+  const token = crypto.randomBytes(32).toString('base64url');
+  return returnsRepository.confirmScannedTagReturn({
+    tagCode: tagCodeValue.trim().toUpperCase(),
+    condition,
+    reason,
+    tokenHash: hashToken(token),
+    requestedByUserId: user.id,
+  });
+}
+
+async function completeTaggedAssetRepair(tagCodeValue, user) {
+  if (typeof tagCodeValue !== 'string' || !/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/i.test(tagCodeValue.trim())) {
+    throw httpError(400, 'I-scan ang unique barcode ng physical unit bago markahang repaired.');
+  }
+  return returnsRepository.completeTaggedAssetRepair({
+    tagCode: tagCodeValue.trim().toUpperCase(),
+    changedByUserId: user.id,
+  });
+}
+
 async function lookupReturnApproval(tokenValue) {
   const token = validateToken(tokenValue);
   const request = await returnsRepository.lookupReturnApproval(hashToken(token));
@@ -214,4 +248,11 @@ async function expirePendingReturns() {
   return returnsRepository.expirePendingReturns();
 }
 
-module.exports = { createEmployeeReturn, lookupReturnApproval, decideReturnApproval, expirePendingReturns };
+module.exports = {
+  createEmployeeReturn,
+  confirmScannedTagReturn,
+  completeTaggedAssetRepair,
+  lookupReturnApproval,
+  decideReturnApproval,
+  expirePendingReturns,
+};

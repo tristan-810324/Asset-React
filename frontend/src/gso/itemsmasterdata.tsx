@@ -10,12 +10,16 @@ import {
   listInventoryCategories,
   listInventoryCategoryItemNames,
   listInventoryItems,
+  restockInventoryItem,
   renameInventoryCategory,
   updateInventoryItem,
   type InventoryCategory,
   type InventoryCategoryItemName,
   type InventoryChangeRecord,
+  type InventoryAssetTag,
   type InventoryItemRecord,
+  type InventoryReceiptRecord,
+  type InventoryTrackingMode,
 } from './inventoryApi'
 import { addGsoNotification } from './notificationStore'
 
@@ -24,6 +28,7 @@ type ItemHistoryEntry = {
   next: string
   changedAt: string
   by: string
+  actorLabel?: string
   note: string
   tone: string
 }
@@ -33,6 +38,11 @@ type InventoryItem = {
   code: string
   name: string
   description: string
+  trackingMode: InventoryTrackingMode
+  manufacturerSerialNumber: string | null
+  storageLocation: string
+  assetTags: InventoryAssetTag[]
+  receiptHistory: InventoryReceiptRecord[]
   initials: string
   category: string
   acquired: string
@@ -84,19 +94,38 @@ function categoryInitials(category: string) {
 
 const MAX_INDIVIDUAL_ITEMS_PER_SAVE = 500
 
-function inventoryItemCodes(category: string, quantity: number, inventoryItems: InventoryItem[]) {
-  if (!category || !Number.isInteger(quantity) || quantity < 1 || quantity > MAX_INDIVIDUAL_ITEMS_PER_SAVE) return []
+function inventoryItemCodeRange(category: string, quantity: number, inventoryItems: InventoryItem[]) {
+  if (!category || !Number.isInteger(quantity) || quantity < 1) return null
   const prefix = `AST-${categoryInitials(category)}-`
-  const codePattern = new RegExp(`^${prefix}(\\d+)$`, 'i')
+  const codePattern = new RegExp(`^${prefix}(\\d+)(?:\\s*[–-]\\s*${prefix}(\\d+))?$`, 'i')
   const highestNumber = inventoryItems.reduce((highest, item) => {
     const match = item.code.match(codePattern)
-    return match ? Math.max(highest, Number(match[1])) : highest
+    return match ? Math.max(highest, Number(match[2] || match[1])) : highest
   }, 0)
-  return Array.from({ length: quantity }, (_, index) => `${prefix}${String(highestNumber + index + 1).padStart(4, '0')}`)
+  const firstNumber = highestNumber + 1
+  const lastNumber = highestNumber + quantity
+  const formatCode = (number: number) => `${prefix}${String(number).padStart(4, '0')}`
+  const firstCode = formatCode(firstNumber)
+  const lastCode = formatCode(lastNumber)
+  return {
+    prefix,
+    firstNumber,
+    lastNumber,
+    firstCode,
+    lastCode,
+    display: quantity > 1 ? `${firstCode} – ${lastCode}` : firstCode,
+  }
+}
+
+function inventoryItemCodes(category: string, quantity: number, inventoryItems: InventoryItem[]) {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_INDIVIDUAL_ITEMS_PER_SAVE) return []
+  const range = inventoryItemCodeRange(category, quantity, inventoryItems)
+  if (!range) return []
+  return Array.from({ length: quantity }, (_, index) => `${range.prefix}${String(range.firstNumber + index).padStart(4, '0')}`)
 }
 
 function nextInventoryItemCode(category: string, inventoryItems: InventoryItem[]) {
-  return inventoryItemCodes(category, 1, inventoryItems)[0] || ''
+  return inventoryItemCodeRange(category, 1, inventoryItems)?.firstCode || ''
 }
 
 function calculateAcquisitionCost(quantity: string | number, unitCost: string | number) {
@@ -224,7 +253,8 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
       <td style="width:250px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong style="color:#0f172a;">${escapeHTML(item.name)}</strong><br>
         <span style="font-size:10pt;color:#475569;">${escapeHTML(item.code)}</span><br>
-        <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span>
+        <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span><br>
+        <span style="font-size:9pt;color:#1d4ed8;font-weight:bold;">${item.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}</span>
       </td>
       <td style="width:150px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong>${escapeHTML(item.acquired)}</strong><br>
@@ -344,7 +374,8 @@ function generateInventoryWord(data: InventoryItem[], selectedDate: string) {
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong style="color:#0f172a;">${escapeHTML(item.name)}</strong><br>
         <span style="font-size:9pt;color:#475569;">Code: ${escapeHTML(item.code)}</span><br>
-        <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span>
+        <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span><br>
+        <span style="font-size:9pt;color:#1d4ed8;font-weight:bold;">${item.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}</span>
       </td>
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;white-space:nowrap;">
         <strong>${escapeHTML(item.acquired)}</strong><br>
@@ -440,6 +471,7 @@ const changeFieldLabels: Record<string, string> = {
   quantity: 'Quantity',
   unitOfMeasure: 'Unit',
   condition: 'Condition',
+  trackingMode: 'Tracking Mode',
   employeeCode: 'Employee Code',
   firstName: 'First Name',
   lastName: 'Last Name',
@@ -457,7 +489,7 @@ function formatChangeValue(value: unknown) {
 function getChangeDetails(change: InventoryChangeRecord) {
   if (change.action === 'issued') {
     const condition = change.newValues.condition
-    return condition === undefined ? [] : [`Condition on issue: ${formatChangeValue(condition)}`]
+    return condition === undefined ? [] : [`Condition before issuance: ${formatChangeValue(condition)}`]
   }
   if (change.action === 'returned') {
     const condition = change.newValues.condition
@@ -485,7 +517,7 @@ function buildItemConditionHistory(changeHistory: InventoryChangeRecord[]): Item
     const employeeMatch = change.reason.match(/(?:Issued to|Returned by)\s+(.+?)\s+\(([^)]+)\)/)
     const employeeName = typeof change.newValues.employeeName === 'string'
       ? change.newValues.employeeName
-      : employeeMatch?.[1] || change.changedBy || 'Employee'
+      : employeeMatch?.[1] || 'Employee'
     const employeeCode = typeof change.newValues.employeeCode === 'string'
       ? change.newValues.employeeCode
       : employeeMatch?.[2]
@@ -496,13 +528,14 @@ function buildItemConditionHistory(changeHistory: InventoryChangeRecord[]): Item
     if ((change.action === 'issued' || change.action === 'returned') && typeof nextCondition === 'string' && nextCondition) {
       const previousCondition = change.action === 'returned'
         ? issuedConditionByEmployee.get(employeeIdentity) || 'Before return'
-        : 'At issuance'
+        : 'Condition before issuance'
 
       history.push({
         previous: previousCondition,
         next: nextCondition,
         changedAt: formatCreatedAt(change.changedAt),
-        by: change.changedBy || 'GSO Staff',
+        by: change.action === 'issued' ? change.changedBy || 'Not recorded' : change.changedBy || 'GSO Staff',
+        ...(change.action === 'issued' ? { actorLabel: 'Issued by GSO staff' } : {}),
         note: `${change.action === 'issued' ? 'Issued to' : 'Returned by'} ${employeeLabel}.`,
         tone: toneForCondition(nextCondition),
       })
@@ -549,6 +582,13 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
     code: record.itemCode,
     name: record.itemName,
     description: record.description,
+    trackingMode: record.trackingMode,
+    manufacturerSerialNumber: record.serialNumber
+      || record.assetTags?.find((tag) => tag.serialNumber)?.serialNumber
+      || null,
+    storageLocation: record.storageLocation || 'GSO Storage',
+    assetTags: record.assetTags || [],
+    receiptHistory: record.receiptHistory || [],
     initials: record.itemName.trim().slice(0, 2).toUpperCase() || 'IT',
     category: record.category,
     acquired: formatAcquiredDate(record.dateAcquired),
@@ -576,6 +616,12 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
     changeHistory,
     history: buildItemConditionHistory(changeHistory),
   }
+}
+
+function inventoryAvatarTone(index: number) {
+  return index % 2 === 0
+    ? 'border-[#d6b333] bg-[#17377f] text-white'
+    : 'border-[#17377f] bg-[#d6b333] text-[#17377f]'
 }
 
 export default function ItemsMasterData() {
@@ -609,11 +655,13 @@ export default function ItemsMasterData() {
   const [showItemEditModal, setShowItemEditModal] = useState(false)
   const [isUpdatingItem, setIsUpdatingItem] = useState(false)
   const [itemEditError, setItemEditError] = useState('')
+  const [bulkRestockItemId, setBulkRestockItemId] = useState('')
   const [editFormData, setEditFormData] = useState({
     itemCode: '',
     category: '',
     itemName: '',
     description: '',
+    trackingMode: 'individual' as InventoryTrackingMode,
     dateAcquired: '',
     timeAcquired: '',
     unitCost: '',
@@ -629,8 +677,8 @@ export default function ItemsMasterData() {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all')
   const [selectedItemNameFilter, setSelectedItemNameFilter] = useState('all')
-  const [selectedConditionFilter, setSelectedConditionFilter] = useState('all')
-  const [selectedStatusFilter, setSelectedStatusFilter] = useState('all')
+  const [selectedConditionStatusFilter, setSelectedConditionStatusFilter] = useState('all')
+  const [selectedTrackingModeFilter, setSelectedTrackingModeFilter] = useState<'all' | InventoryTrackingMode>('all')
   const [selectedInventoryDate, setSelectedInventoryDate] = useState('')
 
   // Add Item form state
@@ -639,6 +687,7 @@ export default function ItemsMasterData() {
     category: '',
     itemName: '',
     description: '',
+    trackingMode: 'individual' as InventoryTrackingMode,
     dateAcquired: '',
     timeAcquired: '',
     unitCost: '',
@@ -646,7 +695,6 @@ export default function ItemsMasterData() {
     quantity: '1',
     unitOfMeasure: 'piece',
     condition: '',
-    picture: null as File | null,
   })
   // Items list state
   const [items, setItems] = useState<InventoryItem[]>([])
@@ -702,10 +750,16 @@ export default function ItemsMasterData() {
     }
   }, [])
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
+    if (name === 'trackingMode' || name === 'category' || ['itemName', 'description', 'unitOfMeasure', 'condition'].includes(name)) {
+      setBulkRestockItemId('')
+    }
     setFormData((previous) => {
       const next = { ...previous, [name]: value }
+      if (name === 'trackingMode') {
+        next.trackingMode = value === 'quantity' ? 'quantity' : 'individual'
+      }
       if (name === 'category') {
         next.itemName = ''
         next.itemCode = nextInventoryItemCode(value, items)
@@ -723,18 +777,14 @@ export default function ItemsMasterData() {
     })
   }
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFormData((prev) => ({ ...prev, picture: e.target.files![0] }))
-    }
-  }
-
   const handleClearForm = (inventoryItems = items, categoryName = categories[0]?.name || '') => {
+    setBulkRestockItemId('')
     setFormData({
       itemCode: nextInventoryItemCode(categoryName, inventoryItems),
       category: categoryName,
       itemName: '',
       description: '',
+      trackingMode: 'individual',
       dateAcquired: '',
       timeAcquired: '',
       unitCost: '',
@@ -742,7 +792,6 @@ export default function ItemsMasterData() {
       quantity: '1',
       unitOfMeasure: 'piece',
       condition: '',
-      picture: null,
     })
   }
 
@@ -892,6 +941,7 @@ export default function ItemsMasterData() {
       category: selectedItem.category,
       itemName: selectedItem.name,
       description: selectedItem.description,
+      trackingMode: selectedItem.trackingMode,
       dateAcquired: selectedItem.dateAcquiredValue || '',
       timeAcquired: selectedItem.timeAcquiredValue || '',
       unitCost: String(selectedItem.unitCostValue ?? 0),
@@ -912,6 +962,16 @@ export default function ItemsMasterData() {
     const { name, value } = e.target
     setEditFormData((current) => {
       const next = { ...current, [name]: value }
+      if (name === 'category') {
+        const nextCategoryItemNames = categoryItemNameOptionsFor(value, categories, itemNameOptions)
+        const currentNameIsAvailable = nextCategoryItemNames.some(
+          (itemName) => itemName.name.toLocaleLowerCase() === current.itemName.toLocaleLowerCase(),
+        )
+        next.itemName = currentNameIsAvailable ? current.itemName : ''
+      }
+      if (name === 'trackingMode') {
+        next.trackingMode = value === 'quantity' ? 'quantity' : 'individual'
+      }
       if (name === 'unitCost' || name === 'quantity') {
         const nextUnitCost = name === 'unitCost' ? value : current.unitCost
         const nextQuantity = name === 'quantity' ? value : current.quantity
@@ -935,10 +995,13 @@ export default function ItemsMasterData() {
     e.preventDefault()
     if (!selectedItem?.id) return
     if (!editFormData.itemCode.trim() || !editFormData.itemName.trim() || !editFormData.description.trim() || !editFormData.reason.trim()) {
-      setItemEditError('Enter the item code, item name, item description, and reason for the change.')
+      setItemEditError('Choose an item name, enter an item description, and provide a reason for the change.')
       return
     }
-
+    if (!editItemNameIsCatalogued && !editItemNameIsCurrentLegacyValue) {
+      setItemEditError('Choose an item name saved under the selected category.')
+      return
+    }
     const unitCost = editFormData.unitCost ? Number(editFormData.unitCost) : 0
     const quantity = editFormData.quantity ? Number(editFormData.quantity) : 1
     const acquisitionCost = editFormData.acquisitionCost
@@ -964,6 +1027,7 @@ export default function ItemsMasterData() {
         category: editFormData.category,
         itemName: editFormData.itemName.trim(),
         description: editFormData.description.trim(),
+        trackingMode: editFormData.trackingMode,
         dateAcquired: editFormData.dateAcquired,
         timeAcquired: editFormData.timeAcquired,
         unitCost,
@@ -991,37 +1055,75 @@ export default function ItemsMasterData() {
       showActionAlert('Enter the item code, item name, and item description.', 'Unable to save item')
       return
     }
-
-    const unitCost = formData.unitCost ? Number(formData.unitCost) : 0
-    const quantity = formData.quantity ? Number(formData.quantity) : 1
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_INDIVIDUAL_ITEMS_PER_SAVE) {
-      showActionAlert(`Enter a whole number from 1 to ${MAX_INDIVIDUAL_ITEMS_PER_SAVE} for the number of individual items.`, 'Invalid quantity')
+    if (!formData.condition) {
+      showActionAlert('Select the condition for every unit in this batch or bulk stock record.', 'Condition required')
       return
     }
 
+    const unitCost = formData.unitCost ? Number(formData.unitCost) : 0
+    const quantity = formData.quantity ? Number(formData.quantity) : 1
+    const isIndividualTracking = formData.trackingMode === 'individual'
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      showActionAlert('Enter a valid non-negative cost per unit.', 'Invalid cost')
+      return
+    }
+    const maximumQuantity = isIndividualTracking ? MAX_INDIVIDUAL_ITEMS_PER_SAVE : 2147483647
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > maximumQuantity) {
+      showActionAlert(`Enter a whole number from 1 to ${maximumQuantity.toLocaleString()} for the ${isIndividualTracking ? 'asset batch' : 'stock quantity'}.`, 'Invalid quantity')
+      return
+    }
     setIsSavingItem(true)
     try {
-      const itemCodes = inventoryItemCodes(formData.category, quantity, items)
-      if (itemCodes.length !== quantity) {
+      if (formRestockTarget?.id && !isIndividualTracking) {
+        const updatedRecord = await restockInventoryItem(formRestockTarget.id, {
+          quantity,
+          unitCost,
+          dateAcquired: formData.dateAcquired,
+          timeAcquired: formData.timeAcquired,
+          condition: formData.condition,
+          receiptReference: '',
+        })
+        const updatedItem = mapInventoryRecord(updatedRecord)
+        const nextItems = items.map((item) => item.id === updatedItem.id ? updatedItem : item)
+        setItems(nextItems)
+        setSelectedItem((current) => current?.id === updatedItem.id ? updatedItem : current)
+        setInventoryLoadError('')
+        handleClearForm(nextItems, formData.category)
+        closeAddItemModal()
+        notifyAction('Bulk stock restocked', `${quantity} ${updatedItem.unit} were added to ${updatedItem.code}. The delivery was saved in receipt history.`)
+        return
+      }
+
+      const bulkCodeRange = isIndividualTracking
+        ? null
+        : inventoryItemCodeRange(formData.category, quantity, items)
+      const codeCount = isIndividualTracking ? quantity : 1
+      const itemCodes = isIndividualTracking
+        ? inventoryItemCodes(formData.category, quantity, items)
+        : bulkCodeRange ? [bulkCodeRange.display] : []
+      if (itemCodes.length !== codeCount) {
         throw new Error('Unable to generate item codes. Please check the quantity and try again.')
       }
-      const individualItems = itemCodes.map((itemCode) => ({
+      const newInventoryRecords = itemCodes.map((itemCode) => ({
         itemCode,
         category: formData.category,
         itemName: formData.itemName.trim(),
         description: formData.description.trim(),
+        trackingMode: formData.trackingMode,
+        storageLocation: 'GSO Storage',
+        receiptReference: '',
         dateAcquired: formData.dateAcquired,
         timeAcquired: formData.timeAcquired,
         unitCost,
-        acquisitionCost: unitCost,
+        acquisitionCost: isIndividualTracking ? unitCost : calculateAcquisitionCost(quantity, unitCost),
         currentValue: null,
-        quantity: 1,
+        quantity: isIndividualTracking ? 1 : quantity,
         unitOfMeasure: formData.unitOfMeasure.trim() || 'piece',
         condition: formData.condition || 'New',
       }))
-      const savedRecords = quantity === 1
-        ? [await createInventoryItem(individualItems[0])]
-        : await createInventoryItems(individualItems)
+      const savedRecords = isIndividualTracking && quantity > 1
+        ? await createInventoryItems(newInventoryRecords)
+        : [await createInventoryItem(newInventoryRecords[0])]
       const newItems = savedRecords.map(mapInventoryRecord)
       const newItemCodes = new Set(newItems.map((item) => item.code.toLowerCase()))
       const nextItems = [...newItems, ...items.filter((item) => !newItemCodes.has(item.code.toLowerCase()))]
@@ -1030,8 +1132,12 @@ export default function ItemsMasterData() {
       handleClearForm(nextItems, formData.category)
       closeAddItemModal()
       notifyAction(
-        quantity === 1 ? 'Inventory item added' : 'Inventory items added',
-        `${quantity} ${quantity === 1 ? 'item was' : 'items were'} added to inventory successfully.`,
+        isIndividualTracking
+          ? (quantity === 1 ? 'Asset added' : 'Assets added')
+          : 'Bulk stock added',
+        isIndividualTracking
+          ? `${quantity} ${quantity === 1 ? 'individual asset was' : 'individual assets were'} added. Barcode labels are available after issuance approval.`
+          : `${quantity} ${formData.unitOfMeasure.trim() || 'piece'} of ${formData.itemName.trim()} were added as quantity-tracked stock (${bulkCodeRange?.display || itemCodes[0]}).`,
       )
     } catch (error) {
       showActionAlert(error instanceof Error ? error.message : 'Unable to save the item. Please try again.', 'Unable to save item')
@@ -1064,26 +1170,65 @@ export default function ItemsMasterData() {
     const matchesCategory = selectedCategoryFilter === 'all' || item.category === selectedCategoryFilter
     const matchesItemName = selectedItemNameFilter === 'all'
       || item.name.toLocaleLowerCase() === selectedItemNameFilter.toLocaleLowerCase()
-    const matchesCondition = selectedConditionFilter === 'all' || item.condition === selectedConditionFilter
-    const matchesStatus = selectedStatusFilter === 'all' || item.status === selectedStatusFilter
+    const [conditionStatusType, conditionStatusValue] = selectedConditionStatusFilter.split(':', 2)
+    const matchesCondition = conditionStatusType !== 'condition' || item.condition === conditionStatusValue
+    const matchesStatus = conditionStatusType !== 'status' || item.status === conditionStatusValue
+    const matchesTrackingMode = selectedTrackingModeFilter === 'all' || item.trackingMode === selectedTrackingModeFilter
 
-    return matchesSearch && matchesCategory && matchesItemName && matchesCondition && matchesStatus
+    return matchesSearch && matchesCategory && matchesItemName && matchesCondition && matchesStatus && matchesTrackingMode
   })
   const fullInventoryItems = selectedInventoryDate
     ? filteredItems.filter((item) => item.dateAcquiredValue?.slice(0, 10) === selectedInventoryDate)
     : filteredItems
   const displayedItems = fullInventoryItems
+  const selectedItemAvatarIndex = selectedItem
+    ? displayedItems.findIndex((item) => selectedItem.id ? item.id === selectedItem.id : item.code === selectedItem.code)
+    : -1
+  const fallbackSelectedItemAvatarIndex = selectedItem
+    ? items.findIndex((item) => selectedItem.id ? item.id === selectedItem.id : item.code === selectedItem.code)
+    : -1
+  const selectedItemAvatarClass = inventoryAvatarTone(
+    selectedItemAvatarIndex >= 0 ? selectedItemAvatarIndex : Math.max(fallbackSelectedItemAvatarIndex, 0),
+  )
   const formCategoryItemNames = categoryItemNameOptionsFor(formData.category, categories, itemNameOptions)
-  const requestedIndividualItemCount = Number(formData.quantity)
-  const formItemCodes = inventoryItemCodes(formData.category, requestedIndividualItemCount, items)
-  const itemCodePreview = formItemCodes.length > 1
-    ? `${formItemCodes[0]} – ${formItemCodes[formItemCodes.length - 1]}`
-    : formData.itemCode
+  const editCategoryItemNames = categoryItemNameOptionsFor(editFormData.category, categories, itemNameOptions)
+  const editItemNameIsCatalogued = editCategoryItemNames.some(
+    (itemName) => itemName.name.toLocaleLowerCase() === editFormData.itemName.toLocaleLowerCase(),
+  )
+  const editItemNameIsCurrentLegacyValue = Boolean(
+    selectedItem
+      && selectedItem.category === editFormData.category
+      && selectedItem.name.toLocaleLowerCase() === editFormData.itemName.toLocaleLowerCase(),
+  )
+  const requestedItemCount = Number(formData.quantity)
+  const formRestockCandidates = formData.trackingMode === 'quantity'
+    && formData.category && formData.itemName.trim() && formData.description.trim() && formData.condition
+    ? items.filter((item) => item.id
+      && item.trackingMode === 'quantity'
+      && item.category.toLocaleLowerCase() === formData.category.toLocaleLowerCase()
+      && item.name.toLocaleLowerCase() === formData.itemName.trim().toLocaleLowerCase()
+      && item.description.toLocaleLowerCase() === formData.description.trim().toLocaleLowerCase()
+      && item.unit.toLocaleLowerCase() === (formData.unitOfMeasure.trim() || 'piece').toLocaleLowerCase()
+      && item.condition === formData.condition)
+    : []
+  const formRestockTarget = formRestockCandidates.find((item) => item.id === bulkRestockItemId) || null
+  const formItemCodeCount = formData.trackingMode === 'individual' ? requestedItemCount : 1
+  const formItemCodes = inventoryItemCodes(formData.category, formItemCodeCount, items)
+  const formBulkCodeRange = formData.trackingMode === 'quantity'
+    ? inventoryItemCodeRange(formData.category, requestedItemCount, items)
+    : null
+  const itemCodePreview = formRestockTarget?.code
+    || (formData.trackingMode === 'quantity'
+      ? formBulkCodeRange?.display || formItemCodes[0] || formData.itemCode
+      : formItemCodes.length > 1
+        ? `${formItemCodes[0]} – ${formItemCodes[formItemCodes.length - 1]}`
+        : formItemCodes[0] || formData.itemCode)
+  const formQuantity = Number.isInteger(requestedItemCount) && requestedItemCount > 0 ? requestedItemCount : 0
+  const formReceiptTotal = calculateAcquisitionCost(formQuantity, formData.unitCost)
   const selectedFormCategoryId = categories.find((category) => category.name === formData.category)?.id || ''
   const categoryManagedItemNames = itemNameOptions.filter((itemName) => itemName.categoryId === itemNameCategoryId)
   const managedItemNames = categoryManagedItemNames.filter((itemName) => itemName.name.toLowerCase().includes(itemNameSearch.trim().toLowerCase()))
   const managedItemNameCategory = categories.find((category) => category.id === itemNameCategoryId)
-
   const handleOpenItemNameManager = () => {
     setItemNameCategoryId(selectedFormCategoryId)
     setNewItemName('')
@@ -1092,6 +1237,16 @@ export default function ItemsMasterData() {
     setMasterDataManagerTab('item_names')
     setShowMasterDataModal(true)
   }
+  const handleOpenEditItemNameManager = () => {
+    setItemNameCategoryId(categories.find((category) => category.name === editFormData.category)?.id || '')
+    setNewItemName('')
+    setItemNameSearch('')
+    setItemNameManagerError('')
+    setMasterDataManagerTab('item_names')
+    setShowMasterDataModal(true)
+  }
+  const editFieldLabelClass = 'mb-2 block text-sm font-extrabold text-slate-900'
+  const editControlClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 
   return (
     <GsoPageFrame
@@ -1129,7 +1284,7 @@ export default function ItemsMasterData() {
       {/* TAB 1: ADD ITEM FORM SECTION */}
       {showAddItemModal && (
         <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6"
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5"
           onClick={closeAddItemModal}
         >
         <section
@@ -1137,55 +1292,43 @@ export default function ItemsMasterData() {
           aria-modal="true"
           aria-labelledby="add-item-modal-title"
           onClick={(event) => event.stopPropagation()}
-          className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-blue-100 bg-white p-5 shadow-2xl shadow-slate-950/20 sm:p-6"
+          className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
         >
-          <div className="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-            <div>
-              <h2 id="add-item-modal-title" className="text-base font-black text-slate-900">Add an inventory item</h2>
-              <p className="mt-0.5 text-xs font-medium text-slate-500">
-                Record catalog details, acquisition, condition, and quantity.
-              </p>
+          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+            <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 border-[#d6b333] bg-[#17377f] text-sm font-black text-white shadow-sm">
+                AI
+              </span>
+              <div className="min-w-0">
+                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Inventory management</p>
+                <h2 id="add-item-modal-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Add an inventory item</h2>
+                <p className="mt-1 text-xs font-semibold text-slate-500">Add item details, select how it is tracked, and record its acquisition.</p>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-              <button
-                type="button"
-                onClick={handleOpenItemNameManager}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50"
-              >
-                <span>Manage Categories &amp; Items</span>
-              </button>
-              <button
-                type="button"
-                onClick={closeAddItemModal}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50"
-              >
-                Close
-              </button>
+            <button
+              type="button"
+              onClick={closeAddItemModal}
+              className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+            >
+              Close
+            </button>
+          </header>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6">
+          <div className="mx-auto max-w-4xl space-y-4">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <div className="mb-4 border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900">Item details</h3>
+              <p className="mt-1 text-sm text-slate-600">Choose a category and a saved item name. The item code is generated automatically.</p>
             </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item code</span>
-              <input
-                type="text"
-                name="itemCode"
-                value={itemCodePreview}
-                readOnly
-                aria-readonly="true"
-                placeholder="Choose a category to generate a code"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none"
-              />
-              <span className="mt-1 block text-[0.6rem] text-slate-400">Each individual item gets a unique sequential code.</span>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Category</span>
+              <span className={editFieldLabelClass}>Category</span>
               <select
                 name="category"
                 value={formData.category}
                 onChange={handleInputChange}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               >
                 {categories.map((category) => (
                   <option key={category.id || category.name} value={category.name}>
@@ -1196,26 +1339,47 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item name</span>
+              <span className={editFieldLabelClass}>Item name <span className="text-rose-600">*</span></span>
               <select
                 name="itemName"
                 value={formData.itemName}
                 onChange={handleInputChange}
                 required
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               >
                 <option value="" disabled>
                   {formCategoryItemNames.length > 0 ? 'Select an item name' : 'No item names yet — click Add Item Name'}
                 </option>
                 {formCategoryItemNames.map((itemName) => <option key={itemName.id} value={itemName.name}>{itemName.name}</option>)}
               </select>
-              <span className="mt-1 block text-[0.6rem] text-slate-400">
-                If the item is not listed, click Add Item Name to add it to this category.
+              <span className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                <span>If the name is missing, add it to this category.</span>
+                <button type="button" onClick={handleOpenItemNameManager} className="font-bold text-blue-800 underline decoration-blue-300 underline-offset-2 hover:text-blue-900">Manage names</button>
               </span>
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item description</span>
+              <span className={editFieldLabelClass}>Generated item code(s) <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-[0.65rem] font-bold text-slate-700">Read-only</span></span>
+              <input
+                type="text"
+                name="itemCode"
+                value={itemCodePreview}
+                readOnly
+                aria-readonly="true"
+                placeholder="Choose a category to generate a code"
+                className={`${editControlClass} border-slate-300 bg-slate-100 font-semibold text-slate-700`}
+              />
+              <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                {formData.trackingMode === 'individual'
+                  ? 'Each physical asset receives its own item code.'
+                  : formRestockTarget
+                    ? `Restocking keeps code ${formRestockTarget.code}.`
+                    : 'This item-code range is reserved for the bulk quantity.'}
+              </span>
+            </label>
+
+            <label className="block sm:col-span-2">
+              <span className={editFieldLabelClass}>Item description <span className="text-rose-600">*</span></span>
               <input
                 type="text"
                 name="description"
@@ -1224,34 +1388,69 @@ export default function ItemsMasterData() {
                 required
                 maxLength={500}
                 placeholder="Describe the item"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               />
             </label>
+            </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+              <div className="mb-4 border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-extrabold text-slate-900">Tracking &amp; acquisition</h3>
+                <p className="mt-1 text-sm text-slate-600">Choose how this item is tracked and enter its acquisition details.</p>
+              </div>
+              <fieldset>
+              <legend className={editFieldLabelClass}>Tracking mode</legend>
+              <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Select how this inventory will be counted and issued.</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {([
+                  { value: 'individual' as const, title: 'Per-unit asset', description: 'Equipment tracked separately; its barcode label becomes available after issuance approval.' },
+                  { value: 'quantity' as const, title: 'Bulk quantity', description: 'Interchangeable supplies tracked together by quantity, without a label while in storage.' },
+                ]).map((option) => (
+                  <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${formData.trackingMode === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                    <input
+                      type="radio"
+                      name="trackingMode"
+                      value={option.value}
+                      checked={formData.trackingMode === option.value}
+                      onChange={handleInputChange}
+                      className="mt-0.5 h-4 w-4 accent-blue-600"
+                    />
+                    <span>
+                      <span className="block text-sm font-extrabold text-slate-900">{option.title}</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-slate-600">{option.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              </fieldset>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Date of acquisition</span>
+              <span className={editFieldLabelClass}>Date of acquisition</span>
               <input
                 type="date"
                 name="dateAcquired"
                 value={formData.dateAcquired}
                 onChange={handleInputChange}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               />
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Time of acquisition</span>
+              <span className={editFieldLabelClass}>Time of acquisition</span>
               <input
                 type="time"
                 name="timeAcquired"
                 value={formData.timeAcquired}
                 onChange={handleInputChange}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               />
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Cost per unit</span>
+              <span className={editFieldLabelClass}>Cost per unit</span>
               <input
                 type="number"
                 min="0"
@@ -1260,89 +1459,147 @@ export default function ItemsMasterData() {
                 value={formData.unitCost}
                 onChange={handleInputChange}
                 placeholder="0.00"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               />
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Number of individual items</span>
+              <span className={editFieldLabelClass}>{formData.trackingMode === 'individual' ? 'Number of physical assets' : 'Stock quantity'}</span>
               <input
                 type="number"
                 min="1"
-                max={MAX_INDIVIDUAL_ITEMS_PER_SAVE}
+                max={formData.trackingMode === 'individual' ? MAX_INDIVIDUAL_ITEMS_PER_SAVE : 2147483647}
                 step="1"
                 name="quantity"
                 value={formData.quantity}
                 onChange={handleInputChange}
                 placeholder="Enter number of items"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               />
-              <span className="mt-1 block text-[0.6rem] text-slate-400">Each item will be saved as a separate row with quantity 1.</span>
+              <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                {formData.trackingMode === 'individual'
+                  ? 'Each unit is saved as its own record. Its barcode label is prepared after issuance approval.'
+                  : 'The quantity stays together under one item code. No stock label is printed while it is in storage.'}
+              </span>
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition cost </span>
+              <span className={editFieldLabelClass}>{formRestockTarget ? 'Delivery total cost' : 'Total acquisition cost'} <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-[0.65rem] font-bold text-slate-700">Calculated</span></span>
               <input
                 type="number"
                 min="0"
                 step="0.01"
                 name="acquisitionCost"
-                value={formData.acquisitionCost}
+                value={formRestockTarget ? formReceiptTotal.toFixed(2) : formData.acquisitionCost}
                 onChange={handleInputChange}
                 readOnly
                 aria-readonly="true"
                 placeholder="Calculated from quantity and unit cost"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none"
+                className={`${editControlClass} border-slate-300 bg-slate-100 font-semibold text-slate-700`}
               />
+              <span className="mt-2 block text-xs text-slate-600">Calculated from quantity and unit cost.</span>
             </label>
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Unit of measure</span>
+              <span className={editFieldLabelClass}>Unit of measure</span>
               <select
                 name="unitOfMeasure"
                 value={formData.unitOfMeasure}
                 onChange={handleInputChange}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                disabled={Boolean(formRestockTarget)}
+                className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
               >
                 {unitOfMeasureOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
               </select>
             </label>
+            </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <div className="mb-4 border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900">Stock &amp; condition</h3>
+              <p className="mt-1 text-sm text-slate-600">Set the initial condition and choose an existing bulk item to restock when applicable.</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
 
             <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Condition</span>
+              <span className={editFieldLabelClass}>Condition</span>
               <select
                 name="condition"
                 value={formData.condition}
                 onChange={handleInputChange}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                className={editControlClass}
               >
-                <option value="" disabled>
-                  Select condition
-                </option>
-                {addItemConditionOptions.map((condition) => (
-                  <option key={condition} value={condition}>
-                    {condition}
-                  </option>
-                ))}
+                <option value="" disabled>Select condition</option>
+                {addItemConditionOptions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
               </select>
+              <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                {formData.trackingMode === 'individual'
+                  ? 'All units in this batch start with the same condition. Add items separately if conditions differ.'
+                  : 'Bulk stock is kept in one condition group; create another stock record if its condition differs.'}
+              </span>
             </label>
 
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Picture (optional)</span>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleFileChange}
-                className="block h-10 w-full rounded-lg border border-slate-200 bg-white text-[0.65rem] text-slate-600 file:mr-3 file:h-full file:border-0 file:bg-slate-50 file:px-3 file:text-[0.65rem] file:font-bold"
-              />
-            </label>
+            {formData.trackingMode === 'quantity' && formRestockCandidates.length > 0 && (
+              <label className="block sm:col-span-2">
+                <span className={editFieldLabelClass}>Bulk SKU / restock existing item</span>
+                <select
+                  value={bulkRestockItemId}
+                  onChange={(event) => setBulkRestockItemId(event.target.value)}
+                  className={editControlClass}
+                >
+                  <option value="">Create a new bulk SKU</option>
+                  {formRestockCandidates.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.code} · {item.quantity} {item.unit} in stock · {item.storageLocation}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                  Choose an existing SKU to add this delivery to its stock and receipt history. Condition and unit must match.
+                </span>
+              </label>
+            )}
+
+          </div>
+            </section>
+
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <div className="mb-4 border-b border-slate-100 pb-3">
+              <h3 className="text-sm font-extrabold text-slate-900">Review before saving</h3>
+              <p className="mt-1 text-sm text-slate-600">Review the quantity and total acquisition cost.</p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border-2 border-[#d6b333] bg-[#17377f] text-xs font-black text-white shadow-sm">
+                <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m5 12 4 4L19 6" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-right">
+                    <p className="text-xs font-extrabold uppercase tracking-wide text-slate-600">{formRestockTarget ? 'Delivery total' : 'Acquisition total'}</p>
+                    <p className="mt-1 text-base font-black text-blue-800">{formatMoney(formReceiptTotal)}</p>
+                  </div>
+                </div>
+                <p className="mt-2 text-sm font-medium leading-relaxed text-slate-700">
+                  {formData.trackingMode === 'individual'
+                    ? `Will create ${formQuantity} individual asset record${formQuantity === 1 ? '' : 's'}${formItemCodes.length > 1 ? ` (${formItemCodes[0]} – ${formItemCodes[formItemCodes.length - 1]})` : ''}. Barcode labels become available after issuance approval.`
+                    : formRestockTarget
+                      ? `Will add ${formQuantity} ${formRestockTarget.unit} to ${formRestockTarget.code}; stock will become ${Number(formRestockTarget.quantityValue || 0) + formQuantity} ${formRestockTarget.unit}. No stock label is printed while the item is in storage.`
+                      : `Will create one bulk stock record for ${formQuantity} ${formData.unitOfMeasure || 'piece'} (${formBulkCodeRange?.display || formData.itemCode}). No stock label is printed while the item is in storage.`}
+                </p>
+              </div>
+            </div>
+          </section>
+          </div>
           </div>
 
-          <div className="mt-5 flex justify-end gap-2.5">
+          <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
             <button
               type="button"
               onClick={() => handleClearForm()}
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100"
             >
               Clear form
             </button>
@@ -1350,7 +1607,7 @@ export default function ItemsMasterData() {
               type="button"
               onClick={handleSaveItem}
               disabled={isSavingItem}
-              className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-blue-700 shadow-sm shadow-blue-600/20 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSavingItem ? 'Saving...' : 'Save item'}
             </button>
@@ -1360,8 +1617,8 @@ export default function ItemsMasterData() {
       )}
 
       {showMasterDataModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
-          <section role="dialog" aria-modal="true" aria-labelledby="master-data-manager-title" className="flex max-h-[94vh] min-h-[78vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-blue-100 bg-white shadow-2xl shadow-slate-950/30">
+        <div className="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="master-data-manager-title" className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30">
             <header className="flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-7">
               <div>
                 <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Master data setup</p>
@@ -1403,25 +1660,29 @@ export default function ItemsMasterData() {
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-7">
+            <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/50 p-4 sm:p-7">
               {masterDataManagerTab === 'item_names' ? (
-                <div role="tabpanel" className="min-h-full">
-                  <p className="text-xs leading-relaxed text-slate-500">Add specific item names and link them to a category. Saved names appear in the Add Inventory Item dropdown.</p>
+                <div role="tabpanel" className="mx-auto min-h-full max-w-4xl space-y-5">
+                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Add an item name</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">Add specific item names and link them to a category. Saved names appear in the Add Inventory Item dropdown.</p>
+                  </div>
                   <form onSubmit={handleAddItemName} className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)_auto] md:items-end">
                     <label className="block">
-                      <span className="mb-1.5 block text-[0.65rem] font-bold text-slate-600">Category</span>
+                      <span className={editFieldLabelClass}>Category</span>
                       <select
                         value={itemNameCategoryId}
                         onChange={(event) => { setItemNameCategoryId(event.target.value); setItemNameSearch('') }}
                         required
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        className={editControlClass}
                       >
                         <option value="" disabled>Select a category</option>
                         {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                       </select>
                     </label>
                     <label className="block">
-                      <span className="mb-1.5 block text-[0.65rem] font-bold text-slate-600">New item name</span>
+                      <span className={editFieldLabelClass}>New item name</span>
                       <input
                         type="text"
                         required
@@ -1429,24 +1690,26 @@ export default function ItemsMasterData() {
                         value={newItemName}
                         onChange={(event) => setNewItemName(event.target.value)}
                         placeholder="e.g. Mouse, Keyboard, or Laptop"
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        className={editControlClass}
                       />
                     </label>
                     <button
                       type="submit"
                       disabled={isSavingItemName || !itemNameCategoryId}
-                      className="h-11 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="h-12 rounded-xl bg-blue-600 px-5 text-sm font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isSavingItemName ? 'Saving...' : 'Add Item Name'}
                     </button>
                   </form>
 
                   {itemNameManagerError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{itemNameManagerError}</p>}
+                  </section>
 
-                  <div className="mt-6 flex flex-col justify-between gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-end">
+                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-end">
                     <div>
-                      <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-600">Saved item names</h3>
-                      <p className="mt-1 text-xs text-slate-500">
+                      <h3 className="text-sm font-extrabold text-slate-900">Saved item names</h3>
+                      <p className="mt-1.5 text-sm text-slate-600">
                         {managedItemNameCategory ? `${managedItemNameCategory.name} · ${categoryManagedItemNames.length} name(s)` : 'Choose a category to view its names.'}
                       </p>
                     </div>
@@ -1458,23 +1721,23 @@ export default function ItemsMasterData() {
                         onChange={(event) => setItemNameSearch(event.target.value)}
                         placeholder="Search item names..."
                         aria-label="Search item names"
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        className={editControlClass}
                       />
                     </label>
                   </div>
 
-                  <div className="mt-3 max-h-[52vh] min-h-56 space-y-2 overflow-y-auto rounded-2xl bg-slate-50/80 p-2.5 pr-3">
+                  <div className="mt-4 max-h-[52vh] min-h-56 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-3 pr-3.5">
                     {categoryManagedItemNames.length === 0 ? (
-                      <p className="grid min-h-44 place-items-center rounded-xl border border-dashed border-slate-200 bg-white px-5 text-center text-xs font-medium text-slate-500">
+                      <p className="grid min-h-44 place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-white px-5 text-center text-sm font-medium text-slate-600">
                         No saved names for this category yet. Add Mouse, Keyboard, Laptop, or another item above.
                       </p>
                     ) : managedItemNames.length === 0 ? (
-                      <p className="grid min-h-44 place-items-center rounded-xl border border-dashed border-slate-200 bg-white px-5 text-center text-xs font-medium text-slate-500">
+                      <p className="grid min-h-44 place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-white px-5 text-center text-sm font-medium text-slate-600">
                         No item names match “{itemNameSearch}”. Try a different search.
                       </p>
                     ) : managedItemNames.map((itemName) => (
-                      <div key={itemName.id} className="flex min-h-16 flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm shadow-slate-900/2">
-                        <span className="min-w-0 text-sm font-bold text-slate-700">{itemName.name}</span>
+                      <div key={itemName.id} className="flex min-h-18 flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm shadow-slate-900/5 transition hover:border-blue-200">
+                        <span className="min-w-0 text-base font-bold text-slate-800">{itemName.name}</span>
                         <div className="flex shrink-0 gap-2">
                           <button
                             type="button"
@@ -1485,7 +1748,7 @@ export default function ItemsMasterData() {
                               }
                               setShowMasterDataModal(false)
                             }}
-                            className="rounded-lg border border-blue-100 px-3 py-2 text-[0.68rem] font-bold text-blue-700 transition hover:bg-blue-50"
+                            className="rounded-xl border border-blue-200 bg-white px-3.5 py-2.5 text-xs font-bold text-blue-800 transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
                           >
                             Use name
                           </button>
@@ -1493,7 +1756,7 @@ export default function ItemsMasterData() {
                             type="button"
                             disabled={Boolean(deletingItemNameId)}
                             onClick={() => void handleDeleteItemName(itemName.id)}
-                            className="rounded-lg border border-rose-100 px-3 py-2 text-[0.68rem] font-bold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="rounded-xl border border-rose-200 bg-white px-3.5 py-2.5 text-xs font-bold text-rose-700 transition hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {deletingItemNameId === itemName.id ? 'Removing...' : 'Remove'}
                           </button>
@@ -1501,74 +1764,80 @@ export default function ItemsMasterData() {
                       </div>
                     ))}
                   </div>
+                  </section>
                 </div>
               ) : (
-                <div role="tabpanel">
-                  <p className="text-xs leading-relaxed text-slate-500">Add categories, rename them with a reason, or remove unused categories.</p>
+                <div role="tabpanel" className="mx-auto max-w-4xl space-y-5">
+                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Add a category</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">Add categories, rename them with a reason, or remove unused categories.</p>
+                  </div>
                   <form onSubmit={handleAddCategory} className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                     <label className="block">
-                      <span className="mb-1.5 block text-[0.65rem] font-bold text-slate-600">Category name</span>
+                      <span className={editFieldLabelClass}>Category name</span>
                       <input
                         type="text"
                         required
                         value={newCategoryName}
                         onChange={(e) => setNewCategoryName(e.target.value)}
                         placeholder="e.g. Sports Equipment"
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        className={editControlClass}
                       />
                     </label>
                     <button
                       type="submit"
                       disabled={isSavingCategory}
-                      className="h-11 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="h-12 rounded-xl bg-blue-600 px-5 text-sm font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isSavingCategory ? 'Saving...' : 'Add Category'}
                     </button>
                   </form>
 
                   {categoryManagerError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{categoryManagerError}</p>}
+                  </section>
 
-                  <div className="mt-6 border-t border-slate-100 pt-5">
-                    <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-600">Existing categories · {categories.length}</h3>
-                    <div className="mt-3 max-h-[54vh] space-y-2 overflow-y-auto rounded-2xl bg-slate-50/80 p-2.5 pr-3">
+                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                    <h3 className="border-b border-slate-100 pb-4 text-sm font-extrabold text-slate-900">Existing categories · {categories.length}</h3>
+                    <div className="mt-4 max-h-[54vh] space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-3 pr-3.5">
                       {categories.map((category) => (
-                        <div key={category.id || category.name} className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-900/2">
+                        <div key={category.id || category.name} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-900/5 transition hover:border-blue-200">
                           {editingCategoryId === category.id && Boolean(category.id) ? (
                             <form onSubmit={(e) => handleRenameCategory(e, category)} className="space-y-3">
                               <label className="block">
-                                <span className="mb-1.5 block text-[0.62rem] font-bold text-slate-500">Updated category name</span>
+                                <span className={editFieldLabelClass}>Updated category name</span>
                                 <input
                                   type="text"
                                   required
                                   maxLength={120}
                                   value={editingCategoryName}
                                   onChange={(e) => setEditingCategoryName(e.target.value)}
-                                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                                  className={editControlClass}
                                 />
                               </label>
                               <label className="block">
-                                <span className="mb-1.5 block text-[0.62rem] font-bold text-slate-500">Reason for renaming</span>
+                                <span className={editFieldLabelClass}>Reason for renaming</span>
                                 <textarea
                                   required
                                   maxLength={1000}
                                   value={editingCategoryReason}
                                   onChange={(e) => setEditingCategoryReason(e.target.value)}
                                   placeholder="Why does this category name need to change?"
-                                  className="min-h-16 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                                  className="min-h-28 w-full rounded-xl border-2 border-slate-300 bg-white p-4 text-base text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
                                 />
                               </label>
                               <div className="flex justify-end gap-2">
                                 <button
                                   type="button"
                                   onClick={() => { setEditingCategoryId(null); setCategoryManagerError('') }}
-                                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600"
+                                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100"
                                 >
                                   Cancel
                                 </button>
                                 <button
                                   type="submit"
                                   disabled={isSavingCategory}
-                                  className="rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-extrabold text-white disabled:opacity-60"
+                                  className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   {isSavingCategory ? 'Saving...' : 'Save name'}
                                 </button>
@@ -1576,7 +1845,7 @@ export default function ItemsMasterData() {
                             </form>
                           ) : (
                             <div className="flex flex-wrap items-center justify-between gap-3">
-                              <span className="text-sm font-bold text-slate-700">{category.name}</span>
+                              <span className="text-base font-bold text-slate-800">{category.name}</span>
                               <div className="flex gap-2">
                                 <button
                                   type="button"
@@ -1587,7 +1856,7 @@ export default function ItemsMasterData() {
                                     setEditingCategoryReason('')
                                     setCategoryManagerError('')
                                   }}
-                                  className="rounded-lg border border-slate-200 px-3 py-2 text-[0.68rem] font-bold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="rounded-xl border border-blue-200 bg-white px-3.5 py-2.5 text-xs font-bold text-blue-800 transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   Rename
                                 </button>
@@ -1599,7 +1868,7 @@ export default function ItemsMasterData() {
                                     setCategoryDeleteReason('')
                                     setCategoryManagerError('')
                                   }}
-                                  className="rounded-lg border border-rose-100 px-3 py-2 text-[0.68rem] font-bold text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="rounded-xl border border-rose-200 bg-white px-3.5 py-2.5 text-xs font-bold text-rose-700 transition hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-rose-100 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   Delete
                                 </button>
@@ -1609,7 +1878,7 @@ export default function ItemsMasterData() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </section>
                 </div>
               )}
             </div>
@@ -1792,30 +2061,36 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Condition</span>
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Condition / Status</span>
               <select
-                value={selectedConditionFilter}
-                onChange={(event) => setSelectedConditionFilter(event.target.value)}
+                value={selectedConditionStatusFilter}
+                onChange={(event) => setSelectedConditionStatusFilter(event.target.value)}
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
-                <option value="all">All Conditions</option>
-                {conditions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
+                <option value="all">All conditions &amp; statuses</option>
+                <optgroup label="Condition">
+                  {conditions.map((condition) => <option key={`condition:${condition}`} value={`condition:${condition}`}>{condition}</option>)}
+                </optgroup>
+                <optgroup label="Status">
+                  <option value="status:Available">Available</option>
+                  <option value="status:Issued">Issued</option>
+                  <option value="status:Pending Approval">Pending Approval</option>
+                  <option value="status:Reserved">Reserved</option>
+                  <option value="status:Borrowed">Borrowed</option>
+                </optgroup>
               </select>
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Status</span>
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Tracking mode</span>
               <select
-                value={selectedStatusFilter}
-                onChange={(event) => setSelectedStatusFilter(event.target.value)}
+                value={selectedTrackingModeFilter}
+                onChange={(event) => setSelectedTrackingModeFilter(event.target.value as 'all' | InventoryTrackingMode)}
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
-                <option value="all">All Statuses</option>
-                <option value="Available">Available</option>
-                <option value="Issued">Issued</option>
-                <option value="Pending Approval">Pending Approval</option>
-                <option value="Reserved">Reserved</option>
-                <option value="Borrowed">Borrowed</option>
+                <option value="all">All tracking modes</option>
+                <option value="individual">Per-unit assets</option>
+                <option value="quantity">Bulk quantities</option>
               </select>
             </label>
           </div>
@@ -1843,11 +2118,7 @@ export default function ItemsMasterData() {
                   <td className="px-5 py-4 sm:px-6">
                     <div className="flex min-w-52 items-center gap-3">
                       <span
-                        className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-xs font-black shadow-sm ${
-                          index % 2 === 0
-                            ? 'border-[#d6b333] bg-[#17377f] text-white'
-                            : 'border-[#17377f] bg-[#d6b333] text-[#17377f]'
-                        }`}
+                        className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-xs font-black shadow-sm ${inventoryAvatarTone(index)}`}
                       >
                         {item.initials}
                       </span>
@@ -1861,6 +2132,9 @@ export default function ItemsMasterData() {
                         <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{item.code}</span>
                         <span className="mt-1 inline-flex rounded-md bg-slate-100 px-1.5 py-0.5 text-[0.58rem] font-bold text-slate-500">
                           {item.category}
+                        </span>
+                        <span className={`mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[0.58rem] font-extrabold ${item.trackingMode === 'individual' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                          {item.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}
                         </span>
                       </span>
                     </div>
@@ -1901,132 +2175,207 @@ export default function ItemsMasterData() {
         </div>
       </section>
 
-      {/* POP-UP MODAL FOR ITEM DETAILS AND CONDITION HISTORY */}
+      {/* ITEM DETAILS MODAL */}
       {selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="my-8 w-full max-w-2xl rounded-3xl bg-white p-6 shadow-2xl sm:p-7">
-            {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-3">
-                <span className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-50 text-sm font-black text-blue-700">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="item-details-title"
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
+          >
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <div className={'grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-sm font-black shadow-sm ' + selectedItemAvatarClass}>
                   {selectedItem.initials}
-                </span>
-                <div>
-                  <h3 className="text-lg font-black text-slate-900">{selectedItem.name}</h3>
-                  <p className="mt-1 text-sm font-medium text-slate-500">{selectedItem.description}</p>
-                  <p className="text-sm font-bold text-slate-400">{selectedItem.code} · {selectedItem.category}</p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Inventory management</p>
+                  <h2 id="item-details-title" className="mt-0.5 truncate text-base font-black text-slate-900 sm:text-lg">{selectedItem.name}</h2>
+                  <p className="mt-1 truncate text-xs font-semibold text-slate-500">{selectedItem.code} <span className="px-1 text-slate-300">/</span> {selectedItem.category}</p>
+                  <p className="mt-1 truncate text-xs text-slate-600">{selectedItem.description}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedItem(null)}
-                className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-500 hover:bg-slate-50"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
               >
-                ✕ Close
+                Close
               </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-8 sm:py-6">
+              <div className="mx-auto max-w-4xl space-y-4">
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Item overview</h3>
+                    <p className="mt-1 text-sm text-slate-600">Acquisition, stock, and valuation details for this inventory item.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                      <h4 className="text-xs font-extrabold uppercase tracking-wide text-slate-600">Acquisition &amp; stock</h4>
+                      <dl className="mt-3 space-y-2.5">
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <dt className="text-sm font-medium text-slate-600">Date acquired</dt>
+                          <dd className="text-right text-sm font-bold text-slate-900">{selectedItem.acquired} ({selectedItem.time})</dd>
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <dt className="text-sm font-medium text-slate-600">Quantity</dt>
+                          <dd className="text-right text-sm font-bold text-slate-900">{selectedItem.quantity} {selectedItem.unit}</dd>
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <dt className="text-sm font-medium text-slate-600">Tracking</dt>
+                          <dd className="text-right text-sm font-bold text-slate-900">{selectedItem.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}</dd>
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <dt className="text-sm font-medium text-slate-600">Issued to</dt>
+                          <dd className="text-right text-sm font-bold text-slate-900">{/\d/.test(selectedItem.dateIssued) ? selectedItem.assignedTo : 'Not issued'}</dd>
+                        </div>
+                        <div className="border-t border-slate-200 pt-2">
+                          <dt className="text-sm font-semibold text-blue-800">Date issued</dt>
+                          <dd className="mt-0.5 text-sm font-bold text-blue-800">
+                            {/\d/.test(selectedItem.dateIssued)
+                              ? <>{selectedItem.dateIssued} ({selectedItem.timeIssued})</>
+                              : selectedItem.status === 'Pending Approval' ? 'Pending employee approval' : 'Not issued'}
+                          </dd>
+                        </div>
+                      </dl>
+                    </section>
+
+                    <section className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                      <h4 className="text-xs font-extrabold uppercase tracking-wide text-slate-600">Valuation</h4>
+                      <dl className="mt-3 space-y-2.5">
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <dt className="text-sm font-medium text-slate-600">Unit cost</dt>
+                          <dd className="text-right text-sm font-bold text-slate-900">{selectedItem.unitCost}</dd>
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <dt className="text-sm font-medium text-slate-600">Total cost</dt>
+                          <dd className="text-right text-sm font-bold text-slate-900">{selectedItem.acquisitionCost}</dd>
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                          <dt className="text-sm font-medium text-slate-600">Current value</dt>
+                          <dd className="text-right text-sm font-bold text-slate-900">{selectedItem.currentValue}</dd>
+                        </div>
+                      </dl>
+                    </section>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + selectedItem.conditionTone}>
+                      Condition before issuance: {selectedItem.condition}
+                    </span>
+                    <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + selectedItem.statusTone}>
+                      Status: {selectedItem.status}
+                    </span>
+                  </div>
+                </section>
+
+                {selectedItem.trackingMode === 'quantity' && (
+                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                    <div className="mb-3 border-b border-slate-100 pb-3">
+                      <h3 className="text-sm font-extrabold text-slate-900">Stock receipt history</h3>
+                      <p className="mt-1 text-sm text-slate-600">Past deliveries and recorded unit costs for this stock item.</p>
+                    </div>
+                    {selectedItem.receiptHistory.length > 0 ? (
+                      <ul className="divide-y divide-slate-100">
+                        {selectedItem.receiptHistory.map((receipt) => (
+                          <li key={receipt.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-3">
+                            <div>
+                              <p className="text-sm font-bold text-slate-900">
+                                {formatAcquiredDate(receipt.dateAcquired)} / {Number(receipt.quantity).toLocaleString()} {selectedItem.unit}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-600">
+                                {receipt.referenceNumber || 'No receipt reference'} / Unit cost {formatMoney(receipt.unitCost)}
+                              </p>
+                            </div>
+                            <span className="text-sm font-extrabold text-slate-900">{formatMoney(receipt.totalCost)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <p className="text-sm text-slate-600">No receipts have been recorded for this item yet.</p>}
+                  </section>
+                )}
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-slate-900">Item history</h3>
+                      <p className="mt-1 text-sm text-slate-600">Review condition, issuance, return, and item change history.</p>
+                    </div>
+                    <span className="text-xs font-semibold text-slate-500">History is saved with this item record.</span>
+                  </div>
+                </section>
+              </div>
             </div>
 
-            {/* Modal Content Grid */}
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-xs font-extrabold uppercase text-slate-500">Acquisition & Stock</span>
-                <p className="mt-1.5 text-sm font-bold leading-relaxed text-slate-700">Date Acquired: {selectedItem.acquired} ({selectedItem.time})</p>
-                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Quantity: {selectedItem.quantity} {selectedItem.unit}</p>
-                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Custodian: {selectedItem.assignedTo}</p>
-                {/* SEPARATE FIELD FOR ISSUANCE DATE AND TIME */}
-                <p className="mt-1.5 border-t border-slate-200/60 pt-1.5 text-sm font-bold leading-relaxed text-blue-800">
-                  Date Issued: {selectedItem.dateIssued !== '—' ? `${selectedItem.dateIssued} (${selectedItem.timeIssued})` : selectedItem.status === 'Pending Approval' ? 'Pending employee approval' : 'Not Issued (In Storage)'}
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-xs font-extrabold uppercase text-slate-500">Valuation & Status</span>
-                <p className="mt-1.5 text-sm font-bold leading-relaxed text-slate-700">Unit Cost: {selectedItem.unitCost}</p>
-                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Total Cost: {selectedItem.acquisitionCost}</p>
-                <p className="mt-1 text-sm font-bold leading-relaxed text-slate-700">Current Value: {selectedItem.currentValue}</p>
-              </div>
-            </div>
-
-            {/* Status & Condition Badges */}
-            <div className="mt-4 flex flex-wrap gap-3">
-              <span className={`rounded-full px-3 py-1 text-sm font-extrabold ${selectedItem.conditionTone}`}>
-                Condition: {selectedItem.condition}
-              </span>
-              <span className={`rounded-full px-3 py-1 text-sm font-extrabold ${selectedItem.statusTone}`}>
-                Status: {selectedItem.status}
-              </span>
-            </div>
-
-            <div className="mt-6 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
-              <div>
-                <h4 className="text-sm font-black uppercase tracking-wider text-slate-600">Item History</h4>
-                <p className="mt-0.5 text-sm text-slate-500">View condition, issuance, return, and item change history.</p>
-              </div>
+            <footer className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <button
                 type="button"
                 onClick={() => {
                   setItemHistoryTab('condition')
                   setShowItemHistoryModal(true)
                 }}
-                className="shrink-0 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-extrabold text-blue-700 transition hover:bg-blue-100"
+                className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
               >
-                View History
+                View history
               </button>
-            </div>
-            <div className="mt-6 flex justify-between gap-3">
-              {selectedItem.id ? (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                {selectedItem.id ? (
+                  <button
+                    type="button"
+                    onClick={beginEditSelectedItem}
+                    className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+                  >
+                    Edit Information
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  onClick={beginEditSelectedItem}
-                  className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-extrabold text-blue-700 hover:bg-blue-100"
+                  onClick={() => setSelectedItem(null)}
+                  className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200"
                 >
-                  Edit Information
+                  Done
                 </button>
-              ) : <span />}
-              <button
-                type="button"
-                onClick={() => setSelectedItem(null)}
-                className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-extrabold text-white hover:bg-blue-700"
-              >
-                Done
-              </button>
-            </div>
-          </div>
+              </div>
+            </footer>
+          </section>
         </div>
       )}
-
       {showItemHistoryModal && selectedItem && (
-        <div className="fixed inset-0 z-80 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-80 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
           <section
             role="dialog"
             aria-modal="true"
             aria-labelledby="item-history-dialog-title"
-            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
+            className="flex max-h-[86vh] min-h-0 w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
-              <div>
-                <h3 id="item-history-dialog-title" className="text-base font-black text-slate-900">
-                  Item History
-                </h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500">
-                  {selectedItem.name} · {selectedItem.code}
-                </p>
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={'grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-sm font-black shadow-sm ' + selectedItemAvatarClass}>
+                  {selectedItem.initials}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Inventory management</p>
+                  <h2 id="item-history-dialog-title" className="mt-0.5 text-base font-black text-slate-900">Item History</h2>
+                  <p className="mt-1 truncate text-xs font-semibold text-slate-500">{selectedItem.name} <span className="px-1 text-slate-300">/</span> {selectedItem.code}</p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setShowItemHistoryModal(false)}
-                className="shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 transition hover:bg-slate-50"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
               >
                 Close
               </button>
-            </div>
+            </header>
 
-            <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
+            <div className="flex shrink-0 flex-wrap gap-2 border-b border-slate-200 bg-slate-50/70 px-5 py-3 sm:px-6">
               <button
                 type="button"
                 aria-pressed={itemHistoryTab === 'changes'}
                 onClick={() => setItemHistoryTab('changes')}
-                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${itemHistoryTab === 'changes' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                className={'rounded-xl px-4 py-2.5 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ' + (itemHistoryTab === 'changes' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border border-slate-300 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50')}
               >
                 Item Change History
               </button>
@@ -2034,183 +2383,283 @@ export default function ItemsMasterData() {
                 type="button"
                 aria-pressed={itemHistoryTab === 'condition'}
                 onClick={() => setItemHistoryTab('condition')}
-                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${itemHistoryTab === 'condition' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                className={'rounded-xl px-4 py-2.5 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ' + (itemHistoryTab === 'condition' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border border-slate-300 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50')}
               >
                 Item Condition History
               </button>
             </div>
 
-            <div className="overflow-y-auto p-5 sm:p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 p-4 sm:p-5">
               {itemHistoryTab === 'condition' ? (
                 selectedItem.history.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {selectedItem.history.map((log, index) => (
-                      <div key={`${log.changedAt}-${index}`} className="flex items-start justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-bold text-slate-500">{log.previous}</span>
-                            <span className="text-xs text-slate-300">→</span>
-                            <span className={`rounded-md px-2 py-0.5 text-[0.62rem] font-extrabold ${log.tone}`}>
-                              {log.next}
+                      <article key={log.changedAt + '-' + index} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <span className={'grid h-10 w-10 shrink-0 place-items-center rounded-full border-2 text-[0.62rem] font-black ' + selectedItemAvatarClass}>
+                              {selectedItem.initials}
                             </span>
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-600">{log.previous}</span>
+                                <span className="text-sm font-bold text-slate-300">/</span>
+                                <span className={'rounded-full px-2.5 py-1 text-xs font-extrabold ' + log.tone}>{log.next}</span>
+                              </div>
+                              <p className="mt-2 text-sm leading-relaxed text-slate-700">{log.note}</p>
+                              <p className="mt-1.5 text-xs font-semibold text-slate-500">{log.actorLabel ? log.actorLabel + ': ' + log.by : 'By ' + log.by}</p>
+                            </div>
                           </div>
-                          <p className="mt-1 text-[0.68rem] text-slate-500">{log.note}</p>
-                          <p className="mt-1 text-[0.62rem] font-bold text-slate-400">By {log.by}</p>
+                          <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{log.changedAt}</span>
                         </div>
-                        <span className="shrink-0 text-[0.62rem] font-bold text-slate-400">{log.changedAt}</span>
-                      </div>
+                      </article>
                     ))}
                   </div>
                 ) : (
-                  <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
-                    No condition history recorded yet.
-                  </p>
+                  <div className="flex min-h-52 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-5 py-8 text-center">
+                    <span className={'mb-3 grid h-12 w-12 place-items-center rounded-full border-2 text-xs font-black ' + selectedItemAvatarClass}>{selectedItem.initials}</span>
+                    <p className="text-sm font-extrabold text-slate-800">No condition history yet</p>
+                    <p className="mt-1 max-w-sm text-sm leading-relaxed text-slate-600">Condition and return updates for this item will appear here.</p>
+                  </div>
                 )
               ) : selectedItem.changeHistory && selectedItem.changeHistory.length > 0 ? (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {[...selectedItem.changeHistory]
                     .sort((left, right) => new Date(left.changedAt).getTime() - new Date(right.changedAt).getTime())
                     .map((change, index) => (
-                      <div key={`${change.changedAt}-${index}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                        <p className="text-xs font-bold text-slate-800">
-                          {change.action === 'updated' ? 'Item updated' : change.reason}
-                        </p>
-                        {change.action === 'updated' && change.reason && (
-                          <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-500">Reason: {change.reason}</p>
-                        )}
-                        {getChangeDetails(change).length > 0 && (
-                          <ul className="mt-1 space-y-0.5 text-[0.68rem] text-slate-500">
-                            {getChangeDetails(change).map((detail) => (
-                              <li key={detail}>{detail}</li>
-                            ))}
-                          </ul>
-                        )}
-                        <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
-                          {change.action === 'updated' ? 'Edited by' : 'By'} {change.changedBy || 'Unknown user'} · {formatCreatedAt(change.changedAt)}
-                        </p>
-                      </div>
+                      <article key={change.changedAt + '-' + index} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                        <div className="flex items-start gap-3">
+                          <span className={'grid h-10 w-10 shrink-0 place-items-center rounded-full border-2 text-[0.62rem] font-black ' + selectedItemAvatarClass}>
+                            {selectedItem.initials}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-extrabold text-slate-900">{change.action === 'updated' ? 'Item updated' : change.reason}</p>
+                              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{formatCreatedAt(change.changedAt)}</span>
+                            </div>
+                            {change.action === 'updated' && change.reason && (
+                              <p className="mt-2 text-sm leading-relaxed text-slate-600">Reason: {change.reason}</p>
+                            )}
+                            {getChangeDetails(change).length > 0 && (
+                              <ul className="mt-2 space-y-1 text-sm leading-relaxed text-slate-700">
+                                {getChangeDetails(change).map((detail) => (
+                                  <li key={detail}>{detail}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <p className="mt-2 text-xs font-semibold text-slate-500">
+                              {change.action === 'updated' ? 'Edited by' : 'By'} {change.changedBy || 'Unknown user'} / {formatCreatedAt(change.changedAt)}
+                            </p>
+                          </div>
+                        </div>
+                      </article>
                     ))}
                 </div>
               ) : (
-                <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
-                  No item change history recorded yet.
-                </p>
+                <div className="flex min-h-52 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-5 py-8 text-center">
+                  <span className={'mb-3 grid h-12 w-12 place-items-center rounded-full border-2 text-xs font-black ' + selectedItemAvatarClass}>{selectedItem.initials}</span>
+                  <p className="text-sm font-extrabold text-slate-800">No item changes yet</p>
+                  <p className="mt-1 max-w-sm text-sm leading-relaxed text-slate-600">Updates to this inventory item will be listed here.</p>
+                </div>
               )}
             </div>
           </section>
         </div>
       )}
-
       {showItemEditModal && selectedItem?.id && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-slate-950/65 p-4 backdrop-blur-sm">
-          <form onSubmit={handleUpdateSelectedItem} className="my-6 max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl sm:p-7">
-            <div className="flex items-start justify-between border-b border-slate-100 pb-4">
-              <div>
-                <h3 className="text-base font-black text-slate-900">Edit Inventory Item</h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500">{selectedItem.code} · {selectedItem.name}</p>
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <form
+            onSubmit={handleUpdateSelectedItem}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-inventory-item-title"
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
+          >
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <div className={'grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-sm font-black shadow-sm ' + selectedItemAvatarClass}>{selectedItem.initials}</div>
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Inventory management</p>
+                  <h2 id="edit-inventory-item-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Edit   qItem</h2>
+                  <p className="mt-1 truncate text-xs font-semibold text-slate-500">{selectedItem.code} <span className="px-1 text-slate-300">/</span> {selectedItem.name}</p>
+                </div>
               </div>
               <button
                 type="button"
                 disabled={isUpdatingItem}
                 onClick={() => { setShowItemEditModal(false); setItemEditError('') }}
-                className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-50"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Close
               </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-8 sm:py-6">
+              <div className="mx-auto max-w-4xl space-y-4">
+                {itemEditError && (
+                  <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+                    {itemEditError}
+                  </p>
+                )}
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Item details</h3>
+                    <p className="mt-1 text-sm text-slate-600">Fields marked <span className="font-extrabold text-rose-600">*</span> are required. Choose a saved item name for the selected category.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Item code <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-[0.65rem] font-bold text-slate-700">Read-only</span></span>
+                      <input name="itemCode" required maxLength={100} value={editFormData.itemCode} readOnly aria-readonly="true" className={`${editControlClass} border-slate-300 bg-slate-100 font-semibold text-slate-700`} />
+                      <span className="mt-2 block text-xs text-slate-600">Item codes are locked after creation.</span>
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Category <span className="text-rose-600">*</span></span>
+                      <select name="category" required value={editFormData.category} onChange={handleEditInputChange} className={editControlClass}>
+                        {categories.map((category) => <option key={category.id || category.name} value={category.name}>{category.name}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Item name <span className="text-rose-600">*</span></span>
+                      <select
+                        name="itemName"
+                        required
+                        value={editFormData.itemName}
+                        onChange={handleEditInputChange}
+                        disabled={editCategoryItemNames.length === 0 && !editItemNameIsCurrentLegacyValue}
+                        className={`${editControlClass} border-blue-300 bg-blue-50/30 hover:border-blue-400 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
+                      >
+                        <option value="" disabled>
+                          {editCategoryItemNames.length > 0 ? 'Choose an item name' : 'No saved names for this category'}
+                        </option>
+                        {editItemNameIsCurrentLegacyValue && !editItemNameIsCatalogued && (
+                          <option value={selectedItem.name}>{selectedItem.name} (current name)</option>
+                        )}
+                        {editCategoryItemNames.map((itemName) => <option key={itemName.id} value={itemName.name}>{itemName.name}</option>)}
+                      </select>
+                      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5">
+                        <span className="text-xs text-slate-600">Names shown here belong to the selected category.</span>
+                        <button type="button" onClick={handleOpenEditItemNameManager} className="text-xs font-bold text-blue-800 underline decoration-blue-300 underline-offset-2 hover:text-blue-900">Manage names</button>
+                      </div>
+                    </label>
+                    <label className="block sm:col-span-2">
+                      <span className={editFieldLabelClass}>Item description <span className="text-rose-600">*</span></span>
+                      <input name="description" required maxLength={500} value={editFormData.description} onChange={handleEditInputChange} placeholder="Describe this item" className={editControlClass} />
+                    </label>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Tracking &amp; acquisition</h3>
+                    <p className="mt-1 text-sm text-slate-600">Review how this item is tracked and record its acquisition details.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block sm:col-span-2">
+                      <span className={editFieldLabelClass}>Tracking mode</span>
+                      <select
+                        name="trackingMode"
+                        value={editFormData.trackingMode}
+                        onChange={handleEditInputChange}
+                        disabled={selectedItem.assetTags.length > 0}
+                        className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
+                      >
+                        <option value="individual">Per-unit asset - unique barcode for each physical unit</option>
+                        <option value="quantity">Bulk quantity - one stock record, no per-unit labels</option>
+                      </select>
+                      <span className="mt-2 block text-xs leading-relaxed text-slate-600">Tracking mode can only change before asset tags are created. Existing barcode history is preserved.</span>
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Date acquired</span>
+                      <input type="date" name="dateAcquired" value={editFormData.dateAcquired} onChange={handleEditInputChange} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Time acquired</span>
+                      <input type="time" name="timeAcquired" value={editFormData.timeAcquired} onChange={handleEditInputChange} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Cost per unit</span>
+                      <input type="number" min="0" step="0.01" name="unitCost" value={editFormData.unitCost} onChange={handleEditInputChange} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Acquisition cost <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-[0.65rem] font-bold text-slate-700">Calculated</span></span>
+                      <input type="number" min="0" step="0.01" name="acquisitionCost" value={editFormData.acquisitionCost} readOnly aria-readonly="true" className={`${editControlClass} border-slate-300 bg-slate-100 font-semibold text-slate-700`} />
+                      <span className="mt-2 block text-xs text-slate-600">Calculated from quantity and unit cost.</span>
+                    </label>
+                    <label className="block sm:col-span-2">
+                      <span className={editFieldLabelClass}>Current assessed value <span className="font-semibold text-slate-600">(optional)</span></span>
+                      <input type="number" min="0" step="0.01" name="currentValue" value={editFormData.currentValue} onChange={handleEditInputChange} placeholder="Leave blank if not assessed" className={editControlClass} />
+                      <span className="mt-2 block text-xs text-slate-600">Cannot be greater than the acquisition cost.</span>
+                    </label>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Stock &amp; condition</h3>
+                    <p className="mt-1 text-sm text-slate-600">Keep the item quantity, unit of measure, and condition up to date.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Quantity</span>
+                      <input type="number" min="0" step="1" name="quantity" value={editFormData.quantity} onChange={handleEditInputChange} disabled={selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0} className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`} />
+                      {selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0 && <span className="mt-2 block text-xs text-slate-600">Quantity is locked because asset tags already exist.</span>}
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Unit of measure</span>
+                      <select name="unitOfMeasure" value={editFormData.unitOfMeasure} onChange={handleEditInputChange} className={editControlClass}>
+                        {!unitOfMeasureOptions.includes(editFormData.unitOfMeasure) && <option value={editFormData.unitOfMeasure}>{editFormData.unitOfMeasure} (existing)</option>}
+                        {unitOfMeasureOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                      </select>
+                    </label>
+                    <label className="block sm:col-span-2">
+                      <span className={editFieldLabelClass}>Condition</span>
+                      <select name="condition" value={editFormData.condition} onChange={handleEditInputChange} className={editControlClass}>
+                        {conditions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 sm:p-5">
+                  <label className="block">
+                    <span className="mb-2 flex items-center gap-2 text-sm font-extrabold text-slate-900">Reason for this change <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-extrabold uppercase tracking-wide text-amber-900">Required</span></span>
+                    <span className="mb-2 block text-sm leading-relaxed text-slate-600">This note will be saved in the item&apos;s change history.</span>
+                    <textarea
+                      name="reason"
+                      required
+                      maxLength={1000}
+                      value={editFormData.reason}
+                      onChange={handleEditInputChange}
+                      placeholder="For example: The item name was corrected to match the category list."
+                      className="min-h-28 w-full rounded-xl border-2 border-amber-300 bg-white p-4 text-base text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-amber-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                    />
+                  </label>
+                </section>
+              </div>
             </div>
 
-            {itemEditError && (
-              <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                {itemEditError}
-              </p>
-            )}
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item Code</span>
-                <input name="itemCode" required maxLength={100} value={editFormData.itemCode} readOnly aria-readonly="true" className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs text-slate-600 outline-none" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Category</span>
-                <select name="category" value={editFormData.category} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
-                  {categories.map((category) => <option key={category.id || category.name} value={category.name}>{category.name}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item Name</span>
-                <input name="itemName" required maxLength={500} value={editFormData.itemName} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Item Description</span>
-                <input name="description" required maxLength={500} value={editFormData.description} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Date Acquired</span>
-                <input type="date" name="dateAcquired" value={editFormData.dateAcquired} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Time Acquired</span>
-                <input type="time" name="timeAcquired" value={editFormData.timeAcquired} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Cost per Unit</span>
-                <input type="number" min="0" step="0.01" name="unitCost" value={editFormData.unitCost} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Acquisition Cost</span>
-                <input type="number" min="0" step="0.01" name="acquisitionCost" value={editFormData.acquisitionCost} onChange={handleEditInputChange} readOnly aria-readonly="true" className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Quantity</span>
-                <input type="number" min="0" step="1" name="quantity" value={editFormData.quantity} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Unit of Measure</span>
-                <select name="unitOfMeasure" value={editFormData.unitOfMeasure} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
-                  {!unitOfMeasureOptions.includes(editFormData.unitOfMeasure) && <option value={editFormData.unitOfMeasure}>{editFormData.unitOfMeasure} (existing)</option>}
-                  {unitOfMeasureOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Condition</span>
-                <select name="condition" value={editFormData.condition} onChange={handleEditInputChange} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
-                  {conditions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
-                </select>
-              </label>
-              <label className="block sm:col-span-2">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Why are you changing this information? (Required)</span>
-                <textarea
-                  name="reason"
-                  required
-                  maxLength={1000}
-                  value={editFormData.reason}
-                  onChange={handleEditInputChange}
-                  placeholder="For example: The original item code was entered incorrectly."
-                  className="min-h-24 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2">
+            <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-8">
               <button
                 type="button"
                 disabled={isUpdatingItem}
                 onClick={() => { setShowItemEditModal(false); setItemEditError('') }}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={isUpdatingItem}
-                className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isUpdatingItem ? 'Saving...' : 'Save Changes'}
+                {isUpdatingItem ? 'Saving...' : 'Save changes'}
               </button>
-            </div>
+            </footer>
           </form>
         </div>
       )}
+
     </GsoPageFrame>
   )
 }

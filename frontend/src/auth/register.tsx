@@ -11,8 +11,8 @@ export default function Register() {
     setIsSubmitting(true)
 
     const formData = new FormData(event.currentTarget)
-    const name = String(formData.get('name') || '').trim()
     const email = String(formData.get('email') || '').trim()
+    const name = (email.split('@')[0].split('+')[0].replace(/[._-]+/g, ' ').trim() || 'Requester').slice(0, 120)
     const password = String(formData.get('password') || '')
     const confirmPassword = String(formData.get('confirmPassword') || '')
 
@@ -124,22 +124,6 @@ export default function Register() {
               </div>
 
               <form className="space-y-3 sm:space-y-4" onSubmit={handleSubmit}>
-                <div>
-                  <label htmlFor="name" className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]">
-                    Full name
-                  </label>
-                  <input
-                    id="name"
-                    name="name"
-                    type="text"
-                    autoComplete="name"
-                    placeholder="Your full name"
-                    maxLength={120}
-                    required
-                    className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-900 shadow-sm shadow-slate-900/5 outline-none transition duration-200 placeholder:text-slate-500 hover:border-blue-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
-                  />
-                </div>
-
                 <div>
                   <label htmlFor="email" className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]">
                     Email Address

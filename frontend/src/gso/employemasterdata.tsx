@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { ApiError } from '../auth/authApi'
 import { createDepartment, createEmployee, listDepartments, listEmployees, updateEmployee, type EmployeeProfile, type EmployeeProfileInput } from './employeesApi'
-import { createEmployeeIssuanceBatch, createEmployeeReturn, listEmployeeIssuances } from './issuancesApi'
-import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
+import { createEmployeeReturn, listEmployeeIssuances } from './issuancesApi'
 
 interface DepartmentItem {
   id: string
@@ -158,9 +157,6 @@ export default function EmployeeMasterData() {
   // Selected employee modal state
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRecord | null>(null)
   const [openEmployeeMenuId, setOpenEmployeeMenuId] = useState<string | null>(null)
-  const [availableInventoryStock, setAvailableInventoryStock] = useState<InventoryItemRecord[]>([])
-  const [isLoadingInventory, setIsLoadingInventory] = useState(true)
-  const [inventoryLoadError, setInventoryLoadError] = useState('')
 
   // Edit Employee Modal state
   const [showEmployeeEditModal, setShowEmployeeEditModal] = useState(false)
@@ -205,19 +201,6 @@ export default function EmployeeMasterData() {
         if (active) setIsLoadingEmployees(false)
       })
 
-    void listInventoryItems()
-      .then((items) => {
-        if (!active) return
-        setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.availableQuantity > 0))
-        setInventoryLoadError('')
-      })
-      .catch((error: unknown) => {
-        if (active) setInventoryLoadError(error instanceof Error ? error.message : 'Unable to load available inventory items.')
-      })
-      .finally(() => {
-        if (active) setIsLoadingInventory(false)
-      })
-
     return () => { active = false }
   }, [])
 
@@ -244,17 +227,6 @@ export default function EmployeeMasterData() {
     picture: null as File | null,
     status: 'Active',
   })
-
-  // Separate Pop-up Modal state for Add New Issuance (with Dropdown selection)
-  const [showIssuanceModal, setShowIssuanceModal] = useState(false)
-  const [issuanceSelectionMode, setIssuanceSelectionMode] = useState<'single' | 'multiple'>('single')
-  const [selectedAssetCodes, setSelectedAssetCodes] = useState<string[]>([])
-  const [selectedAssetQuantities, setSelectedAssetQuantities] = useState<Record<string, string>>({})
-  const [inventorySearchQuery, setInventorySearchQuery] = useState('')
-  const [isInventoryDropdownOpen, setIsInventoryDropdownOpen] = useState(false)
-  const [isSubmittingIssuance, setIsSubmittingIssuance] = useState(false)
-  const [issuanceSubmitError, setIssuanceSubmitError] = useState('')
-  const [issuanceNotes, setIssuanceNotes] = useState('Acknowledged by employee')
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -596,9 +568,6 @@ export default function EmployeeMasterData() {
       setReturnQuantity('1')
       setReturnPriority('High')
       setShowHandleIssuanceModal(false)
-      void listInventoryItems()
-        .then((items) => setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.availableQuantity > 0)))
-        .catch((error: unknown) => setInventoryLoadError(error instanceof Error ? error.message : 'Unable to refresh inventory availability.'))
       alert(`Processed return of ${request.quantity} ${targetItem.unitOfMeasure} for ${targetItem.code}. ${remainingQuantity > 0 ? `${remainingQuantity} ${targetItem.unitOfMeasure} remain assigned to ${selectedEmployee.firstName}.` : 'No units remain assigned to this employee.'} ${request.emailSent ? `A confirmation email was sent to ${selectedEmployee.email}.` : 'The return was recorded, but the confirmation email could not be sent.'}`)
     } catch (error) {
       setReturnSubmitError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Unable to process item return.')
@@ -607,49 +576,6 @@ export default function EmployeeMasterData() {
     }
   }
 
-  // Toggle an inventory item in the issuance batch.
-  const handleSelectInventoryItem = (code: string) => {
-    if (issuanceSelectionMode === 'single') {
-      if (selectedAssetCodes.includes(code)) {
-        setSelectedAssetCodes([])
-        setSelectedAssetQuantities({})
-      } else {
-        setSelectedAssetCodes([code])
-        setSelectedAssetQuantities({ [code]: '1' })
-      }
-      setIssuanceSubmitError('')
-      setIsInventoryDropdownOpen(false)
-      setInventorySearchQuery('')
-      return
-    }
-    if (selectedAssetCodes.includes(code)) {
-      setSelectedAssetCodes((current) => current.filter((itemCode) => itemCode !== code))
-      setSelectedAssetQuantities((current) => {
-        const next = { ...current }
-        delete next[code]
-        return next
-      })
-      setIssuanceSubmitError('')
-      return
-    }
-    if (selectedAssetCodes.length >= 100) {
-      setIssuanceSubmitError('Select up to 100 items for one approval email.')
-      return
-    }
-    setSelectedAssetCodes((current) => [...current, code])
-    setSelectedAssetQuantities((current) => ({ ...current, [code]: '1' }))
-    setIssuanceSubmitError('')
-  }
-
-  const resetIssuanceForm = () => {
-    setIssuanceSelectionMode('single')
-    setSelectedAssetCodes([])
-    setSelectedAssetQuantities({})
-    setInventorySearchQuery('')
-    setIsInventoryDropdownOpen(false)
-    setIssuanceNotes('Acknowledged by employee')
-    setIssuanceSubmitError('')
-  }
 
   const handleOpenEmployeeProfile = (employee: EmployeeRecord) => {
     setSelectedEmployee(employee)
@@ -683,93 +609,6 @@ export default function EmployeeMasterData() {
       })
   }
 
-  const handleAddIssuanceSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedEmployee) return
-    if (selectedAssetCodes.length === 0) {
-      setIssuanceSubmitError('Select at least one available inventory item first.')
-      return
-    }
-
-    const selectedStocks = selectedAssetCodes.map((code) =>
-      availableInventoryStock.find((item) => item.itemCode === code)
-    )
-    if (selectedStocks.some((item) => !item)) {
-      setIssuanceSubmitError('One or more selected items are no longer available. Refresh the inventory and select them again.')
-      return
-    }
-    const validStocks = selectedStocks.filter((item): item is InventoryItemRecord => Boolean(item))
-    const requestedItems = validStocks.map((stock) => ({
-      stock,
-      quantity: Number(selectedAssetQuantities[stock.itemCode] || 0),
-    }))
-    const invalidQuantity = requestedItems.find(({ stock, quantity }) =>
-      !Number.isInteger(quantity) || quantity < 1 || quantity > stock.availableQuantity
-    )
-    if (invalidQuantity) {
-      setIssuanceSubmitError(`Enter a whole quantity from 1 to ${invalidQuantity.stock.availableQuantity} for ${invalidQuantity.stock.itemCode}.`)
-      return
-    }
-
-    setIsSubmittingIssuance(true)
-    setIssuanceSubmitError('')
-    try {
-      const batch = await createEmployeeIssuanceBatch(
-        selectedEmployee.id,
-        requestedItems.map(({ stock, quantity }) => ({ itemId: stock.id, quantity })),
-        issuanceNotes,
-      )
-      const requestedAt = new Date(batch.requestedAt)
-      const requestDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
-        .format(Number.isNaN(requestedAt.getTime()) ? new Date() : requestedAt)
-      const newHistoryEntries: EmployeeHistoryLog[] = batch.items.map((item) => ({
-        date: requestDate,
-        event: 'Pending Approval',
-        item: item.itemName,
-        code: item.itemCode,
-        quantity: item.quantity,
-        unitOfMeasure: item.unitOfMeasure,
-        note: `Batch approval request sent to ${batch.employeeEmail}.`,
-      }))
-      const batchItemsById = new Map(batch.items.map((item) => [item.itemId, item]))
-
-      setEmployees((current) => current.map((employee) => employee.id === selectedEmployee.id
-        ? { ...employee, history: [...newHistoryEntries, ...employee.history] }
-        : employee
-      ))
-      setSelectedEmployee((current) => current?.id === selectedEmployee.id
-        ? { ...current, history: [...newHistoryEntries, ...current.history] }
-        : current
-      )
-      setAvailableInventoryStock((current) => current.flatMap((item) => {
-        const requested = batchItemsById.get(item.id)
-        if (!requested) return [item]
-        return requested.availableQuantity > 0
-          ? [{ ...item, availableQuantity: requested.availableQuantity, status: 'Available' }]
-          : []
-      }))
-      resetIssuanceForm()
-      setShowIssuanceModal(false)
-      alert(`One approval email listing all ${batch.items.length} selected item${batch.items.length === 1 ? '' : 's'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'}) was sent to ${batch.employeeEmail}. All requested quantities remain pending until the employee approves or rejects the batch.`)
-    } catch (error) {
-      setIssuanceSubmitError(error instanceof Error ? error.message : 'Unable to send the issuance batch approval request.')
-    } finally {
-      setIsSubmittingIssuance(false)
-    }
-  }
-
-  const filteredAvailableInventoryStock = availableInventoryStock.filter((item) => {
-    const query = inventorySearchQuery.trim().toLowerCase()
-    return !query || `${item.itemCode} ${item.description}`.toLowerCase().includes(query)
-  })
-  const selectedInventoryItems = selectedAssetCodes.flatMap((code) => {
-    const item = availableInventoryStock.find((stock) => stock.itemCode === code)
-    return item ? [item] : []
-  })
-  const selectedUnitCount = selectedInventoryItems.reduce(
-    (total, item) => total + (Number(selectedAssetQuantities[item.itemCode]) || 0),
-    0,
-  )
 
   // Filtered employee list
   const filteredEmployees = employees.filter((emp) => {
@@ -1355,368 +1194,154 @@ export default function EmployeeMasterData() {
 
       {/* POP-UP MODAL FOR ISSUED ITEMS AND EMPLOYEE PROFILE HISTORY */}
       {selectedEmployee && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="my-8 w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl sm:p-7">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="employee-details-title"
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
+          >
             {/* Modal Header */}
-            <div className="flex items-start justify-between border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-3.5">
-                <span className="grid h-12 w-12 place-items-center rounded-full bg-blue-100 text-sm font-black text-blue-700">
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 border-blue-100 bg-blue-50 text-sm font-black text-blue-700 shadow-sm">
                   {selectedEmployee.initials}
                 </span>
-                <div>
-                  <h3 className="text-base font-black text-slate-900">
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee management</p>
+                  <h2 id="employee-details-title" className="mt-0.5 truncate text-base font-black text-slate-900 sm:text-lg">
                     {selectedEmployee.firstName} {selectedEmployee.lastName}
-                  </h3>
-                  <p className="text-xs font-bold text-slate-400">
-                    {selectedEmployee.id} · {selectedEmployee.department} ({selectedEmployee.position})
+                  </h2>
+                  <p className="mt-1 truncate text-xs font-semibold text-slate-500">
+                    {selectedEmployee.id} <span className="px-1 text-slate-300">/</span> {selectedEmployee.department} <span className="px-1 text-slate-300">/</span> {selectedEmployee.position}
                   </p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedEmployee(null)}
-                className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-50"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
               >
-                ✕ Close
+                Close
               </button>
-            </div>
+            </header>
 
             {/* Employee Quick Info Cards */}
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">School Email</span>
-                <p className="mt-1 truncate text-xs font-bold text-slate-700">{selectedEmployee.email}</p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Total Issued Items</span>
-                <p className="mt-1 text-xs font-bold text-blue-700">{selectedEmployee.assigned} unit(s) active</p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Employment Status</span>
-                <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[0.6rem] font-extrabold ${selectedEmployee.statusTone}`}>
-                  {selectedEmployee.status}
-                </span>
-              </div>
-            </div>
-
-            {employeeIssuanceLoadError && (
-              <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                {employeeIssuanceLoadError}
-              </p>
-            )}
-
-            {/* CURRENTLY ISSUED ITEMS SECTION */}
-            <div className="mt-5 border-t border-slate-100 pt-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                    Currently Issued Items
-                  </h4>
-                  <p className="text-[0.68rem] text-slate-400">List of equipment and assets assigned to this employee.</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    aria-haspopup="dialog"
-                    onClick={() => setShowAllIssuedItems(true)}
-                    className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-100"
-                  >
-                    View All Issued Items
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      resetIssuanceForm()
-                      setInventoryLoadError('')
-                      setShowIssuanceModal(true)
-                      setIsLoadingInventory(true)
-                      void listInventoryItems()
-                        .then((items) => {
-                          setAvailableInventoryStock(items.filter((item) => item.status.toLowerCase() === 'available' && item.availableQuantity > 0))
-                          setInventoryLoadError('')
-                        })
-                        .catch((error: unknown) => {
-                          setInventoryLoadError(error instanceof Error ? error.message : 'Unable to load available inventory items.')
-                        })
-                        .finally(() => setIsLoadingInventory(false))
-                    }}
-                    className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-black text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700"
-                  >
-                    + Add New Issuance
-                  </button>
-                </div>
-              </div>
-
-              {/* Table of Issued Items */}
-              <div className="mt-3 overflow-x-auto rounded-xl border border-slate-100">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-[0.6rem] font-extrabold uppercase text-slate-400">
-                    <tr>
-                      <th className="px-3.5 py-2.5">Asset Code</th>
-                      <th className="px-3.5 py-2.5">Item Name</th>
-                      <th className="px-3.5 py-2.5">Quantity</th>
-                      <th className="min-w-26 whitespace-nowrap px-3.5 py-2.5">Condition</th>
-                      <th className="px-3.5 py-2.5">Assigned Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedEmployee.assignedItems.slice(0, 2).map((item) => (
-                      <tr key={item.id} className="border-t border-slate-100">
-                        <td className="px-3.5 py-2.5 font-bold text-slate-500">{item.code}</td>
-                        <td className="px-3.5 py-2.5 font-extrabold text-slate-800">{item.name}</td>
-                        <td className="px-3.5 py-2.5 font-bold text-slate-600">{item.quantity} {item.unitOfMeasure}</td>
-                        <td className="whitespace-nowrap px-3.5 py-2.5 align-middle">
-                          <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
-                            {item.condition}
-                          </span>
-                        </td>
-                        <td className="px-3.5 py-2.5 text-slate-500 font-medium">{item.assignedOn}</td>
-                      </tr>
-                    ))}
-                    {selectedEmployee.assignedItems.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-3.5 py-4 text-center text-slate-400 italic">
-                          No items currently issued to this employee.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* ISSUANCE & RETURN HISTORY AUDIT LOGS */}
-            <div className="mt-5 border-t border-slate-100 pt-4">
-              <div className="flex items-center justify-between gap-3">
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                  Employee History
-                </h4>
-                <button
-                  type="button"
-                  aria-haspopup="dialog"
-                  onClick={() => {
-                    setHistoryDialogTab('issuance')
-                    setShowEmployeeHistoryModal(true)
-                  }}
-                  className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[0.65rem] font-extrabold text-slate-600 transition hover:bg-slate-50"
-                >
-                  View History
-                </button>
-              </div>
-              <p className="mt-0.5 text-[0.68rem] text-slate-400">View issuance, return, and profile change records.</p>
-
-              <div className="hidden mt-3 space-y-2 pr-1">
-                {selectedEmployee.history.slice(0, 2).map((log, idx) => (
-                  <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-2.5">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className={`rounded-md px-2 py-0.5 text-[0.58rem] font-extrabold ${
-                          log.event === 'Issued' || log.event === 'Returned'
-                            ? 'bg-emerald-50 text-emerald-700'
-                            : log.event === 'Pending Approval' || log.event === 'Return Pending Approval'
-                              ? 'bg-blue-50 text-blue-700'
-                              : log.event === 'Rejected' || log.event === 'Expired' || log.event === 'Email Failed' || log.event === 'Return Rejected' || log.event === 'Return Expired' || log.event === 'Return Email Failed'
-                                ? 'bg-rose-50 text-rose-700'
-                                : 'bg-amber-50 text-amber-700'
-                        }`}>
-                          {log.event}
-                        </span>
-                        <span className="text-xs font-bold text-slate-700">{log.item}</span>
-                        <span className="text-[0.62rem] text-slate-400">({log.code})</span>
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[0.58rem] font-bold text-slate-600">{log.quantity} {log.unitOfMeasure}</span>
-                      </div>
-                      <p className="mt-1 text-[0.65rem] text-slate-500">{log.note}</p>
-                    </div>
-                    <span className="text-[0.62rem] font-bold text-slate-400">{log.date}</span>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
+              <div className="mx-auto max-w-4xl space-y-4">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="min-w-0 rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+                    <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">School email</span>
+                    <p className="mt-2 wrap-break-word text-sm font-bold text-slate-900">{selectedEmployee.email}</p>
                   </div>
-                ))}
-                {selectedEmployee.history.length === 0 && (
-                  <p className="text-xs text-slate-400 italic">No transaction history recorded yet.</p>
+                  <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+                    <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Total issued items</span>
+                    <p className="mt-2 text-sm font-extrabold text-blue-700">{selectedEmployee.assigned} unit(s) active</p>
+                  </div>
+                  <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+                    <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Employment status</span>
+                    <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-extrabold ${selectedEmployee.statusTone}`}>
+                      {selectedEmployee.status}
+                    </span>
+                  </div>
+                </div>
+
+                {employeeIssuanceLoadError && (
+                  <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                    {employeeIssuanceLoadError}
+                  </p>
                 )}
-              </div>
-            </div>
 
-            {/* PROFILE CHANGE HISTORY AUDIT LOGS */}
-            {selectedEmployee.changeHistory && selectedEmployee.changeHistory.length > 0 && (
-              <div className="hidden mt-5 border-t border-slate-100 pt-4">
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                  Profile Change History
-                </h4>
-                <p className="mt-0.5 text-[0.68rem] text-slate-400">Recorded reasons for edits to this employee profile.</p>
-                <div className="mt-3 max-h-36 space-y-2 overflow-y-auto pr-1">
-                  {selectedEmployee.changeHistory.map((change, idx) => (
-                    <div key={idx} className="rounded-xl border border-slate-100 bg-slate-50/50 p-2.5">
-                      <p className="text-xs font-semibold text-slate-700">{change.reason}</p>
-                      <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
-                        By {change.changedBy || 'Unknown user'} · {change.changedAt}
-                      </p>
+                {/* CURRENTLY ISSUED ITEMS SECTION */}
+                <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5">
+                  <div className="mb-4 flex flex-col gap-3 border-b-2 border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-slate-900">
+                        Currently Issued Items
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-600">List of equipment and assets assigned to this employee.</p>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        aria-haspopup="dialog"
+                        onClick={() => setShowAllIssuedItems(true)}
+                        className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+                      >
+                        View All Issued Items
+                      </button>
+                      <a
+                        href={`/gso/main-issuance?employeeCode=${encodeURIComponent(selectedEmployee.id)}`}
+                        className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200"
+                      >
+                        + Add New Issuance
+                      </a>
+                    </div>
+                  </div>
 
-            {/* Modal Footer with Edit Profile and Handle Issuance */}
-            <div className="mt-6 flex justify-between items-center gap-3">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => beginEditSelectedEmployee()}
-                  className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-100"
-                >
-                  Edit Profile
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const firstIssuedItem = selectedEmployee.assignedItems[0]
-                    setSelectedReturnIssuanceId(firstIssuedItem?.id || '')
-                    setReturnQuantity(String(firstIssuedItem?.quantity || 1))
-                    setReturnCondition(returnConditionForInspection(firstIssuedItem?.condition))
-                    setReturnPriority('High')
-                    setSurrenderReason('')
-                    setReturnSubmitError('')
-                    setShowHandleIssuanceModal(true)
-                  }}
-                  className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-extrabold text-amber-800 hover:bg-amber-100"
-                >
-                  Handle Issuance (Surrender/Return)
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedEmployee(null)}
-                className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-blue-700"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAllIssuedItems && selectedEmployee && (
-        <div className="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="issued-items-dialog-title"
-            className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
-              <div>
-                <h3 id="issued-items-dialog-title" className="text-base font-black text-slate-900">
-                  Issued Items
-                </h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500">
-                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
-                </p>
-                <p className="mt-1 text-[0.68rem] text-slate-400">
-                  {selectedEmployee.assigned} active unit(s) assigned to this employee.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAllIssuedItems(false)}
-                className="shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 transition hover:bg-slate-50"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="overflow-y-auto p-5 sm:p-6">
-              {selectedEmployee.assignedItems.length > 0 ? (
-                <div className="overflow-x-auto rounded-xl border border-slate-100">
-                  <table className="w-full min-w-155 text-left text-xs">
-                    <thead className="bg-slate-50 text-[0.6rem] font-extrabold uppercase text-slate-400">
-                      <tr>
-                        <th className="px-3.5 py-3">Asset Code</th>
-                        <th className="px-3.5 py-3">Item Name</th>
-                        <th className="px-3.5 py-3">Quantity</th>
-                        <th className="min-w-26 whitespace-nowrap px-3.5 py-3">Condition</th>
-                        <th className="px-3.5 py-3">Assigned Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedEmployee.assignedItems.map((item) => (
-                        <tr key={item.id} className="border-t border-slate-100">
-                          <td className="px-3.5 py-3 font-bold text-slate-600">{item.code}</td>
-                          <td className="px-3.5 py-3 font-extrabold text-slate-800">{item.name}</td>
-                          <td className="px-3.5 py-3 font-bold text-slate-600">{item.quantity} {item.unitOfMeasure}</td>
-                          <td className="whitespace-nowrap px-3.5 py-3 align-middle">
-                            <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-[0.6rem] font-extrabold ${item.tone}`}>
-                              {item.condition}
-                            </span>
-                          </td>
-                          <td className="px-3.5 py-3 font-medium text-slate-500">{item.assignedOn}</td>
+                  {/* Table of Issued Items */}
+                  <div className="mt-4 overflow-x-auto rounded-xl border-2 border-slate-300 shadow-sm">
+                    <table className="w-full min-w-190 text-left text-sm">
+                      <thead className="bg-slate-100 text-xs font-extrabold uppercase tracking-wide text-slate-700">
+                        <tr className="divide-x divide-slate-300 border-b-2 border-slate-300">
+                          <th className="whitespace-nowrap px-4 py-3.5">Asset code</th>
+                          <th className="px-4 py-3.5">Item name</th>
+                          <th className="whitespace-nowrap px-4 py-3.5">Quantity</th>
+                          <th className="whitespace-nowrap px-4 py-3.5">Condition</th>
+                          <th className="whitespace-nowrap px-4 py-3.5">Assigned date</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {selectedEmployee.assignedItems.slice(0, 2).map((item) => (
+                          <tr key={item.id} className="divide-x divide-slate-200 bg-white transition-colors hover:bg-blue-50/50">
+                            <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-600">{item.code}</td>
+                            <td className="px-4 py-3 font-extrabold text-slate-900">{item.name}</td>
+                            <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{item.quantity} {item.unitOfMeasure}</td>
+                            <td className="whitespace-nowrap px-4 py-3 align-middle">
+                              <span className={`inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-extrabold ${item.tone}`}>
+                                {item.condition}
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-600">{item.assignedOn}</td>
+                          </tr>
+                        ))}
+                        {selectedEmployee.assignedItems.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="bg-slate-50 px-4 py-8 text-center text-sm font-medium text-slate-600">
+                              No items currently issued to this employee.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              ) : (
-                <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
-                  No items currently issued to this employee.
-                </p>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
 
-      {showEmployeeHistoryModal && selectedEmployee && (
-        <div className="fixed inset-0 z-80 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="employee-history-dialog-title"
-            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl"
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
-              <div>
-                <h3 id="employee-history-dialog-title" className="text-base font-black text-slate-900">
-                  Employee History
-                </h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500">
-                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowEmployeeHistoryModal(false)}
-                className="shrink-0 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 transition hover:bg-slate-50"
-              >
-                Close
-              </button>
-            </div>
+                {/* ISSUANCE & RETURN HISTORY AUDIT LOGS */}
+                <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5">
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">
+                      Employee History
+                    </h3>
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      onClick={() => {
+                        setHistoryDialogTab('issuance')
+                        setShowEmployeeHistoryModal(true)
+                      }}
+                      className="shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+                    >
+                      View History
+                    </button>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-600">View issuance, return, and profile change records.</p>
 
-            <div className="flex flex-wrap gap-2 border-b border-slate-100 px-5 py-3 sm:px-6">
-              <button
-                type="button"
-                aria-pressed={historyDialogTab === 'issuance'}
-                onClick={() => setHistoryDialogTab('issuance')}
-                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${historyDialogTab === 'issuance' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-              >
-                Issuance & Return History
-              </button>
-              <button
-                type="button"
-                aria-pressed={historyDialogTab === 'profile'}
-                onClick={() => setHistoryDialogTab('profile')}
-                className={`rounded-xl px-3 py-2 text-xs font-extrabold transition ${historyDialogTab === 'profile' ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-              >
-                Profile Change History
-              </button>
-            </div>
-
-            <div className="overflow-y-auto p-5 sm:p-6">
-              {historyDialogTab === 'issuance' ? (
-                selectedEmployee.history.length > 0 ? (
-                  <div className="space-y-2">
-                    {selectedEmployee.history.map((log, idx) => (
-                      <div key={`${log.code}-${log.date}-${idx}`} className="flex items-start justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
+                  <div className="hidden mt-3 space-y-2 pr-1">
+                    {selectedEmployee.history.slice(0, 2).map((log, idx) => (
+                      <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 p-2.5">
+                        <div>
+                          <div className="flex items-center gap-2">
                             <span className={`rounded-md px-2 py-0.5 text-[0.58rem] font-extrabold ${
                               log.event === 'Issued' || log.event === 'Returned'
                                 ? 'bg-emerald-50 text-emerald-700'
@@ -1732,30 +1357,242 @@ export default function EmployeeMasterData() {
                             <span className="text-[0.62rem] text-slate-400">({log.code})</span>
                             <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[0.58rem] font-bold text-slate-600">{log.quantity} {log.unitOfMeasure}</span>
                           </div>
-                          <p className="mt-1 text-[0.68rem] text-slate-500">{log.note}</p>
+                          <p className="mt-1 text-[0.65rem] text-slate-500">{log.note}</p>
                         </div>
-                        <span className="shrink-0 text-[0.62rem] font-bold text-slate-400">{log.date}</span>
+                        <span className="text-[0.62rem] font-bold text-slate-400">{log.date}</span>
+                      </div>
+                    ))}
+                    {selectedEmployee.history.length === 0 && (
+                      <p className="text-xs text-slate-400 italic">No transaction history recorded yet.</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* PROFILE CHANGE HISTORY AUDIT LOGS */}
+                {selectedEmployee.changeHistory && selectedEmployee.changeHistory.length > 0 && (
+                  <div className="hidden mt-5 border-t border-slate-100 pt-4">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                      Profile Change History
+                    </h4>
+                    <p className="mt-0.5 text-[0.68rem] text-slate-400">Recorded reasons for edits to this employee profile.</p>
+                    <div className="mt-3 max-h-36 space-y-2 overflow-y-auto pr-1">
+                      {selectedEmployee.changeHistory.map((change, idx) => (
+                        <div key={idx} className="rounded-xl border border-slate-100 bg-slate-50/50 p-2.5">
+                          <p className="text-xs font-semibold text-slate-700">{change.reason}</p>
+                          <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
+                            By {change.changedBy || 'Unknown user'} · {change.changedAt}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+
+            {/* Modal Footer with Edit Profile and Handle Issuance */}
+            <footer className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <button
+                  type="button"
+                  onClick={() => beginEditSelectedEmployee()}
+                  className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+                >
+                  Edit Profile
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstIssuedItem = selectedEmployee.assignedItems[0]
+                    setSelectedReturnIssuanceId(firstIssuedItem?.id || '')
+                    setReturnQuantity(String(firstIssuedItem?.quantity || 1))
+                    setReturnCondition(returnConditionForInspection(firstIssuedItem?.condition))
+                    setReturnPriority('High')
+                    setSurrenderReason('')
+                    setReturnSubmitError('')
+                    setShowHandleIssuanceModal(true)
+                  }}
+                  className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-extrabold text-amber-900 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-100"
+                >
+                  Handle Issuance (Surrender/Return)
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedEmployee(null)}
+                className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200 sm:min-w-24"
+              >
+                Done
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {showAllIssuedItems && selectedEmployee && (
+        <div className="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="issued-items-dialog-title"
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
+          >
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="min-w-0">
+                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee inventory</p>
+                <h2 id="issued-items-dialog-title" className="mt-1 text-xl font-black text-slate-950 sm:text-2xl">
+                  Issued Items
+                </h2>
+                <p className="mt-2 text-base font-bold text-slate-800">
+                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
+                </p>
+                <p className="mt-1 text-sm font-medium text-slate-700">
+                  {selectedEmployee.assigned} active unit(s) assigned to this employee.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllIssuedItems(false)}
+                className="shrink-0 rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
+              {selectedEmployee.assignedItems.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border-2 border-slate-400 bg-white shadow-md">
+                  <table className="w-full min-w-200 text-left text-base">
+                    <thead className="bg-slate-100 text-sm font-extrabold uppercase tracking-wide text-slate-800">
+                      <tr className="divide-x divide-slate-300 border-b-2 border-slate-300">
+                        <th className="whitespace-nowrap px-5 py-4">Asset code</th>
+                        <th className="px-5 py-4">Item name</th>
+                        <th className="whitespace-nowrap px-5 py-4">Quantity</th>
+                        <th className="whitespace-nowrap px-5 py-4">Condition</th>
+                        <th className="whitespace-nowrap px-5 py-4">Assigned date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {selectedEmployee.assignedItems.map((item) => (
+                        <tr key={item.id} className="divide-x divide-slate-200 bg-white transition-colors hover:bg-blue-50/50">
+                          <td className="whitespace-nowrap px-5 py-4 font-bold text-slate-800">{item.code}</td>
+                          <td className="px-5 py-4 font-extrabold text-slate-950">{item.name}</td>
+                          <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-800">{item.quantity} {item.unitOfMeasure}</td>
+                          <td className="whitespace-nowrap px-5 py-4 align-middle">
+                            <span className={`inline-flex items-center whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-extrabold ${item.tone}`}>
+                              {item.condition}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-5 py-4 font-medium text-slate-800">{item.assignedOn}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
+                  No items currently issued to this employee.
+                </p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {showEmployeeHistoryModal && selectedEmployee && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="employee-history-dialog-title"
+            className="flex max-h-[90vh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
+          >
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="min-w-0">
+                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee management</p>
+                <h2 id="employee-history-dialog-title" className="mt-1 text-xl font-black text-slate-950 sm:text-2xl">
+                  Employee History
+                </h2>
+                <p className="mt-2 text-base font-bold text-slate-800">
+                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmployeeHistoryModal(false)}
+                className="shrink-0 rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="flex shrink-0 flex-wrap gap-2 border-b-2 border-slate-300 bg-white px-5 py-3.5 sm:px-8">
+              <button
+                type="button"
+                aria-pressed={historyDialogTab === 'issuance'}
+                onClick={() => setHistoryDialogTab('issuance')}
+                className={`rounded-xl px-4 py-3 text-base font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${historyDialogTab === 'issuance' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50'}`}
+              >
+                Issuance & Return History
+              </button>
+              <button
+                type="button"
+                aria-pressed={historyDialogTab === 'profile'}
+                onClick={() => setHistoryDialogTab('profile')}
+                className={`rounded-xl px-4 py-3 text-base font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${historyDialogTab === 'profile' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50'}`}
+              >
+                Profile Change History
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
+              {historyDialogTab === 'issuance' ? (
+                selectedEmployee.history.length > 0 ? (
+                  <div className="space-y-3">
+                    {selectedEmployee.history.map((log, idx) => (
+                      <div key={`${log.code}-${log.date}-${idx}`} className="flex flex-col items-start justify-between gap-3 rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md sm:flex-row sm:gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full px-3 py-1.5 text-sm font-extrabold ${
+                              log.event === 'Issued' || log.event === 'Returned'
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : log.event === 'Pending Approval' || log.event === 'Return Pending Approval'
+                                  ? 'bg-blue-50 text-blue-700'
+                                  : log.event === 'Rejected' || log.event === 'Expired' || log.event === 'Email Failed' || log.event === 'Return Rejected' || log.event === 'Return Expired' || log.event === 'Return Email Failed'
+                                    ? 'bg-rose-50 text-rose-700'
+                                    : 'bg-amber-50 text-amber-700'
+                            }`}>
+                              {log.event}
+                            </span>
+                            <span className="text-base font-extrabold text-slate-950">{log.item}</span>
+                            <span className="text-sm font-semibold text-slate-700">({log.code})</span>
+                            <span className="rounded-full bg-slate-200 px-3 py-1.5 text-sm font-bold text-slate-800">{log.quantity} {log.unitOfMeasure}</span>
+                          </div>
+                          <p className="mt-3 text-base leading-relaxed text-slate-800">{log.note}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-slate-200 px-3 py-1.5 text-sm font-bold text-slate-800">{log.date}</span>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
+                  <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
                     No transaction history recorded yet.
                   </p>
                 )
               ) : selectedEmployee.changeHistory && selectedEmployee.changeHistory.length > 0 ? (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {selectedEmployee.changeHistory.map((change, idx) => (
-                    <div key={`${change.changedAt}-${idx}`} className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                      <p className="text-xs font-semibold text-slate-700">{change.reason}</p>
-                      <p className="mt-1 text-[0.62rem] font-bold text-slate-400">
+                    <div key={`${change.changedAt}-${idx}`} className="rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md">
+                      <p className="text-base font-semibold leading-relaxed text-slate-950">{change.reason}</p>
+                      <p className="mt-3 text-sm font-bold text-slate-700">
                         By {change.changedBy || 'Unknown user'} · {change.changedAt}
                       </p>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-xs font-medium text-slate-400">
+                <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
                   No profile changes recorded yet.
                 </p>
               )}
@@ -1933,17 +1770,26 @@ export default function EmployeeMasterData() {
 
       {/* EDIT EMPLOYEE PROFILE MODAL */}
       {showEmployeeEditModal && selectedEmployee && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-slate-950/65 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
           <form
             onSubmit={handleUpdateSelectedEmployee}
-            className="my-6 max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl sm:p-7"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-employee-profile-title"
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
           >
-            <div className="flex items-start justify-between border-b border-slate-100 pb-4">
-              <div>
-                <h3 className="text-base font-black text-slate-900">Edit Employee Profile</h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500">
-                  {selectedEmployee.id} · {selectedEmployee.firstName} {selectedEmployee.lastName}
-                </p>
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 border-blue-100 bg-blue-50 text-sm font-black text-blue-700 shadow-sm">
+                  {selectedEmployee.initials}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee management</p>
+                  <h2 id="edit-employee-profile-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Edit Employee Profile</h2>
+                  <p className="mt-1 truncate text-xs font-semibold text-slate-500">
+                    {selectedEmployee.id} <span className="px-1 text-slate-300">/</span> {selectedEmployee.firstName} {selectedEmployee.lastName}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
@@ -1951,447 +1797,181 @@ export default function EmployeeMasterData() {
                   setShowEmployeeEditModal(false)
                   setEmployeeEditError('')
                 }}
-                className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-50"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
               >
                 Close
               </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-8 sm:py-6">
+              <div className="mx-auto max-w-4xl space-y-4">
+                {employeeEditError && (
+                  <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+                    {employeeEditError}
+                  </p>
+                )}
+
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Employee details</h3>
+                    <p className="mt-1 text-sm text-slate-600">Fields marked <span className="font-extrabold text-rose-600">*</span> are required.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Employee Code <span className="text-rose-600">*</span></span>
+                      <input
+                        type="text"
+                        name="empCode"
+                        required
+                        value={editEmployeeData.empCode}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Department</span>
+                      <select
+                        name="department"
+                        value={editEmployeeData.department}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      >
+                        {departments.map((dept) => (
+                          <option key={dept.id} value={dept.name}>
+                            {dept.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">First Name <span className="text-rose-600">*</span></span>
+                      <input
+                        type="text"
+                        name="firstName"
+                        required
+                        value={editEmployeeData.firstName}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Middle Name</span>
+                      <input
+                        type="text"
+                        name="middleName"
+                        value={editEmployeeData.middleName}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Last Name <span className="text-rose-600">*</span></span>
+                      <input
+                        type="text"
+                        name="lastName"
+                        required
+                        value={editEmployeeData.lastName}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Suffix</span>
+                      <input
+                        type="text"
+                        name="suffix"
+                        value={editEmployeeData.suffix}
+                        onChange={handleEditEmployeeInputChange}
+                        placeholder="e.g. Jr., III"
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Position</span>
+                      <input
+                        type="text"
+                        name="position"
+                        value={editEmployeeData.position}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Email</span>
+                      <input
+                        type="email"
+                        name="email"
+                        value={editEmployeeData.email}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+
+                    <label className="block sm:col-span-2">
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Status</span>
+                      <select
+                        name="status"
+                        value={editEmployeeData.status}
+                        onChange={handleEditEmployeeInputChange}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      >
+                        <option value="Active">Active</option>
+                        <option value="Inactive">Inactive</option>
+                      </select>
+                    </label>
+
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 sm:p-5">
+                  <label className="block">
+                    <span className="mb-2 flex flex-wrap items-center gap-2 text-sm font-extrabold text-slate-900">
+                      Why are you changing this information?
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-extrabold uppercase tracking-wide text-amber-900">Required</span>
+                    </span>
+                    <span className="mb-2 block text-sm leading-relaxed text-slate-600">This reason will be saved in the employee profile history.</span>
+                    <textarea
+                      name="reason"
+                      required
+                      value={editEmployeeData.reason}
+                      onChange={handleEditEmployeeInputChange}
+                      placeholder="For example: Employee transferred to another department."
+                      className="min-h-32 w-full rounded-xl border-2 border-amber-300 bg-white p-4 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-amber-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                    />
+                  </label>
+                </section>
+              </div>
             </div>
 
-            {employeeEditError && (
-              <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                {employeeEditError}
-              </p>
-            )}
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Employee Code</span>
-                <input
-                  type="text"
-                  name="empCode"
-                  required
-                  value={editEmployeeData.empCode}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Department</span>
-                <select
-                  name="department"
-                  value={editEmployeeData.department}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                >
-                  {departments.map((dept) => (
-                    <option key={dept.id} value={dept.name}>
-                      {dept.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">First Name</span>
-                <input
-                  type="text"
-                  name="firstName"
-                  required
-                  value={editEmployeeData.firstName}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Middle Name</span>
-                <input
-                  type="text"
-                  name="middleName"
-                  value={editEmployeeData.middleName}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Last Name</span>
-                <input
-                  type="text"
-                  name="lastName"
-                  required
-                  value={editEmployeeData.lastName}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Suffix</span>
-                <input
-                  type="text"
-                  name="suffix"
-                  value={editEmployeeData.suffix}
-                  onChange={handleEditEmployeeInputChange}
-                  placeholder="e.g. Jr., III"
-                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Position</span>
-                <input
-                  type="text"
-                  name="position"
-                  value={editEmployeeData.position}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Email</span>
-                <input
-                  type="email"
-                  name="email"
-                  value={editEmployeeData.email}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <label className="block sm:col-span-2">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Status</span>
-                <select
-                  name="status"
-                  value={editEmployeeData.status}
-                  onChange={handleEditEmployeeInputChange}
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                >
-                  <option value="Active">Active</option>
-                  <option value="Inactive">Inactive</option>
-                </select>
-              </label>
-
-              <label className="block sm:col-span-2">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                  Why are you changing this information? (Required)
-                </span>
-                <textarea
-                  name="reason"
-                  required
-                  value={editEmployeeData.reason}
-                  onChange={handleEditEmployeeInputChange}
-                  placeholder="For example: Employee transferred to another department."
-                  className="min-h-24 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2">
+            <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-8">
               <button
                 type="button"
                 onClick={() => {
                   setShowEmployeeEditModal(false)
                   setEmployeeEditError('')
                 }}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-blue-700"
+                className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-200"
               >
                 Save Changes
               </button>
-            </div>
+            </footer>
           </form>
         </div>
       )}
 
-      {/* MULTI-ITEM ISSUANCE MODAL */}
-      {showIssuanceModal && selectedEmployee && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-slate-950/70 p-4 backdrop-blur-sm overscroll-contain">
-          <div className="max-h-[calc(100vh-2rem)] w-full max-w-3xl overflow-y-auto overscroll-contain rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-sm font-black text-slate-900">{issuanceSelectionMode === 'single' ? 'Issue One Item' : 'Issue Multiple Items'}</h3>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Issue items to <span className="font-bold text-blue-700">{selectedEmployee.firstName} {selectedEmployee.lastName}</span> ({selectedEmployee.id})
-                </p>
-                <p className="mt-1 text-[0.68rem] text-slate-400">
-                  {issuanceSelectionMode === 'single'
-                    ? 'Select one item to send an approval request.'
-                    : 'All selected items will be listed in one approval email to this employee.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={isSubmittingIssuance}
-                onClick={() => {
-                  resetIssuanceForm()
-                  setShowIssuanceModal(false)
-                }}
-                className="rounded-xl border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleAddIssuanceSubmit} className="mt-4 space-y-3">
-              {issuanceSubmitError && (
-                <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                  {issuanceSubmitError}
-                </p>
-              )}
-              <div>
-                <span className="mb-1 block text-[0.65rem] font-extrabold uppercase text-slate-600">Issuance Mode</span>
-                <div className="grid grid-cols-2 gap-2" role="group" aria-label="Issuance mode">
-                  <button
-                    type="button"
-                    aria-pressed={issuanceSelectionMode === 'single'}
-                    disabled={isSubmittingIssuance}
-                    onClick={() => {
-                      setIssuanceSelectionMode('single')
-                      const firstSelected = selectedAssetCodes.slice(0, 1)
-                      setSelectedAssetCodes(firstSelected)
-                      setSelectedAssetQuantities((current) => firstSelected.length > 0
-                        ? { [firstSelected[0]]: current[firstSelected[0]] || '1' }
-                        : {}
-                      )
-                      setIssuanceSubmitError('')
-                    }}
-                    className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${issuanceSelectionMode === 'single' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    One item
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={issuanceSelectionMode === 'multiple'}
-                    disabled={isSubmittingIssuance}
-                    onClick={() => {
-                      setIssuanceSelectionMode('multiple')
-                      setIssuanceSubmitError('')
-                    }}
-                    className={`rounded-xl border px-3 py-2 text-xs font-bold transition ${issuanceSelectionMode === 'multiple' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                  >
-                    Select multiple items
-                  </button>
-                </div>
-              </div>
-              {/* SELECT AVAILABLE INVENTORY ITEM DROPDOWN */}
-              <div className="block">
-                <label htmlFor="available-inventory-search" className="mb-1 block text-[0.65rem] font-extrabold uppercase text-blue-700">
-                  {issuanceSelectionMode === 'single' ? 'Select an Available Asset / Item from Inventory' : 'Select Available Assets / Items from Inventory'}
-                </label>
-                <div
-                  className="relative"
-                  onBlur={(e) => {
-                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-                      setIsInventoryDropdownOpen(false)
-                      setInventorySearchQuery('')
-                    }
-                  }}
-                >
-                  <input
-                    id="available-inventory-search"
-                    type="search"
-                    role="combobox"
-                    aria-autocomplete="list"
-                    aria-expanded={isInventoryDropdownOpen}
-                    aria-controls="available-inventory-options"
-                    autoComplete="off"
-                    value={isInventoryDropdownOpen
-                      ? inventorySearchQuery
-                      : selectedAssetCodes.length > 0
-                        ? `${selectedAssetCodes.length} ${selectedAssetCodes.length === 1 ? 'item' : 'items'} selected · ${selectedUnitCount} ${selectedUnitCount === 1 ? 'unit' : 'units'}`
-                        : ''}
-                    onFocus={() => {
-                      setIsInventoryDropdownOpen(true)
-                      setInventorySearchQuery('')
-                    }}
-                    onChange={(e) => {
-                      setInventorySearchQuery(e.target.value)
-                      setIsInventoryDropdownOpen(true)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        setIsInventoryDropdownOpen(false)
-                        setInventorySearchQuery('')
-                      }
-                    }}
-                    placeholder="Search by item name or asset code"
-                    className={`h-10 w-full border border-slate-200 bg-white px-3.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 ${isInventoryDropdownOpen ? 'rounded-t-xl rounded-b-none border-blue-300' : 'rounded-xl'}`}
-                  />
-                  {isInventoryDropdownOpen && (
-                    <div
-                      id="available-inventory-options"
-                      role="listbox"
-                      aria-label="Available inventory items"
-                      className="absolute z-30 max-h-64 w-full overflow-y-auto overscroll-contain rounded-b-xl border border-t-0 border-blue-300 bg-white shadow-lg"
-                    >
-                      {inventoryLoadError ? (
-                        <p role="alert" className="px-3.5 py-3 text-xs font-semibold text-rose-600">{inventoryLoadError}</p>
-                      ) : isLoadingInventory ? (
-                        <p className="px-3.5 py-3 text-xs font-medium text-slate-500">Loading available inventory...</p>
-                      ) : filteredAvailableInventoryStock.length > 0 ? (
-                        filteredAvailableInventoryStock.map((stock) => (
-                          <button
-                            key={stock.id}
-                            type="button"
-                            role="option"
-                            aria-selected={selectedAssetCodes.includes(stock.itemCode)}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => handleSelectInventoryItem(stock.itemCode)}
-                            className={`flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 text-left text-xs transition last:border-b-0 hover:bg-blue-50 ${selectedAssetCodes.includes(stock.itemCode) ? 'bg-blue-50' : ''}`}
-                          >
-                            <span className="min-w-0 truncate font-semibold text-slate-700">
-                              {stock.itemCode} — {stock.description}
-                              <span className="mt-1 block text-[0.62rem] font-medium text-slate-400">Available: {stock.availableQuantity} {stock.unitOfMeasure}</span>
-                            </span>
-                            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[0.62rem] font-bold text-slate-600">
-                              {stock.condition}
-                            </span>
-                            {selectedAssetCodes.includes(stock.itemCode) && (
-                              <span className="shrink-0 rounded-full bg-blue-100 px-2 py-1 text-[0.62rem] font-bold text-blue-700">Selected</span>
-                            )}
-                          </button>
-                        ))
-                      ) : availableInventoryStock.length > 0 ? (
-                        <p className="px-3.5 py-3 text-xs font-medium text-slate-500">No inventory items match this search.</p>
-                      ) : (
-                        <p className="px-3.5 py-3 text-xs font-medium text-slate-500">No available items in inventory.</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-                {issuanceSelectionMode === 'multiple' && (
-                  <p className="mt-1.5 text-[0.65rem] font-medium text-slate-500">
-                    Click a selected item again to unselect it, or use the Unselect all button below.
-                  </p>
-                )}
-              </div>
-
-              <div className="rounded-xl border border-slate-200">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3.5 py-2.5">
-                  <div>
-                    <span className="block text-[0.65rem] font-extrabold uppercase text-slate-700">Selected for issuance</span>
-                    <span className="mt-0.5 block text-[0.62rem] font-medium text-slate-500">Review quantities and unselect items before sending.</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-blue-50 px-2 py-1 text-[0.62rem] font-extrabold text-blue-700">
-                      {selectedInventoryItems.length} {selectedInventoryItems.length === 1 ? 'item' : 'items'} · {selectedUnitCount} {selectedUnitCount === 1 ? 'unit' : 'units'}
-                    </span>
-                    {issuanceSelectionMode === 'multiple' && selectedAssetCodes.length > 0 && (
-                      <button
-                        type="button"
-                        disabled={isSubmittingIssuance}
-                        onClick={() => {
-                          setSelectedAssetCodes([])
-                          setSelectedAssetQuantities({})
-                          setIssuanceSubmitError('')
-                        }}
-                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[0.62rem] font-bold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
-                      >
-                        Unselect all
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {selectedInventoryItems.length > 0 ? (
-                  <ul className="max-h-64 divide-y divide-slate-100 overflow-y-auto overscroll-contain">
-                    {selectedInventoryItems.map((item) => (
-                      <li key={item.id} className="flex flex-col gap-2 px-3.5 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0 sm:flex-1">
-                          <p className="truncate text-xs font-bold text-slate-800">{item.description}</p>
-                          <p className="mt-0.5 truncate text-[0.65rem] font-medium text-slate-500">{item.itemCode} · Available: {item.availableQuantity} {item.unitOfMeasure} · Condition: {item.condition}</p>
-                        </div>
-                        <div className="flex items-end gap-2">
-                          <label className="block w-28 shrink-0">
-                            <span className="mb-1 block text-[0.58rem] font-bold text-slate-500">Borrow quantity</span>
-                            <input
-                              type="number"
-                              min="1"
-                              max={item.availableQuantity}
-                              step="1"
-                              required
-                              disabled={isSubmittingIssuance}
-                              value={selectedAssetQuantities[item.itemCode] ?? '1'}
-                              onChange={(event) => setSelectedAssetQuantities((current) => ({
-                                ...current,
-                                [item.itemCode]: event.target.value,
-                              }))}
-                              aria-label={`Borrow quantity for ${item.description}`}
-                              className="h-9 w-full rounded-lg border border-slate-200 px-2.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            disabled={isSubmittingIssuance}
-                            onClick={() => handleSelectInventoryItem(item.itemCode)}
-                            aria-label={`Unselect ${item.description}`}
-                            className="shrink-0 rounded-lg border border-slate-200 px-2.5 py-2 text-[0.65rem] font-bold text-slate-600 transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-50"
-                          >
-                            Unselect
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="px-3.5 py-3 text-xs font-medium text-slate-400">
-                    {issuanceSelectionMode === 'single' ? 'Choose one item above.' : 'Choose one or more items above.'}
-                  </p>
-                )}
-              </div>
-
-              {/* ISSUANCE NOTES */}
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Issuance Notes</span>
-                <input
-                  type="text"
-                  placeholder="e.g. Acknowledged by employee"
-                  value={issuanceNotes}
-                  onChange={(e) => setIssuanceNotes(e.target.value)}
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-
-              <div className="mt-5 flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isSubmittingIssuance}
-                  onClick={() => {
-                    resetIssuanceForm()
-                    setShowIssuanceModal(false)
-                  }}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingIssuance || selectedInventoryItems.length === 0 || selectedInventoryItems.some((item) => {
-                    const quantity = Number(selectedAssetQuantities[item.itemCode])
-                    return !Number.isInteger(quantity) || quantity < 1 || quantity > item.availableQuantity
-                  })}
-                  className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-blue-700 shadow-md shadow-blue-600/20 disabled:cursor-wait disabled:opacity-70"
-                >
-                  {isSubmittingIssuance
-                    ? issuanceSelectionMode === 'single'
-                      ? 'Sending approval request...'
-                      : `Sending batch (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})...`
-                    : issuanceSelectionMode === 'single'
-                      ? 'Send for approval'
-                      : `Send batch for approval (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </GsoPageFrame>
   )
 }
