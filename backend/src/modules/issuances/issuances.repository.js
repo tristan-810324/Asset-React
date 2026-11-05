@@ -282,7 +282,7 @@ async function markEmailFailed(issuanceId) {
   }
 }
 
-async function createPendingIssuanceBatch({ employeeCode, items: requestedItems, notes, tokenHash, requestedByUserId }) {
+async function createPendingIssuanceBatch({ employeeCode, items: requestedItems, notes, borrowDetails, tokenHash, requestedByUserId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -291,7 +291,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       `SELECT employee.id, employee.employee_code, employee.first_name, employee.last_name,
               employee.email, employee.status,
               requester.user_id AS requester_user_id,
-              requester.email AS requester_email
+              COALESCE(requester.email, employee.email) AS requester_email
          FROM employees AS employee
          LEFT JOIN LATERAL (
            SELECT profile.user_id, account.email
@@ -309,12 +309,9 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     const employee = employeeResult.rows[0];
     if (!employee) throw notFound('Hindi na makita ang employee profile. I-refresh ang page at subukan muli.');
     if (employee.status !== 'Active') throw conflict('Hindi puwedeng mag-request ng issuance para sa inactive na employee.');
-    if (!employee.requester_user_id || !employee.requester_email) {
-      throw conflict('Kailangan munang ma-verify ng GSO ang requester account na naka-link sa employee bago magpadala ng issuance.');
-    }
 
     const itemResult = await client.query(
-      `SELECT id, item_code, description, condition, inventory_status, tracking_mode, quantity, unit_of_measure
+      `SELECT id, item_code, description, condition, inventory_status, tracking_mode, issue_behavior, quantity, unit_of_measure
          FROM item_catalog
         WHERE id = ANY($1::BIGINT[])
         ORDER BY id
@@ -329,6 +326,25 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       ...itemsById.get(String(requested.itemId)),
       requestedQuantity: requested.quantity,
     }));
+    const itemFlow = (item) => item.tracking_mode === 'individual'
+      ? 'per-unit'
+      : item.issue_behavior === 'consumable' ? 'consumable' : 'reusable';
+    const selectedFlows = new Set(items.map(itemFlow));
+    if (selectedFlows.size > 1) {
+      throw conflict('Isang uri lang ng inventory ang iproseso sa bawat issuance.');
+    }
+    const isReusableBorrow = selectedFlows.has('reusable');
+    if (isReusableBorrow && (!borrowDetails?.useAt || !borrowDetails?.expectedReturnAt)) {
+      throw conflict('Kailangan ang petsa at oras ng hiraman at pagsoli para sa reusable stock.');
+    }
+    if (!isReusableBorrow && borrowDetails) throw conflict('Reusable quantity stock lamang ang nangangailangan ng borrowing schedule.');
+    const isConsumableIssue = selectedFlows.has('consumable');
+    const initialStatus = isConsumableIssue || isReusableBorrow ? 'Issued' : 'Pending';
+    const initialDecisionNote = isConsumableIssue
+      ? 'Released by GSO. No employee approval is required for consumable stock.'
+      : isReusableBorrow
+        ? 'Face-to-face reusable-stock borrowing recorded by GSO; return is due at the scheduled date and time.'
+        : 'Awaiting physical handover and employee receipt acknowledgment.';
     for (const item of items) {
       if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
       const availableQuantity = await getAvailableQuantity(client, item);
@@ -340,10 +356,20 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
 
     const batchResult = await client.query(
       `INSERT INTO employee_issuance_batches (
-         employee_id, requested_by_user_id, requester_user_id, status, token_hash, token_expires_at
-       ) VALUES ($1, $2, $3, 'Pending', $4, NOW() + INTERVAL '24 hours')
-       RETURNING id, status, token_expires_at AS "expiresAt", requested_at AS "requestedAt"`,
-      [employee.id, requestedByUserId, employee.requester_user_id, tokenHash],
+         employee_id, requested_by_user_id, requester_user_id, status, token_hash, token_expires_at,
+         borrow_use_date, expected_return_date, borrow_use_at, expected_return_at, use_location, use_purpose, decision_note, decided_at
+       ) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours', $6, $7, $8, $9, $10, $11, $12,
+                 CASE WHEN $4 = 'Issued' THEN NOW() ELSE NULL END)
+       RETURNING id, status, token_expires_at AS "expiresAt", requested_at AS "requestedAt",
+                 borrow_use_date::TEXT AS "borrowUseDate",
+                 to_char(borrow_use_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "borrowUseAt",
+                 expected_return_date::TEXT AS "expectedReturnDate",
+                 to_char(expected_return_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "expectedReturnAt",
+                 use_location AS "useLocation", use_purpose AS "usePurpose"`,
+      [employee.id, requestedByUserId, employee.requester_user_id, initialStatus, tokenHash,
+        borrowDetails?.useDate ?? null, borrowDetails?.expectedReturnDate ?? null,
+        borrowDetails?.useAt ?? null, borrowDetails?.expectedReturnAt ?? null,
+        borrowDetails?.useLocation ?? null, borrowDetails?.purpose ?? null, initialDecisionNote],
     );
     const batch = batchResult.rows[0];
 
@@ -352,10 +378,11 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       const inserted = await client.query(
         `INSERT INTO employee_issuances (
            batch_id, employee_id, item_id, requested_by_user_id, status, token_hash,
-           token_expires_at, item_condition, notes, quantity, unit_of_measure
-         ) VALUES ($1, $2, $3, $4, 'Pending', NULL, $5, $6, $7, $8, $9)
+           token_expires_at, item_condition, notes, quantity, unit_of_measure, decision_note, decided_at
+         ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11,
+                   CASE WHEN $5 = 'Issued' THEN NOW() ELSE NULL END)
          RETURNING id`,
-        [batch.id, employee.id, item.id, requestedByUserId, batch.expiresAt, item.condition, notes, item.requestedQuantity, item.unit_of_measure],
+        [batch.id, employee.id, item.id, requestedByUserId, initialStatus, batch.expiresAt, item.condition, notes, item.requestedQuantity, item.unit_of_measure, initialDecisionNote],
       );
       await refreshInventoryStatus(client, item.id);
       const issuance = {
@@ -377,6 +404,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         itemCode: item.item_code,
         itemName: item.description,
         trackingMode: item.tracking_mode,
+        issueBehavior: item.issue_behavior,
         condition: item.condition,
         quantity: item.requestedQuantity,
         unitOfMeasure: item.unit_of_measure,
@@ -385,12 +413,25 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
 
       await writeAuditLog(client, issuance, {
         changedByUserId: requestedByUserId,
-        reason: `Issuance request for ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} is awaiting approval in the Requester Dashboard.`,
+        reason: isConsumableIssue
+          ? `GSO issued ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} to ${employee.employee_code}; no employee approval is required for consumable stock.`
+          : isReusableBorrow
+            ? `GSO recorded a face-to-face borrowing of ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} for ${employee.employee_code}.`
+            : `Per-unit asset ${issuance.description} is reserved for handover to ${employee.employee_code}; employee receipt acknowledgment is required before custody becomes active.`,
         oldValues: { inventoryStatus: item.inventory_status, availableQuantity: item.availableQuantityBefore },
         newValues: {
-          inventoryStatus: item.requestedQuantity === item.availableQuantityBefore ? 'Reserved' : 'Available',
-          reservedQuantity: item.requestedQuantity,
-          issuanceStatus: 'Pending',
+          inventoryStatus: item.requestedQuantity === item.availableQuantityBefore
+            ? isReusableBorrow ? 'Borrowed' : isConsumableIssue ? 'Issued' : 'Reserved'
+            : 'Available',
+          reservedQuantity: initialStatus === 'Pending' ? item.requestedQuantity : 0,
+          issuedQuantity: initialStatus === 'Issued' ? item.requestedQuantity : 0,
+          issuanceStatus: initialStatus,
+          borrowingSchedule: isReusableBorrow ? {
+            useAt: batch.borrowUseAt,
+            expectedReturnAt: batch.expectedReturnAt,
+            useLocation: batch.useLocation,
+            purpose: batch.usePurpose,
+          } : null,
           issuanceBatchId: batch.id,
           employeeCode: employee.employee_code,
           employeeEmail: employee.requester_email,
@@ -402,8 +443,17 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     return {
       id: batch.id,
       status: batch.status,
+      requesterAccountLinked: Boolean(employee.requester_user_id),
       expiresAt: batch.expiresAt,
       requestedAt: batch.requestedAt,
+      borrowDetails: batch.borrowUseDate ? {
+        useDate: batch.borrowUseDate,
+        expectedReturnDate: batch.expectedReturnDate,
+        useAt: batch.borrowUseAt,
+        expectedReturnAt: batch.expectedReturnAt,
+        useLocation: batch.useLocation,
+        purpose: batch.usePurpose,
+      } : null,
       employee_code: employee.employee_code,
       employee_name: `${employee.first_name} ${employee.last_name}`,
       employee_email: employee.requester_email,
@@ -427,13 +477,13 @@ async function markBatchEmailSent(batchId) {
     await client.query(
       `UPDATE employee_issuance_batches
           SET email_sent_at = NOW()
-        WHERE id = $1 AND status = 'Pending'`,
+      WHERE id = $1 AND status IN ('Pending', 'Issued')`,
       [batchId],
     );
     await client.query(
       `UPDATE employee_issuances
           SET email_sent_at = NOW()
-        WHERE batch_id = $1 AND status = 'Pending'`,
+        WHERE batch_id = $1 AND status IN ('Pending', 'Issued')`,
       [batchId],
     );
     await client.query('COMMIT');
@@ -515,6 +565,12 @@ async function listMyPendingIssuanceBatches(userId) {
             batch.status,
             batch.requested_at AS "requestedAt",
             batch.token_expires_at AS "expiresAt",
+            batch.borrow_use_date::TEXT AS "borrowUseDate",
+            to_char(batch.borrow_use_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "borrowUseAt",
+            batch.expected_return_date::TEXT AS "expectedReturnDate",
+            to_char(batch.expected_return_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "expectedReturnAt",
+            batch.use_location AS "useLocation",
+            batch.use_purpose AS "usePurpose",
             employee.employee_code AS "employeeCode",
             employee.first_name || ' ' || employee.last_name AS "employeeName",
             requester.name AS "requestedBy",
@@ -523,10 +579,20 @@ async function listMyPendingIssuanceBatches(userId) {
                 'issuanceId', issue.id::TEXT,
                 'itemCode', inventory.item_code,
                 'itemName', inventory.description,
+                'trackingMode', inventory.tracking_mode,
+                'issueBehavior', inventory.issue_behavior,
                 'condition', issue.item_condition,
                 'quantity', issue.quantity,
                 'unitOfMeasure', issue.unit_of_measure,
-                'notes', issue.notes
+                'notes', issue.notes,
+                'tags', COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'tagCode', unit_tag.tag_code,
+                    'unitNumber', unit_tag.unit_number
+                  ) ORDER BY unit_tag.unit_number)
+                    FROM asset_unit_tags AS unit_tag
+                   WHERE unit_tag.issuance_id = issue.id
+                ), '[]'::JSON)
               ) ORDER BY issue.id) FILTER (WHERE issue.id IS NOT NULL),
               '[]'::JSON
             ) AS items
@@ -541,9 +607,66 @@ async function listMyPendingIssuanceBatches(userId) {
         AND profile.verification_status = 'Verified'
         AND batch.requester_user_id = $1
         AND batch.status = 'Pending'
-        AND batch.token_expires_at > NOW()
       GROUP BY batch.id, employee.id, requester.id
       ORDER BY batch.requested_at DESC, batch.id DESC`,
+    [userId],
+  );
+  return result.rows;
+}
+
+async function listMyIssuanceActivity(userId) {
+  const result = await pool.query(
+    `SELECT batch.id::TEXT AS id,
+            batch.status,
+            batch.requested_at AS "requestedAt",
+            batch.decided_at AS "decidedAt",
+            batch.decision_note AS "decisionNote",
+            batch.borrow_use_date::TEXT AS "borrowUseDate",
+            to_char(batch.borrow_use_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "borrowUseAt",
+            batch.expected_return_date::TEXT AS "expectedReturnDate",
+            to_char(batch.expected_return_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "expectedReturnAt",
+            batch.use_location AS "useLocation",
+            batch.use_purpose AS "usePurpose",
+            employee.employee_code AS "employeeCode",
+            employee.first_name || ' ' || employee.last_name AS "employeeName",
+            requester.name AS "requestedBy",
+            COALESCE(
+              json_agg(json_build_object(
+                'issuanceId', issue.id::TEXT,
+                'itemCode', inventory.item_code,
+                'itemName', inventory.description,
+                'trackingMode', inventory.tracking_mode,
+                'issueBehavior', inventory.issue_behavior,
+                'status', issue.status,
+                'condition', issue.item_condition,
+                'quantity', issue.quantity,
+                'returnedQuantity', issue.returned_quantity,
+                'unitOfMeasure', issue.unit_of_measure,
+                'notes', issue.notes,
+                'tags', COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'tagCode', unit_tag.tag_code,
+                    'unitNumber', unit_tag.unit_number
+                  ) ORDER BY unit_tag.unit_number)
+                    FROM asset_unit_tags AS unit_tag
+                   WHERE unit_tag.issuance_id = issue.id
+                ), '[]'::JSON)
+              ) ORDER BY issue.id) FILTER (WHERE issue.id IS NOT NULL),
+              '[]'::JSON
+            ) AS items
+       FROM requester_identity_profiles AS profile
+       JOIN employees AS employee
+         ON lower(trim(employee.employee_code)) = lower(trim(profile.employee_code))
+       JOIN employee_issuance_batches AS batch ON batch.employee_id = employee.id
+       LEFT JOIN users AS requester ON requester.id = batch.requested_by_user_id
+       LEFT JOIN employee_issuances AS issue ON issue.batch_id = batch.id
+       LEFT JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+      WHERE profile.user_id = $1
+        AND profile.verification_status = 'Verified'
+        AND batch.requester_user_id = $1
+      GROUP BY batch.id, employee.id, requester.id
+      ORDER BY COALESCE(batch.decided_at, batch.requested_at) DESC, batch.id DESC
+      LIMIT 100`,
     [userId],
   );
   return result.rows;
@@ -555,7 +678,16 @@ async function getIssuanceBatch(batchId) {
             batch.status,
             batch.requested_at AS "requestedAt",
             batch.decided_at AS "decidedAt",
+            batch.decision_note AS "decisionNote",
+            batch.email_sent_at IS NOT NULL AS "emailSent",
             batch.token_expires_at AS "expiresAt",
+            batch.borrow_use_date::TEXT AS "borrowUseDate",
+            to_char(batch.borrow_use_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "borrowUseAt",
+            batch.expected_return_date::TEXT AS "expectedReturnDate",
+            to_char(batch.expected_return_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "expectedReturnAt",
+            batch.use_location AS "useLocation",
+            batch.use_purpose AS "usePurpose",
+            batch.requester_user_id IS NOT NULL AS "requesterAccountLinked",
             employee.employee_code AS "employeeCode",
             employee.first_name || ' ' || employee.last_name AS "employeeName",
             employee.email AS "employeeEmail"
@@ -572,6 +704,7 @@ async function getIssuanceBatch(batchId) {
             inventory.item_code AS "itemCode",
             inventory.description AS "itemName",
             inventory.tracking_mode AS "trackingMode",
+            inventory.issue_behavior AS "issueBehavior",
             issue.item_condition AS condition,
             issue.quantity,
             issue.unit_of_measure AS "unitOfMeasure",
@@ -612,6 +745,12 @@ async function listApprovedIssuanceBatches() {
             batch.requested_at AS "requestedAt",
             batch.decided_at AS "decidedAt",
             batch.token_expires_at AS "expiresAt",
+            batch.borrow_use_date::TEXT AS "borrowUseDate",
+            to_char(batch.borrow_use_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "borrowUseAt",
+            batch.expected_return_date::TEXT AS "expectedReturnDate",
+            to_char(batch.expected_return_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "expectedReturnAt",
+            batch.use_location AS "useLocation",
+            batch.use_purpose AS "usePurpose",
             employee.employee_code AS "employeeCode",
             employee.first_name || ' ' || employee.last_name AS "employeeName",
             employee.email AS "employeeEmail",
@@ -871,11 +1010,11 @@ async function lookupApproval(tokenHash) {
   return result.rows[0] || null;
 }
 
-async function resolveApproval({ tokenHash, batchId, requesterUserId, action }) {
+async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId, action, handoverMethod, handoverNote }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const batchResult = batchId !== undefined
+    const batchResult = batchId !== undefined && requesterUserId !== undefined
       ? await client.query(
         `SELECT batch.id, batch.status, batch.token_expires_at, employee.id AS employee_id,
                 employee.employee_code, employee.first_name, employee.last_name
@@ -890,7 +1029,17 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, action }) 
           FOR UPDATE OF batch`,
         [batchId, requesterUserId],
       )
-      : await client.query(
+      : batchId !== undefined && gsoUserId !== undefined
+        ? await client.query(
+          `SELECT batch.id, batch.status, batch.token_expires_at, employee.id AS employee_id,
+                  employee.employee_code, employee.first_name, employee.last_name
+             FROM employee_issuance_batches AS batch
+             JOIN employees AS employee ON employee.id = batch.employee_id
+            WHERE batch.id = $1
+            FOR UPDATE OF batch`,
+          [batchId],
+        )
+        : await client.query(
         `SELECT batch.id, batch.status, batch.token_expires_at, employee.id AS employee_id,
                 employee.employee_code, employee.first_name, employee.last_name
            FROM employee_issuance_batches AS batch
@@ -946,7 +1095,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, action }) 
         };
       }
 
-      if (new Date(batch.token_expires_at).getTime() <= Date.now()) {
+      if (action !== 'acknowledge' && new Date(batch.token_expires_at).getTime() <= Date.now()) {
         await client.query(
           `UPDATE employee_issuance_batches
               SET status = 'Expired',
@@ -988,13 +1137,21 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, action }) 
         throw conflict('May item sa issuance batch na hindi na pending. Makipag-ugnayan sa GSO para ma-check ang request.');
       }
 
-      const nextStatus = action === 'approve' ? 'Issued' : 'Rejected';
-      const decisionChannel = requesterUserId !== undefined
-        ? 'Requester Dashboard'
-        : 'legacy email approval link';
-      const decisionNote = action === 'approve'
-        ? `Approved by employee in the ${decisionChannel}.`
-        : `Rejected by employee in the ${decisionChannel}.`;
+      if (action === 'acknowledge' && items.some((item) => item.tracking_mode !== 'individual')) {
+        throw conflict('Per-unit assets lang ang nangangailangan ng receipt acknowledgment.');
+      }
+
+      const nextStatus = action === 'reject' ? 'Rejected' : 'Issued';
+      const decisionChannel = gsoUserId !== undefined
+        ? 'GSO-recorded handover'
+        : requesterUserId !== undefined ? 'Requester Dashboard' : 'legacy email approval link';
+      const decisionNote = action === 'reject'
+        ? `Rejected by employee through the ${decisionChannel}.`
+        : action === 'acknowledge' && gsoUserId !== undefined
+          ? `Receipt recorded by GSO via ${handoverMethod === 'authorized_handover' ? 'authorized handover' : 'signed receipt'}${handoverNote ? `: ${handoverNote}` : ''}.`
+          : action === 'acknowledge'
+            ? 'Employee confirmed physical receipt in the Requester Dashboard.'
+            : `Approved by employee in the ${decisionChannel}.`;
       const itemIds = items.map((item) => item.item_id);
 
       await client.query(
@@ -1010,7 +1167,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, action }) 
         [batch.id, nextStatus, decisionNote],
       );
       const generatedTags = [];
-      if (action === 'approve') {
+      if (action !== 'reject') {
         const assignedUserId = requesterUserId ?? await requesterUserIdForEmployee(client, batch.employee_code);
         for (const item of items) {
           const itemTags = await createUnitTags(client, item, assignedUserId);
@@ -1031,13 +1188,15 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, action }) 
           description: item.description,
         };
         await writeAuditLog(client, issuance, {
-          changedByUserId: requesterUserId ?? null,
-          reason: `${nextStatus} by employee ${item.employee_code} in the ${decisionChannel} for ${item.quantity} ${item.unit_of_measure}.`,
+          changedByUserId: requesterUserId ?? gsoUserId ?? null,
+          reason: action === 'acknowledge'
+            ? `${decisionNote} Unit custody was activated for ${item.employee_code}.`
+            : `${nextStatus} by employee ${item.employee_code} in the ${decisionChannel} for ${item.quantity} ${item.unit_of_measure}.`,
           oldValues: { issuanceStatus: 'Pending', quantity: item.quantity, unitOfMeasure: item.unit_of_measure },
           newValues: {
             issuanceStatus: nextStatus,
             inventoryStatus: inventoryStatuses.get(String(item.item_id)),
-            barcodeCount: action === 'approve' && item.tracking_mode !== 'quantity' ? Number(item.quantity) : 0,
+            barcodeCount: action !== 'reject' && item.tracking_mode !== 'quantity' ? Number(item.quantity) : 0,
           },
         });
       }
@@ -1171,6 +1330,8 @@ async function listEmployeeIssuances(employeeCode) {
       `SELECT issue.id::TEXT AS id,
               inventory.item_code AS code,
               inventory.description AS name,
+              inventory.tracking_mode AS "trackingMode",
+              inventory.issue_behavior AS "issueBehavior",
               issue.item_condition AS condition,
               issue.quantity - issue.returned_quantity AS quantity,
               issue.unit_of_measure AS "unitOfMeasure",
@@ -1247,57 +1408,6 @@ async function expirePendingIssuances() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const expiredBatches = await client.query(
-      `SELECT id
-         FROM employee_issuance_batches
-        WHERE status = 'Pending'
-          AND token_expires_at <= NOW()
-        ORDER BY token_expires_at, id
-        LIMIT 100
-        FOR UPDATE SKIP LOCKED`,
-    );
-    let expiredBatchItemCount = 0;
-    for (const batch of expiredBatches.rows) {
-      const itemsResult = await client.query(
-        `SELECT issue.id, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure, employee.employee_code,
-                employee.first_name, employee.last_name, inventory.item_code,
-                inventory.description
-           FROM employee_issuances AS issue
-           JOIN employees AS employee ON employee.id = issue.employee_id
-           JOIN item_catalog AS inventory ON inventory.id = issue.item_id
-          WHERE issue.batch_id = $1 AND issue.status = 'Pending'
-          ORDER BY issue.id
-          FOR UPDATE OF issue, inventory`,
-        [batch.id],
-      );
-      await client.query(
-        `UPDATE employee_issuance_batches
-            SET status = 'Expired',
-                decision_note = 'The issuance approval window expired.',
-                decided_at = NOW()
-          WHERE id = $1 AND status = 'Pending'`,
-        [batch.id],
-      );
-      await client.query(
-        `UPDATE employee_issuances
-            SET status = 'Expired',
-                decision_note = 'The issuance approval window expired.',
-                decided_at = NOW()
-          WHERE batch_id = $1 AND status = 'Pending'`,
-        [batch.id],
-      );
-      const itemIds = itemsResult.rows.map((item) => item.item_id);
-      for (const itemId of new Set(itemIds.map(String))) await refreshInventoryStatus(client, itemId);
-      for (const issuance of itemsResult.rows) {
-        await writeAuditLog(client, issuance, {
-          reason: `Employee issuance decision window expired for ${issuance.employee_code}; ${issuance.quantity} ${issuance.unit_of_measure} were released.`,
-          oldValues: { issuanceStatus: 'Pending', quantity: issuance.quantity, unitOfMeasure: issuance.unit_of_measure },
-          newValues: { issuanceStatus: 'Expired' },
-        });
-      }
-      expiredBatchItemCount += itemsResult.rowCount;
-    }
-
     const expiredResult = await client.query(
       `SELECT issue.id, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure, employee.employee_code,
               employee.first_name, employee.last_name, inventory.item_code,
@@ -1331,7 +1441,7 @@ async function expirePendingIssuances() {
     }
 
     await client.query('COMMIT');
-    return expiredBatchItemCount + expiredResult.rowCount;
+    return expiredResult.rowCount;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -1344,6 +1454,7 @@ module.exports = {
   createPendingIssuance,
   createPendingIssuanceBatch,
   listMyPendingIssuanceBatches,
+  listMyIssuanceActivity,
   getIssuanceBatch,
   listApprovedIssuanceBatches,
   getAssetTagByCode,

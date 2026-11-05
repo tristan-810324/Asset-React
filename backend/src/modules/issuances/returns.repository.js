@@ -52,7 +52,8 @@ async function createPendingReturn({
               issue.id AS issuance_id, issue.status AS issuance_status,
               issue.quantity, issue.returned_quantity, issue.unit_of_measure,
               inventory.id AS item_id, inventory.item_code, inventory.description,
-              inventory.inventory_status, inventory.condition AS current_condition
+              inventory.inventory_status, inventory.condition AS current_condition,
+              inventory.tracking_mode, inventory.issue_behavior
          FROM employees AS employee
          JOIN employee_issuances AS issue ON issue.employee_id = employee.id
          JOIN item_catalog AS inventory ON inventory.id = issue.item_id
@@ -68,6 +69,9 @@ async function createPendingReturn({
     const issued = issuedResult.rows[0];
     if (!issued) {
       throw notFound('Hindi na active at naka-issue sa employee ang item na ito. I-refresh at subukan muli.');
+    }
+    if (issued.issue_behavior === 'consumable') {
+      throw conflict('Consumable stock ay hindi ibinabalik sa return flow. I-record lamang ang aktuwal na quantity na natira sa GSO.');
     }
 
     const pendingQuantityResult = await client.query(
@@ -164,7 +168,8 @@ async function confirmReturnByGso({
               issue.id AS issuance_id, issue.status AS issuance_status,
               issue.quantity, issue.returned_quantity, issue.unit_of_measure,
               inventory.id AS item_id, inventory.item_code, inventory.description,
-              inventory.inventory_status, inventory.condition AS current_condition
+              inventory.inventory_status, inventory.condition AS current_condition,
+              inventory.tracking_mode, inventory.issue_behavior
          FROM employees AS employee
          JOIN employee_issuances AS issue ON issue.employee_id = employee.id
          JOIN item_catalog AS inventory ON inventory.id = issue.item_id
@@ -180,6 +185,9 @@ async function confirmReturnByGso({
     const issued = issuedResult.rows[0];
     if (!issued) {
       throw notFound('Hindi na active at naka-issue sa employee ang item na ito. I-refresh at subukan muli.');
+    }
+    if (issued.issue_behavior === 'consumable') {
+      throw conflict('Consumable stock ay hindi ibinabalik sa return flow. I-record lamang ang aktuwal na quantity na natira sa GSO.');
     }
 
     const decisionNote = 'Return confirmed by GSO staff.';

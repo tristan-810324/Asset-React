@@ -155,6 +155,15 @@ function validateInventoryItem(input, includeReason) {
   if (trackingMode !== undefined && !['individual', 'quantity'].includes(trackingMode)) {
     invalid('Pumili ng valid na inventory tracking mode.');
   }
+  const issueBehavior = input.issueBehavior === undefined && includeReason
+    ? undefined
+    : input.issueBehavior === undefined ? 'returnable' : input.issueBehavior;
+  if (issueBehavior !== undefined && !['consumable', 'returnable'].includes(issueBehavior)) {
+    invalid('Pumili kung consumable o ibinabalik ang stock kapag iniisyu.');
+  }
+  if (trackingMode === 'individual' && issueBehavior === 'consumable') {
+    invalid('Ang per-unit asset ay dapat ibalik at subaybayan bilang individual unit.');
+  }
   const serialNumber = optionalText(input.serialNumber, 'Manufacturer serial number', 120);
   const receiptReference = optionalText(input.receiptReference, 'Receipt reference', 120);
   const storageLocation = includeReason
@@ -180,6 +189,7 @@ function validateInventoryItem(input, includeReason) {
     receiptReference,
     ...(storageLocation === undefined ? {} : { storageLocation: storageLocation || 'GSO Storage' }),
     ...(trackingMode === undefined ? {} : { trackingMode }),
+    ...(issueBehavior === undefined ? {} : { issueBehavior }),
     dateAcquired: optionalDate(input.dateAcquired),
     timeAcquired: optionalTime(input.timeAcquired),
     unitCost,

@@ -22,6 +22,7 @@ export type InventoryChangeRecord = {
 }
 
 export type InventoryTrackingMode = 'individual' | 'quantity'
+export type InventoryIssueBehavior = 'consumable' | 'returnable'
 
 export type InventoryAssetTag = {
   tagCode: string
@@ -44,6 +45,22 @@ export type InventoryReceiptRecord = {
   createdAt: string
 }
 
+// Dates are Manila wall-clock text ("YYYY-MM-DDTHH:mm"), or a plain date on older and requester records.
+export type InventoryCurrentBorrower = {
+  id: string
+  borrowerName: string
+  reference: string
+  department: string | null
+  state: 'Borrowed' | 'Reserved' | 'For repair'
+  quantity: number
+  issuedAt: string
+  useAt: string | null
+  expectedReturnAt: string | null
+  useLocation: string | null
+  purpose: string | null
+  isOverdue: boolean
+}
+
 export type InventoryItemRecord = {
   id: string
   itemCode: string
@@ -51,6 +68,7 @@ export type InventoryItemRecord = {
   itemName: string
   description: string
   trackingMode: InventoryTrackingMode
+  issueBehavior: InventoryIssueBehavior
   serialNumber: string | null
   storageLocation: string
   assetTags: InventoryAssetTag[]
@@ -71,6 +89,7 @@ export type InventoryItemRecord = {
   createdAt: string
   createdBy: string | null
   changeHistory: InventoryChangeRecord[]
+  currentBorrowers: InventoryCurrentBorrower[]
 }
 
 export type NewInventoryItem = {
@@ -79,6 +98,7 @@ export type NewInventoryItem = {
   itemName: string
   description: string
   trackingMode: InventoryTrackingMode
+  issueBehavior: InventoryIssueBehavior
   serialNumber?: string | null
   receiptReference?: string
   storageLocation?: string

@@ -57,6 +57,8 @@ async function listAssets() {
             item.description,
             item.condition,
             item.unit_of_measure AS "unitOfMeasure",
+            item.tracking_mode AS "trackingMode",
+            item.issue_behavior AS "issueBehavior",
             GREATEST(item.quantity - COALESCE(employee_usage.active_quantity, 0) - COALESCE(borrower_usage.active_quantity, 0), 0)::INTEGER AS "availableQuantity"
        FROM item_catalog AS item
        LEFT JOIN LATERAL (
@@ -73,6 +75,8 @@ async function listAssets() {
             AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')
        ) AS borrower_usage ON TRUE
       WHERE item.quantity > 0
+        AND item.tracking_mode = 'quantity'
+        AND item.issue_behavior = 'returnable'
         AND item.condition NOT IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
       ORDER BY lower(COALESCE(NULLIF(item.item_name, ''), item.description)), item.id`,
   );
@@ -168,7 +172,7 @@ async function createRequest({ requestType, formData, userId }) {
       const itemIds = formData.items.map((item) => item.itemId).sort((a, b) => Number(a) - Number(b));
       const inventory = await client.query(
         `SELECT id, item_code, COALESCE(NULLIF(item_name, ''), description) AS name,
-                unit_of_measure, condition, inventory_status, quantity
+                unit_of_measure, condition, inventory_status, quantity, tracking_mode, issue_behavior
            FROM item_catalog
           WHERE id = ANY($1::BIGINT[])
           ORDER BY id
@@ -179,7 +183,8 @@ async function createRequest({ requestType, formData, userId }) {
       const inventoryById = new Map(inventory.rows.map((item) => [String(item.id), item]));
       items = formData.items.map((requested) => {
         const item = inventoryById.get(requested.itemId);
-        if (!item || ['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(item.condition)) {
+        if (!item || item.tracking_mode !== 'quantity' || item.issue_behavior !== 'returnable'
+          || ['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(item.condition)) {
           throw Object.assign(new Error('Hindi available para hiramin ang isa sa mga napiling item.'), { status: 409 });
         }
         return { ...requested, inventoryItem: item };

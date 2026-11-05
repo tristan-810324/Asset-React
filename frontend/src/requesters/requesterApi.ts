@@ -51,6 +51,8 @@ export type CatalogAsset = {
   condition: string
   unitOfMeasure: string
   availableQuantity: number
+  trackingMode: 'individual' | 'quantity'
+  issueBehavior: 'consumable' | 'returnable'
 }
 
 export type RequesterIdentityStatus = 'Incomplete' | 'Pending' | 'Verified' | 'Needs Correction'
@@ -86,7 +88,15 @@ export type RequesterIssuanceApproval = {
   id: string
   status: string
   requestedAt: string
-  expiresAt: string
+  decidedAt?: string | null
+  decisionNote?: string | null
+  expiresAt?: string
+  borrowUseDate: string | null
+  expectedReturnDate: string | null
+  borrowUseAt?: string | null
+  expectedReturnAt?: string | null
+  useLocation: string | null
+  usePurpose: string | null
   employeeCode: string
   employeeName: string
   requestedBy: string | null
@@ -94,10 +104,15 @@ export type RequesterIssuanceApproval = {
     issuanceId: string
     itemCode: string
     itemName: string
+    trackingMode: 'individual' | 'quantity'
+    issueBehavior: 'consumable' | 'returnable'
+    status?: string
     condition: string
     quantity: number
+    returnedQuantity?: number
     unitOfMeasure: string
     notes: string
+    tags?: Array<{ tagCode: string; unitNumber: number }>
   }>
 }
 
@@ -133,7 +148,11 @@ export function listMyPendingIssuanceBatches() {
   return apiRequest<{ batches: RequesterIssuanceApproval[] }>('/issuances/mine/pending').then((data) => data.batches)
 }
 
-export function decideMyIssuanceBatch(batchId: string, action: 'approve' | 'reject') {
+export function listMyIssuanceActivity() {
+  return apiRequest<{ batches: RequesterIssuanceApproval[] }>('/issuances/mine/activity').then((data) => data.batches)
+}
+
+export function decideMyIssuanceBatch(batchId: string, action: 'acknowledge') {
   return apiRequest<{ decision: RequesterIssuanceDecision }>(`/issuances/mine/${encodeURIComponent(batchId)}/decision`, {
     method: 'POST',
     body: JSON.stringify({ action }),

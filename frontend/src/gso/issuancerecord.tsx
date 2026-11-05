@@ -540,7 +540,7 @@ export default function IssuanceRecord() {
   })
 
   return (
-    <GsoPageFrame activePage="Issuance & Returned" searchPlaceholder="Search item code, employee, or department...">
+    <GsoPageFrame activePage="Issuances Records" searchPlaceholder="Search item code, employee, or department...">
       {/* HEADER SECTION */}
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
@@ -558,15 +558,12 @@ export default function IssuanceRecord() {
         </div>
 
         {/* WORKSPACE NAVIGATION TABS */}
-        <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Issuance and return records">
+        <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Returns and records pages">
+          <a href="/gso/return-items" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+            + Return Items ({returnedItemsCount})
+          </a>
           <a href="/gso/issuance" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
             + Issuances Records ({mainIssuances.length})
-          </a>
-          <a href="/gso/main-issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-            + Main Issuance
-          </a>
-          <a href="/gso/return-items" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-            + Returned Items ({returnedItemsCount})
           </a>
         </nav>
       </section>

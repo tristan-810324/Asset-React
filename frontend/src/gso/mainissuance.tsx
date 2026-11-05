@@ -1,17 +1,29 @@
 import JsBarcode from 'jsbarcode'
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import {
   createEmployeeIssuanceBatch,
   getEmployeeIssuanceBatch,
+  recordEmployeeIssuanceHandover,
+  listEmployeeIssuances,
   listApprovedIssuanceBatches,
   type EmployeeIssuanceBatchDetails,
+  type EmployeeIssuanceRecord,
 } from './issuancesApi'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 
 type SelectionMode = 'single' | 'multiple'
+type InventoryTypeFilter = 'all' | 'individual' | 'consumable' | 'reusable'
+
+const INVENTORY_PAGE_SIZE = 50
+const inventoryTypeOptions: Array<{ value: InventoryTypeFilter; label: string }> = [
+  { value: 'all', label: 'All available items' },
+  { value: 'individual', label: 'Per-unit assets' },
+  { value: 'consumable', label: 'Consumable stock' },
+  { value: 'reusable', label: 'Reusable quantity stock' },
+]
 
 type SubmittedBatch = {
   id: string
@@ -19,10 +31,19 @@ type SubmittedBatch = {
   employeeCode: string
   employeeName: string
   employeeEmail: string
+  requesterAccountLinked?: boolean
+  emailSent?: boolean
+  borrowDetails: {
+    useAt: string
+    expectedReturnAt: string
+    useLocation: string
+    purpose: string
+  } | null
   items: Array<{
     itemCode: string
     itemName: string
     trackingMode: 'individual' | 'quantity'
+    issueBehavior: 'consumable' | 'returnable'
     quantity: number
     unitOfMeasure: string
     tags: Array<{ tagCode: string; unitNumber: number }>
@@ -44,8 +65,31 @@ function employeeName(employee: EmployeeProfile) {
     .join(' ')
 }
 
+function isReusableQuantityStock(item: InventoryItemRecord) {
+  return item.trackingMode === 'quantity' && item.issueBehavior === 'returnable'
+}
+
+function inventoryTypeFor(item: InventoryItemRecord): Exclude<InventoryTypeFilter, 'all'> {
+  if (item.trackingMode === 'individual') return 'individual'
+  return item.issueBehavior === 'consumable' ? 'consumable' : 'reusable'
+}
+
 function isCompactAssetTagCode(tagCode: string) {
   return /^AST-[A-Z0-9]{13}$/i.test(tagCode)
+}
+
+function localDateTimeInputValue(date = new Date()) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function formatBorrowDateTime(value: string) {
+  const isLocalDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)
+  const date = new Date(isLocalDateTime ? `${value}:00+08:00` : `${value}T00:00:00+08:00`)
+  return new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'medium',
+    ...(isLocalDateTime ? { timeStyle: 'short' as const } : {}),
+    timeZone: 'Asia/Manila',
+  }).format(date)
 }
 
 function barcodePayload(tagCode: string) {
@@ -61,10 +105,21 @@ function submittedBatchFromDetails(batch: EmployeeIssuanceBatchDetails): Submitt
     employeeCode: batch.employeeCode,
     employeeName: batch.employeeName,
     employeeEmail: batch.employeeEmail,
+    requesterAccountLinked: batch.requesterAccountLinked,
+    emailSent: batch.emailSent,
+    borrowDetails: batch.borrowUseDate && batch.expectedReturnDate && batch.useLocation && batch.usePurpose
+      ? {
+          useAt: batch.borrowUseAt || batch.borrowUseDate,
+          expectedReturnAt: batch.expectedReturnAt || batch.expectedReturnDate,
+          useLocation: batch.useLocation,
+          purpose: batch.usePurpose,
+        }
+      : null,
     items: batch.items.map((item) => ({
       itemCode: item.itemCode,
       itemName: item.itemName,
       trackingMode: item.trackingMode,
+      issueBehavior: item.issueBehavior ?? 'returnable',
       quantity: item.quantity,
       unitOfMeasure: item.unitOfMeasure,
       tags: item.tags,
@@ -91,18 +146,76 @@ function BarcodeSvg({ value, height = 50, className = 'mx-auto h-11 max-w-full' 
   return <svg ref={svgRef} role="img" aria-label={`Barcode ${value}`} className={className} />
 }
 
+const fieldLabelClass = 'mb-1.5 block text-sm font-bold text-slate-800'
+const fieldControlClass = 'h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-900 outline-none placeholder:text-slate-500 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500'
+
+type StepStatus = 'done' | 'current' | 'upcoming'
+
+const stepStyles: Record<StepStatus, { badge: string; label: string; suffix: string }> = {
+  done: { badge: 'bg-emerald-600 text-white', label: 'text-emerald-700', suffix: ' · Done' },
+  current: { badge: 'bg-blue-600 text-white ring-4 ring-blue-100', label: 'text-blue-700', suffix: '' },
+  upcoming: { badge: 'bg-slate-200 text-slate-700', label: 'text-slate-600', suffix: '' },
+}
+
+function StepHeader({ step, status, titleId, title, description, children }: {
+  step: 1 | 2 | 3
+  status: StepStatus
+  titleId: string
+  title: string
+  description: string
+  children?: ReactNode
+}) {
+  const styles = stepStyles[status]
+  return (
+    <div className="flex items-start gap-3">
+      <span aria-hidden="true" className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-black ${styles.badge}`}>
+        {status === 'done' ? (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m5 12 4 4L19 6" />
+          </svg>
+        ) : step}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <p className={`text-xs font-extrabold uppercase tracking-wide ${styles.label}`}>Step {step} of 3{styles.suffix}</p>
+            <h2 id={titleId} className="mt-0.5 text-base font-black leading-tight text-slate-900">{title}</h2>
+          </div>
+          {children}
+        </div>
+        <p className="mt-1 text-sm leading-snug text-slate-600">{description}</p>
+      </div>
+    </div>
+  )
+}
+
 export default function MainIssuance() {
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [inventory, setInventory] = useState<InventoryItemRecord[]>([])
   const [selectedEmployeeCode, setSelectedEmployeeCode] = useState(employeeCodeFromUrl)
+  const [employeeIssuedItems, setEmployeeIssuedItems] = useState<EmployeeIssuanceRecord['assignedItems']>([])
+  const [isLoadingEmployeeItems, setIsLoadingEmployeeItems] = useState(Boolean(employeeCodeFromUrl))
+  const [employeeItemsError, setEmployeeItemsError] = useState('')
+  const [showEmployeeItems, setShowEmployeeItems] = useState(false)
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('single')
   const [selectedQuantities, setSelectedQuantities] = useState<Record<string, string>>({})
   const [itemSearch, setItemSearch] = useState('')
-  const [notes, setNotes] = useState('Acknowledged by employee')
+  const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('all')
+  const [inventoryTypeFilter, setInventoryTypeFilter] = useState<InventoryTypeFilter>('all')
+  const [inventoryPage, setInventoryPage] = useState(1)
+  const [notes, setNotes] = useState('')
+  const [borrowUseAt, setBorrowUseAt] = useState('')
+  const [expectedReturnAt, setExpectedReturnAt] = useState('')
+  const [borrowUseLocation, setBorrowUseLocation] = useState('')
+  const [borrowPurpose, setBorrowPurpose] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [submitError, setSubmitError] = useState('')
+  const [handoverMethod, setHandoverMethod] = useState<'signed_receipt' | 'authorized_handover'>('signed_receipt')
+  const [handoverReference, setHandoverReference] = useState('')
+  const [handoverError, setHandoverError] = useState('')
+  const [isRecordingHandover, setIsRecordingHandover] = useState(false)
   const [submittedBatch, setSubmittedBatch] = useState<SubmittedBatch | null>(null)
   const [isRefreshingBatch, setIsRefreshingBatch] = useState(Boolean(batchIdFromUrl))
   const [batchDetailsError, setBatchDetailsError] = useState('')
@@ -110,6 +223,7 @@ export default function MainIssuance() {
   const [isLoadingApprovedLabels, setIsLoadingApprovedLabels] = useState(true)
   const [approvedLabelsError, setApprovedLabelsError] = useState('')
   const [approvedLabelsRefresh, setApprovedLabelsRefresh] = useState(0)
+  const [isApprovedLabelsExpanded, setIsApprovedLabelsExpanded] = useState(false)
   const [labelToPrint, setLabelToPrint] = useState<PrintableBarcodeLabel | null>(null)
   const [shouldOpenPrintDialog, setShouldOpenPrintDialog] = useState(false)
   const pendingBatchId = submittedBatch?.status === 'Pending' ? submittedBatch.id : null
@@ -134,6 +248,24 @@ export default function MainIssuance() {
 
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    if (!selectedEmployeeCode) return
+    let active = true
+    listEmployeeIssuances(selectedEmployeeCode)
+      .then(({ assignedItems }) => {
+        if (!active) return
+        setEmployeeIssuedItems(assignedItems)
+        setEmployeeItemsError('')
+      })
+      .catch((error: unknown) => {
+        if (active) setEmployeeItemsError(error instanceof Error ? error.message : 'Unable to load this employee’s current items.')
+      })
+      .finally(() => {
+        if (active) setIsLoadingEmployeeItems(false)
+      })
+    return () => { active = false }
+  }, [selectedEmployeeCode])
 
   useEffect(() => {
     if (!batchIdFromUrl) return
@@ -207,17 +339,59 @@ export default function MainIssuance() {
   }, [pendingBatchId])
 
   const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeCode) ?? null
-  const filteredInventory = useMemo(() => {
+  const inventoryCategories = useMemo(() => Array.from(new Set(
+    inventory.map((item) => item.category.trim()).filter(Boolean),
+  )).sort((first, second) => first.localeCompare(second)), [inventory])
+  const inventoryCategoryCounts = useMemo(() => inventory.reduce<Record<string, number>>((counts, item) => {
+    const category = item.category.trim()
+    counts[category] = (counts[category] || 0) + 1
+    return counts
+  }, {}), [inventory])
+  const categoryAndSearchInventory = useMemo(() => {
     const query = itemSearch.trim().toLowerCase()
-    if (!query) return inventory
-    return inventory.filter((item) => `${item.itemCode} ${item.itemName} ${item.description} ${item.category}`.toLowerCase().includes(query))
-  }, [inventory, itemSearch])
+    return inventory.filter((item) => {
+      const matchesCategory = inventoryCategoryFilter === 'all' || item.category.trim() === inventoryCategoryFilter
+      const matchesSearch = !query || `${item.itemCode} ${item.itemName} ${item.description} ${item.category}`.toLowerCase().includes(query)
+      return matchesCategory && matchesSearch
+    })
+  }, [inventory, inventoryCategoryFilter, itemSearch])
+  const inventoryTypeCounts = useMemo(() => {
+    const counts: Record<InventoryTypeFilter, number> = {
+      all: categoryAndSearchInventory.length,
+      individual: 0,
+      consumable: 0,
+      reusable: 0,
+    }
+    categoryAndSearchInventory.forEach((item) => { counts[inventoryTypeFor(item)] += 1 })
+    return counts
+  }, [categoryAndSearchInventory])
+  const filteredInventory = useMemo(() => categoryAndSearchInventory
+    .filter((item) => inventoryTypeFilter === 'all' || inventoryTypeFor(item) === inventoryTypeFilter)
+    .sort((first, second) => first.category.localeCompare(second.category)
+      || first.itemName.localeCompare(second.itemName)
+      || first.itemCode.localeCompare(second.itemCode)), [categoryAndSearchInventory, inventoryTypeFilter])
+  const inventoryPageCount = Math.max(1, Math.ceil(filteredInventory.length / INVENTORY_PAGE_SIZE))
+  const currentInventoryPage = Math.min(inventoryPage, inventoryPageCount)
+  const visibleInventory = useMemo(() => {
+    const start = (currentInventoryPage - 1) * INVENTORY_PAGE_SIZE
+    return filteredInventory.slice(start, start + INVENTORY_PAGE_SIZE)
+  }, [filteredInventory, currentInventoryPage])
   const inventoryById = useMemo(() => new Map(inventory.map((item) => [item.id, item])), [inventory])
   const selectedItems = Object.entries(selectedQuantities).flatMap(([itemId, quantityText]) => {
     const item = inventoryById.get(itemId)
     return item ? [{ item, quantity: Number(quantityText || 0) }] : []
   })
   const selectedUnitCount = selectedItems.reduce((total, selection) => total + selection.quantity, 0)
+  const hasMixedItemTypes = selectedItems.some(({ item }) => inventoryTypeFor(item) !== inventoryTypeFor(selectedItems[0]?.item))
+  const isReusableBorrow = selectedItems.length > 0 && selectedItems.every(({ item }) => isReusableQuantityStock(item))
+  const hasInvalidBorrowDetails = isReusableBorrow && (
+    !borrowUseAt
+    || borrowUseAt < localDateTimeInputValue()
+    || !expectedReturnAt
+    || expectedReturnAt <= borrowUseAt
+    || !borrowUseLocation.trim()
+    || !borrowPurpose.trim()
+  )
   const hasInvalidQuantity = selectedItems.some(({ item, quantity }) =>
     !Number.isInteger(quantity) || quantity < 1 || quantity > item.availableQuantity
   )
@@ -243,10 +417,37 @@ export default function MainIssuance() {
   const expectedLabelCount = submittedBatch?.items.reduce((total, item) =>
     total + (item.trackingMode === 'individual' ? item.quantity : 0), 0) ?? 0
   const hasCompleteLabelSet = generatedLabels.length === expectedLabelCount && expectedLabelCount > 0
+  // A sent batch replaces the empty review form until the staff selects another item or starts over.
+  const isShowingSentBatch = Boolean(submittedBatch) && selectedItems.length === 0
+  const isEmployeeStepDone = Boolean(selectedEmployee)
+  const isItemsStepDone = selectedItems.length > 0 && !hasInvalidQuantity && !hasMixedItemTypes
+  const currentStep = !isEmployeeStepDone ? 1 : !isItemsStepDone ? 2 : 3
+  const stepStatusFor = (step: 1 | 2 | 3, isDone: boolean): StepStatus => {
+    if (isDone) return 'done'
+    return currentStep === step ? 'current' : 'upcoming'
+  }
+  const nextStepHint = !selectedEmployee
+    ? 'Next: choose the employee in Step 1.'
+    : selectedItems.length === 0
+      ? 'Next: choose at least one item in Step 2.'
+      : hasMixedItemTypes
+        ? 'Process one inventory type at a time.'
+        : hasInvalidBorrowDetails
+          ? 'Complete the borrowing dates, times, event, and location below.'
+        : ''
+  const submitErrorAlert = submitError
+    ? <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm font-semibold text-rose-800">{submitError}</p>
+    : null
+
+  function updateSelectedQuantities(nextQuantities: Record<string, string>) {
+    setSelectedQuantities(nextQuantities)
+  }
 
   function clearSubmittedBatch() {
     setSubmittedBatch(null)
     setBatchDetailsError('')
+    setHandoverError('')
+    setHandoverReference('')
     const currentUrl = new URL(window.location.href)
     currentUrl.searchParams.delete('batchId')
     window.history.replaceState({}, '', currentUrl)
@@ -274,6 +475,10 @@ export default function MainIssuance() {
       setSubmitError(`${item.itemCode} is already selected for this issuance.`)
       return
     }
+    if (selectedItems.length > 0 && inventoryTypeFor(item) !== inventoryTypeFor(selectedItems[0].item)) {
+      setSubmitError('Process one inventory type at a time.')
+      return
+    }
     if (selectionMode === 'multiple' && Object.keys(selectedQuantities).length >= 100) {
       setSubmitError('Select up to 100 items for one approval email.')
       return
@@ -281,28 +486,32 @@ export default function MainIssuance() {
 
     clearSubmittedBatch()
     setSubmitError('')
-    setSelectedQuantities((current) => selectionMode === 'single'
+    const nextQuantities = selectionMode === 'single'
       ? { [item.id]: '1' }
-      : { ...current, [item.id]: '1' })
+      : { ...selectedQuantities, [item.id]: '1' }
+    updateSelectedQuantities(nextQuantities)
     setItemSearch('')
+    setInventoryPage(1)
   }
 
   function toggleItem(item: InventoryItemRecord) {
     clearSubmittedBatch()
+    let nextQuantities: Record<string, string>
     if (selectedQuantities[item.id] !== undefined) {
-      setSelectedQuantities((current) => {
-        const next = { ...current }
-        delete next[item.id]
-        return next
-      })
+      nextQuantities = { ...selectedQuantities }
+      delete nextQuantities[item.id]
     } else if (selectionMode === 'single') {
-      setSelectedQuantities({ [item.id]: '1' })
+      nextQuantities = { [item.id]: '1' }
     } else if (Object.keys(selectedQuantities).length >= 100) {
       setSubmitError('Select up to 100 items for one approval email.')
       return
+    } else if (selectedItems.length > 0 && inventoryTypeFor(item) !== inventoryTypeFor(selectedItems[0].item)) {
+      setSubmitError('Process one inventory type at a time.')
+      return
     } else {
-      setSelectedQuantities((current) => ({ ...current, [item.id]: '1' }))
+      nextQuantities = { ...selectedQuantities, [item.id]: '1' }
     }
+    updateSelectedQuantities(nextQuantities)
     setSubmitError('')
   }
 
@@ -310,10 +519,8 @@ export default function MainIssuance() {
     setSelectionMode(mode)
     clearSubmittedBatch()
     if (mode === 'single') {
-      setSelectedQuantities((current) => {
-        const firstEntry = Object.entries(current)[0]
-        return firstEntry ? { [firstEntry[0]]: firstEntry[1] } : {}
-      })
+      const firstEntry = Object.entries(selectedQuantities)[0]
+      updateSelectedQuantities(firstEntry ? { [firstEntry[0]]: firstEntry[1] } : {})
     }
     setSubmitError('')
   }
@@ -330,6 +537,29 @@ export default function MainIssuance() {
       setBatchDetailsError(error instanceof Error ? error.message : 'Unable to refresh the issuance status.')
     } finally {
       setIsRefreshingBatch(false)
+    }
+  }
+
+  async function recordManualHandover() {
+    if (!submittedBatch || !handoverReference.trim()) {
+      setHandoverError('Ilagay ang receipt reference o pangalan ng authorized recipient.')
+      return
+    }
+    setIsRecordingHandover(true)
+    setHandoverError('')
+    try {
+      await recordEmployeeIssuanceHandover(submittedBatch.id, {
+        method: handoverMethod,
+        reference: handoverReference.trim(),
+      })
+      const batch = await getEmployeeIssuanceBatch(submittedBatch.id)
+      setSubmittedBatch({ ...submittedBatchFromDetails(batch), emailSent: submittedBatch.emailSent })
+      setApprovedLabelsRefresh((current) => current + 1)
+      setHandoverReference('')
+    } catch (error) {
+      setHandoverError(error instanceof Error ? error.message : 'Hindi maitala ang handover.')
+    } finally {
+      setIsRecordingHandover(false)
     }
   }
 
@@ -353,6 +583,14 @@ export default function MainIssuance() {
       setSubmitError('Check the requested quantities. Each quantity must be a whole number within the available stock.')
       return
     }
+    if (hasMixedItemTypes) {
+      setSubmitError('Process one inventory type at a time.')
+      return
+    }
+    if (hasInvalidBorrowDetails) {
+      setSubmitError('Ilagay ang petsa at oras ng hiraman at pagsoli, event, at location.')
+      return
+    }
 
     setIsSubmitting(true)
     setSubmitError('')
@@ -362,6 +600,14 @@ export default function MainIssuance() {
         selectedEmployee.id,
         selectedItems.map(({ item, quantity }) => ({ itemId: item.id, quantity })),
         notes,
+        isReusableBorrow ? {
+          useAt: borrowUseAt,
+          expectedReturnAt,
+          useDate: borrowUseAt.slice(0, 10),
+          expectedReturnDate: expectedReturnAt.slice(0, 10),
+          useLocation: borrowUseLocation.trim(),
+          purpose: borrowPurpose.trim(),
+        } : null,
       )
       setSubmittedBatch({
         id: batch.id,
@@ -369,10 +615,14 @@ export default function MainIssuance() {
         employeeCode: batch.employeeCode,
         employeeName: batch.employeeName,
         employeeEmail: batch.employeeEmail,
+        requesterAccountLinked: batch.requesterAccountLinked,
+        emailSent: batch.emailSent,
+        borrowDetails: batch.borrowDetails,
         items: batch.items.map((item) => ({
           itemCode: item.itemCode,
           itemName: item.itemName,
           trackingMode: item.trackingMode,
+          issueBehavior: item.issueBehavior,
           quantity: item.quantity,
           unitOfMeasure: item.unitOfMeasure,
           tags: [],
@@ -381,9 +631,9 @@ export default function MainIssuance() {
       const currentUrl = new URL(window.location.href)
       currentUrl.searchParams.set('batchId', batch.id)
       window.history.replaceState({}, '', currentUrl)
-      setSelectedQuantities({})
+      updateSelectedQuantities({})
     } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : 'Unable to create the issuance approval request.')
+      setSubmitError(error instanceof Error ? error.message : 'Unable to record the issuance.')
     } finally {
       setIsSubmitting(false)
     }
@@ -391,7 +641,7 @@ export default function MainIssuance() {
 
   return (
     <>
-    <GsoPageFrame activePage="Issuance & Returned" searchPlaceholder="Search employees or inventory...">
+    <GsoPageFrame activePage="Main Issuance" searchPlaceholder="Search employees or inventory...">
       <style>{`
         @media print {
           @page { size: 50mm 30mm; margin: 0; }
@@ -440,17 +690,14 @@ export default function MainIssuance() {
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Main Issuance</h1>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-            Create an issuance request for an employee. After they approve it in the Requester Dashboard, print the unique barcode labels here.
+            Issue consumables, record reusable-stock borrowing, or reserve a per-unit asset for handover.
           </p>
-          <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Issuance and return records">
-            <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-              + Issuances Records
-            </a>
+          <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Issuance and borrowing pages">
             <a href="/gso/main-issuance" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
               + Main Issuance
             </a>
-            <a href="/gso/return-items" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-              + Returned Items
+            <a href="/gso/requests-borrowing" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+              + Request and Borrowing
             </a>
           </nav>
         </section>
@@ -465,11 +712,21 @@ export default function MainIssuance() {
               <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[0.62rem] font-extrabold text-blue-700">
                 {isLoadingApprovedLabels ? 'Loading…' : `${approvedBarcodeLabels.length} label${approvedBarcodeLabels.length === 1 ? '' : 's'}`}
               </span>
+              <button
+                type="button"
+                aria-expanded={isApprovedLabelsExpanded}
+                aria-controls="approved-labels-content"
+                onClick={() => setIsApprovedLabelsExpanded((expanded) => !expanded)}
+                className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[0.68rem] font-bold text-blue-700 transition hover:bg-blue-100"
+              >
+                {isApprovedLabelsExpanded ? 'Hide labels' : 'View labels'}
+              </button>
               <button type="button" disabled={isLoadingApprovedLabels} onClick={() => { setIsLoadingApprovedLabels(true); setApprovedLabelsRefresh((current) => current + 1) }} className="rounded-lg border border-slate-200 px-3 py-2 text-[0.68rem] font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
                 Refresh list
               </button>
             </div>
           </div>
+          {isApprovedLabelsExpanded && <div id="approved-labels-content">
           {approvedLabelsError && <p role="alert" className="mx-5 mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 sm:mx-6">{approvedLabelsError}</p>}
           {!isLoadingApprovedLabels && approvedLabelGaps.length > 0 && <p role="alert" className="mx-5 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 sm:mx-6">May kulang na barcode tags para sa: {approvedLabelGaps.join(', ')}. I-refresh ang listahan bago mag-print ng lahat.</p>}
           <div className="max-h-[42vh] overflow-auto border-t border-slate-100">
@@ -511,26 +768,35 @@ export default function MainIssuance() {
               </tbody>
             </table>
           </div>
+          </div>}
         </section>
 
-        <form onSubmit={handleSubmit} className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.72fr)]">
-          <div className="space-y-5">
-            <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
-              <div className="mb-4">
-                <h2 className="text-sm font-black text-slate-900">Employee</h2>
-                <p className="mt-1 text-xs text-slate-500">Choose who will receive the selected items.</p>
-              </div>
-              <label className="block">
-                <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Employee</span>
+        <form onSubmit={handleSubmit} className="mt-5 grid gap-5 xl:grid-cols-2" aria-label="Issue, lend, or prepare an asset handover">
+          <div className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+            <section aria-labelledby="employee-section-title" className="border-b border-slate-200 p-4 sm:p-5">
+              <StepHeader
+                step={1}
+                status={stepStatusFor(1, isEmployeeStepDone)}
+                titleId="employee-section-title"
+                title="Choose employee"
+                description="Who will receive the selected items?"
+              />
+              <label className="mt-3 block">
+                <span className="sr-only">Employee</span>
                 <select
                   value={selectedEmployeeCode}
                   onChange={(event) => {
-                    setSelectedEmployeeCode(event.target.value)
+                    const nextEmployeeCode = event.target.value
+                    setSelectedEmployeeCode(nextEmployeeCode)
+                    setEmployeeIssuedItems([])
+                    setEmployeeItemsError('')
+                    setIsLoadingEmployeeItems(Boolean(nextEmployeeCode))
+                    setShowEmployeeItems(false)
                     setSubmitError('')
-                clearSubmittedBatch()
+                    clearSubmittedBatch()
                   }}
                   disabled={isLoading || isSubmitting}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
+                  className={fieldControlClass}
                 >
                   <option value="">Select an employee</option>
                   {employees.map((employee) => (
@@ -540,50 +806,84 @@ export default function MainIssuance() {
                   ))}
                 </select>
               </label>
-              {selectedEmployee && (
-                <div className="mt-4 grid gap-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4 sm:grid-cols-2">
-                  <div>
-                    <span className="block text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-500">Employee</span>
-                    <p className="mt-1 text-sm font-extrabold text-slate-900">{employeeName(selectedEmployee)}</p>
-                    <p className="mt-0.5 text-xs font-semibold text-slate-500">{selectedEmployee.id}</p>
+              {selectedEmployee ? (
+                <>
+                  <div className="mt-2 rounded-xl border border-blue-100 bg-blue-50/70 px-3.5 py-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="min-w-0 text-sm font-extrabold text-slate-900">{employeeName(selectedEmployee)}</p>
+                      <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-extrabold ${selectedEmployee.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
+                        {selectedEmployee.status}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs font-semibold text-slate-700">{selectedEmployee.id} · {selectedEmployee.department} · {selectedEmployee.position}</p>
+                    <p className="mt-0.5 break-all text-xs font-semibold text-slate-700">{selectedEmployee.email}</p>
                   </div>
-                  <div>
-                    <span className="block text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-500">Department &amp; position</span>
-                    <p className="mt-1 text-xs font-bold text-slate-800">{selectedEmployee.department}</p>
-                    <p className="mt-0.5 text-xs text-slate-500">{selectedEmployee.position}</p>
+                  <div className="mt-2 overflow-hidden rounded-xl border border-slate-200">
+                    <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-slate-900">Items issued to this employee</h3>
+                        <p className="mt-0.5 text-xs font-bold text-blue-700">
+                          {isLoadingEmployeeItems
+                            ? 'Loading employee items…'
+                            : `${employeeIssuedItems.length} record${employeeIssuedItems.length === 1 ? '' : 's'} · ${employeeIssuedItems.reduce((total, item) => total + item.quantity, 0)} unit(s)`}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        aria-expanded={showEmployeeItems}
+                        aria-controls="employee-issued-items-list"
+                        onClick={() => setShowEmployeeItems((visible) => !visible)}
+                        className="shrink-0 rounded-lg border border-slate-300 px-3 py-2 text-xs font-bold text-slate-800 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800"
+                      >
+                        {showEmployeeItems ? 'Hide items' : 'View items'}
+                      </button>
+                    </div>
+                    {showEmployeeItems && (
+                      <div id="employee-issued-items-list" className="inventory-list-scrollbar max-h-60 space-y-2 overflow-y-auto border-t border-slate-200 bg-slate-50 p-2">
+                        {isLoadingEmployeeItems && <p role="status" className="rounded-lg bg-white px-3 py-4 text-center text-sm font-semibold text-slate-600">Loading issued item records…</p>}
+                        {employeeItemsError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800">{employeeItemsError}</p>}
+                        {!isLoadingEmployeeItems && !employeeItemsError && employeeIssuedItems.length === 0 && <p className="rounded-lg bg-white px-3 py-4 text-center text-sm font-semibold text-slate-600">No active item records are linked to this employee.</p>}
+                        {!isLoadingEmployeeItems && !employeeItemsError && employeeIssuedItems.map((item) => (
+                          <article key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-extrabold text-slate-900">{item.name}</p>
+                              <p className="mt-0.5 text-xs font-semibold text-slate-600">{item.code} · {item.condition} · {item.assignedOn}</p>
+                              <span className="mt-1 inline-flex rounded-md bg-blue-100 px-2 py-0.5 text-xs font-extrabold text-blue-800">
+                                {item.trackingMode === 'individual' ? 'Per-unit asset' : item.issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock'}
+                              </span>
+                            </div>
+                            <span className="shrink-0 text-sm font-extrabold text-slate-800">{item.quantity} {item.unitOfMeasure}</span>
+                          </article>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <span className="block text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-500">School email</span>
-                    <p className="mt-1 break-all text-xs font-semibold text-slate-700">{selectedEmployee.email}</p>
-                  </div>
-                  <div>
-                    <span className="block text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-500">Employment status</span>
-                    <p className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-[0.65rem] font-extrabold ${selectedEmployee.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
-                      {selectedEmployee.status}
-                    </p>
-                  </div>
-                </div>
+                </>
+              ) : (
+                <p className="mt-2 text-xs font-medium leading-relaxed text-slate-600">Choose an employee to view current assignments.</p>
               )}
               {employeeCodeFromUrl && !isLoading && !selectedEmployee && (
-                <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs font-semibold text-amber-900">
+                <p role="status" className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm font-semibold text-amber-900">
                   Hindi makita sa Employee Master Data ang employee code na {employeeCodeFromUrl}. Pumili ng employee sa listahan para magpatuloy.
                 </p>
               )}
             </section>
 
-            <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-black text-slate-900">Items for issuance</h2>
-                  <p className="mt-1 text-xs text-slate-500">Only inventory with available quantity can be selected.</p>
-                </div>
-                <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Issuance selection mode">
+            <section aria-labelledby="items-section-title" className="flex min-h-0 grow flex-col p-4 sm:p-5">
+              <StepHeader
+                step={2}
+                status={stepStatusFor(2, isItemsStepDone)}
+                titleId="items-section-title"
+                title="Choose items"
+                description="Filter available inventory by category and item type."
+              >
+                <div className="flex rounded-xl border border-slate-300 bg-slate-100 p-1" role="group" aria-label="Issuance selection mode">
                   <button
                     type="button"
                     aria-pressed={selectionMode === 'single'}
                     disabled={isSubmitting}
                     onClick={() => changeSelectionMode('single')}
-                    className={`rounded-lg px-3 py-2 text-[0.68rem] font-extrabold transition ${selectionMode === 'single' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${selectionMode === 'single' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
                   >
                     One item
                   </button>
@@ -592,39 +892,79 @@ export default function MainIssuance() {
                     aria-pressed={selectionMode === 'multiple'}
                     disabled={isSubmitting}
                     onClick={() => changeSelectionMode('multiple')}
-                    className={`rounded-lg px-3 py-2 text-[0.68rem] font-extrabold transition ${selectionMode === 'multiple' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${selectionMode === 'multiple' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
                   >
                     Multiple items
                   </button>
                 </div>
+              </StepHeader>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(11rem,0.55fr)]">
+                <label className="block">
+                  <span className="sr-only">Search inventory by item name, code, description, or category</span>
+                  <input
+                    type="search"
+                    value={itemSearch}
+                    onChange={(event) => { setItemSearch(event.target.value); setInventoryPage(1) }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter') return
+                      event.preventDefault()
+                      addScannedInventoryCode(event.currentTarget.value)
+                    }}
+                    placeholder="Search by item name, code, or description"
+                    className={fieldControlClass}
+                  />
+                </label>
+                <label className="block">
+                  <span className="sr-only">Filter inventory by category</span>
+                  <select
+                    value={inventoryCategoryFilter}
+                    onChange={(event) => { setInventoryCategoryFilter(event.target.value); setInventoryPage(1) }}
+                    className={fieldControlClass}
+                  >
+                    <option value="all">All categories ({inventory.length.toLocaleString()})</option>
+                    {inventoryCategories.map((category) => (
+                      <option key={category} value={category}>{category} ({(inventoryCategoryCounts[category] || 0).toLocaleString()})</option>
+                    ))}
+                  </select>
+                </label>
               </div>
 
-              <label className="mt-4 block">
-                <span className="sr-only">Search available inventory</span>
-                <input
-                  type="search"
-                  value={itemSearch}
-                  onChange={(event) => setItemSearch(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter') return
-                    event.preventDefault()
-                    addScannedInventoryCode(event.currentTarget.value)
-                  }}
-                  placeholder="Search or scan an asset / stock barcode"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-              <p className="mt-1.5 text-[0.62rem] text-slate-400">USB scanners send the code as text. Press Enter to add the matching item.</p>
+              <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-4" role="group" aria-label="Filter by inventory type">
+                {inventoryTypeOptions.map((option) => {
+                  const isActive = inventoryTypeFilter === option.value
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={isActive}
+                      disabled={isSubmitting}
+                      onClick={() => { setInventoryTypeFilter(option.value); setInventoryPage(1) }}
+                      className={`min-w-0 rounded-xl border px-3 py-2.5 text-left transition disabled:opacity-60 ${isActive ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'}`}
+                    >
+                      <span className="block text-xs font-extrabold leading-snug text-slate-900">{option.label}</span>
+                      <span className="mt-1 block text-[0.65rem] font-semibold text-slate-500">{inventoryTypeCounts[option.value].toLocaleString()} available</span>
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-slate-600">Consumables issue immediately; reusable stock records a face-to-face borrowing schedule.</p>
 
               {loadError && (
-                <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">{loadError}</p>
+                <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm font-semibold text-rose-800">{loadError}</p>
               )}
               {isLoading ? (
-                <p role="status" className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-xs font-semibold text-slate-500">Loading employees and available inventory...</p>
-              ) : !loadError && filteredInventory.length > 0 ? (
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                  {filteredInventory.map((item) => {
+                <p role="status" className="mt-3 grid grow basis-80 place-items-center rounded-xl bg-slate-50 px-4 text-center text-sm font-semibold text-slate-600">Loading employees and available inventory...</p>
+              ) : !loadError && visibleInventory.length > 0 ? (
+                <div className="inventory-list-scrollbar mt-3 grid min-h-0 grow basis-80 grid-cols-1 content-start gap-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                  {visibleInventory.map((item) => {
                     const isSelected = selectedQuantities[item.id] !== undefined
+                    const itemType = inventoryTypeFor(item)
+                    const itemTypeLabel = itemType === 'individual'
+                      ? 'Per-unit asset'
+                      : itemType === 'consumable'
+                        ? 'Consumable stock'
+                        : 'Reusable quantity stock'
                     return (
                       <button
                         key={item.id}
@@ -632,131 +972,217 @@ export default function MainIssuance() {
                         aria-pressed={isSelected}
                         disabled={isSubmitting}
                         onClick={() => toggleItem(item)}
-                        className={`rounded-xl border p-3.5 text-left transition disabled:opacity-60 ${isSelected ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50'}`}
+                        className={`rounded-xl border p-3 text-left transition disabled:opacity-60 ${isSelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
                       >
                         <span className="flex items-start justify-between gap-3">
                           <span className="min-w-0">
-                            <span className="block truncate text-xs font-extrabold text-slate-800">{item.itemName || item.description}</span>
-                            <span className="mt-1 block text-[0.65rem] font-semibold text-slate-500">{item.itemCode} · {item.category}</span>
-                            <span className={`mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[0.58rem] font-extrabold ${item.trackingMode === 'individual' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
-                              {item.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}
-                            </span>
+                            <span className="block truncate text-sm font-extrabold text-slate-900">{item.itemName || item.description}</span>
+                            <span className="mt-0.5 block truncate text-xs font-semibold text-slate-600">{item.itemCode} · {item.category}</span>
+                            <span title={item.description} className="mt-1 block truncate text-xs text-slate-500">{item.description}</span>
                           </span>
-                          <span className={`shrink-0 rounded-full px-2 py-1 text-[0.6rem] font-extrabold ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                          <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-extrabold ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-800'}`}>
                             {isSelected ? 'Selected' : 'Select'}
                           </span>
                         </span>
-                        <span className="mt-3 flex items-center justify-between text-[0.65rem] font-semibold text-slate-500">
+                        <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold text-slate-700">
+                          <span className={`rounded-md px-1.5 py-0.5 font-extrabold ${itemType === 'individual' ? 'bg-blue-100 text-blue-800' : itemType === 'consumable' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
+                            {itemTypeLabel}
+                          </span>
                           <span>{item.condition}</span>
-                          <span>Available: {item.availableQuantity} {item.unitOfMeasure}</span>
+                          <span className="ml-auto font-bold text-slate-800">Available: {item.availableQuantity} {item.unitOfMeasure}</span>
                         </span>
                       </button>
                     )
                   })}
                 </div>
               ) : !loadError ? (
-                <p className="mt-4 rounded-xl bg-slate-50 px-4 py-7 text-center text-xs font-semibold text-slate-500">
-                  {inventory.length === 0 ? 'No available inventory items were found.' : 'No items match your search.'}
+                <p className="mt-3 grid grow basis-80 place-items-center rounded-xl bg-slate-50 px-4 text-center text-sm font-semibold text-slate-600">
+                  {inventory.length === 0 ? 'No inventory is currently available.' : 'No items match the current search, category, and type filters.'}
                 </p>
               ) : null}
+              {!isLoading && !loadError && filteredInventory.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Showing {((currentInventoryPage - 1) * INVENTORY_PAGE_SIZE + 1).toLocaleString()}–{Math.min(currentInventoryPage * INVENTORY_PAGE_SIZE, filteredInventory.length).toLocaleString()} of {filteredInventory.length.toLocaleString()} matching items
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={currentInventoryPage <= 1 || isSubmitting}
+                      onClick={() => setInventoryPage((page) => Math.max(1, page - 1))}
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-xs font-extrabold text-slate-700">{currentInventoryPage} / {inventoryPageCount}</span>
+                    <button
+                      type="button"
+                      disabled={currentInventoryPage >= inventoryPageCount || isSubmitting}
+                      onClick={() => setInventoryPage((page) => Math.min(inventoryPageCount, page + 1))}
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
           </div>
 
-          <aside className="space-y-5">
-            <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                <div>
-                  <h2 className="text-sm font-black text-slate-900">Review issuance</h2>
-                  <p className="mt-1 text-xs text-slate-500">Check the recipient and quantities before sending.</p>
-                </div>
-                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">
+          <section aria-labelledby="review-section-title" className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5">
+            <StepHeader
+              step={3}
+              status={stepStatusFor(3, isShowingSentBatch)}
+              titleId="review-section-title"
+              title={isShowingSentBatch ? 'Issuance recorded' : isReusableBorrow ? 'Review borrowing' : 'Review issuance'}
+              description={isShowingSentBatch ? 'Track the record or start another transaction.' : isReusableBorrow ? 'Confirm the borrower, quantity, and schedule.' : 'Confirm the employee, items, and quantities.'}
+            >
+              {!isShowingSentBatch && (
+                <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold text-blue-800">
                   {selectedItems.length} item{selectedItems.length === 1 ? '' : 's'} · {selectedUnitCount} unit{selectedUnitCount === 1 ? '' : 's'}
                 </span>
-              </div>
-
-              {selectedItems.length > 0 ? (
-                <ul className="mt-2 divide-y divide-slate-100">
-                  {selectedItems.map(({ item }) => (
-                    <li key={item.id} className="flex items-center justify-between gap-3 py-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-extrabold text-slate-800">{item.itemName || item.description}</p>
-                        <p className="mt-0.5 text-[0.65rem] font-semibold text-slate-500">{item.itemCode} · max {item.availableQuantity} {item.unitOfMeasure}</p>
-                      </div>
-                      <label className="w-24 shrink-0">
-                        <span className="sr-only">Quantity for {item.itemName || item.description}</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max={item.availableQuantity}
-                          step="1"
-                          value={selectedQuantities[item.id] ?? '1'}
-                          disabled={isSubmitting}
-                          onChange={(event) => {
-                            setSelectedQuantities((current) => ({ ...current, [item.id]: event.target.value }))
-                            setSubmittedBatch(null)
-                          }}
-                          className="h-9 w-full rounded-lg border border-slate-200 px-2.5 text-xs font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                        />
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="py-7 text-center text-xs font-medium text-slate-400">Choose an available item to add it here.</p>
               )}
-              {hasInvalidQuantity && (
-                <p role="alert" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-800">
-                  Enter a whole quantity from 1 up to the available stock for each selected item.
-                </p>
-              )}
+            </StepHeader>
 
-              <label className="mt-3 block border-t border-slate-100 pt-4">
-                <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Issuance notes</span>
-                <input
-                  type="text"
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  maxLength={1000}
-                  disabled={isSubmitting}
-                  placeholder="Add a note for this issuance request"
-                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
+            {!isShowingSentBatch && (
+              <>
+                <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-xl bg-slate-100 px-3.5 py-2.5">
+                  <span className="text-xs font-bold text-slate-700">Employee</span>
+                  <span className="min-w-0 text-sm font-extrabold text-slate-900">
+                    {selectedEmployee ? `${employeeName(selectedEmployee)} · ${selectedEmployee.id}` : 'Not selected yet'}
+                  </span>
+                </div>
 
-              {submitError && (
-                <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">{submitError}</p>
-              )}
+                {selectedItems.length > 0 ? (
+                  <ul className="inventory-list-scrollbar mt-2 max-h-96 min-h-0 grow divide-y divide-slate-200 overflow-y-auto pr-1 xl:max-h-none xl:basis-56">
+                    {selectedItems.map(({ item }) => (
+                      <li key={item.id} className="flex items-center justify-between gap-3 py-2.5">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-extrabold text-slate-900">{item.itemName || item.description}</p>
+                          <p className="mt-0.5 text-xs font-semibold text-slate-600">{item.itemCode} · {item.condition} · max {item.availableQuantity} {item.unitOfMeasure}</p>
+                          <p className="mt-0.5 text-xs font-bold text-blue-700">
+                            {item.trackingMode === 'individual'
+                              ? 'Per-unit asset · awaiting handover acknowledgment'
+                              : item.issueBehavior === 'consumable'
+                                ? 'Consumable stock · issued immediately'
+                                : 'Reusable stock · face-to-face borrowing'}
+                          </p>
+                        </div>
+                        <label className="w-20 shrink-0">
+                          <span aria-hidden="true" className="mb-1 block text-xs font-bold text-slate-700">Qty</span>
+                          <span className="sr-only">Quantity for {item.itemName || item.description}</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max={item.availableQuantity}
+                            step="1"
+                            value={selectedQuantities[item.id] ?? '1'}
+                            disabled={isSubmitting}
+                            onChange={(event) => {
+                              setSelectedQuantities((current) => ({ ...current, [item.id]: event.target.value }))
+                              setSubmittedBatch(null)
+                            }}
+                            className="h-10 w-full rounded-lg border border-slate-300 px-2.5 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                          />
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="mt-2 grid min-h-28 grow place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 text-center">
+                    <p className="text-sm font-medium text-slate-600">Choose an available item in Step 2 to add it here.</p>
+                  </div>
+                )}
+                {hasInvalidQuantity && (
+                  <p role="alert" className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
+                    Enter a whole quantity from 1 up to the available stock for each selected item.
+                  </p>
+                )}
 
-              <button
-                type="submit"
-                disabled={isLoading || isSubmitting || !selectedEmployee || selectedItems.length === 0 || hasInvalidQuantity || Boolean(loadError)}
-                className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-xs font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isSubmitting ? 'Sending notification...' : `Send issuance notification (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
-              </button>
-              <p className="mt-3 text-[0.68rem] leading-relaxed text-slate-500">
-                Per-unit assets receive unique tags. Bulk stock remains quantity-tracked and does not receive per-unit labels.
-              </p>
-            </section>
+                {isReusableBorrow && <fieldset className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5">
+                  <legend className="px-1 text-xs font-extrabold uppercase tracking-wide text-amber-950">Face-to-face borrowing details</legend>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={fieldLabelClass}>Borrow date and time *</span>
+                      <input type="datetime-local" value={borrowUseAt} min={localDateTimeInputValue()} required disabled={isSubmitting} onChange={(event) => setBorrowUseAt(event.target.value)} className={fieldControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Expected return date and time *</span>
+                      <input type="datetime-local" value={expectedReturnAt} min={borrowUseAt || localDateTimeInputValue()} required disabled={isSubmitting} onChange={(event) => setExpectedReturnAt(event.target.value)} className={fieldControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Event or purpose *</span>
+                      <input type="text" value={borrowPurpose} onChange={(event) => setBorrowPurpose(event.target.value)} maxLength={500} required disabled={isSubmitting} placeholder="e.g. Faculty seminar" className={fieldControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={fieldLabelClass}>Location *</span>
+                      <input type="text" value={borrowUseLocation} onChange={(event) => setBorrowUseLocation(event.target.value)} maxLength={200} required disabled={isSubmitting} placeholder="e.g. Covered court" className={fieldControlClass} />
+                    </label>
+                  </div>
+                  <p role="note" className="mt-3 rounded-lg border border-amber-300 bg-white/70 px-3 py-2 text-xs font-semibold leading-relaxed text-amber-950">
+                    Important: Return borrowed items by the scheduled return date and time.
+                  </p>
+                </fieldset>}
+
+                <label className="mt-3 block border-t border-slate-200 pt-3">
+                  <span className={fieldLabelClass}>{selectedItems[0]?.item.trackingMode === 'individual' ? 'Accessories and handover notes' : isReusableBorrow ? 'Borrowing notes' : 'Distribution notes'}</span>
+                  <input
+                    type="text"
+                    value={notes}
+                    onChange={(event) => setNotes(event.target.value)}
+                    maxLength={1000}
+                    disabled={isSubmitting}
+                    placeholder={selectedItems[0]?.item.trackingMode === 'individual' ? 'e.g. charger, bag, or other included accessories' : isReusableBorrow ? 'Optional note for this borrowing' : 'Optional distribution note'}
+                    className={fieldControlClass}
+                  />
+                </label>
+
+                {submitErrorAlert}
+
+                <button
+                  type="submit"
+                  disabled={isLoading || isSubmitting || !selectedEmployee || selectedItems.length === 0 || hasInvalidQuantity || hasMixedItemTypes || hasInvalidBorrowDetails || Boolean(loadError)}
+                  className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700 disabled:shadow-none"
+                >
+                  {isSubmitting ? 'Recording...' : `${selectedItems[0]?.item.trackingMode === 'individual' ? 'Reserve per-unit handover' : isReusableBorrow ? 'Record face-to-face borrowing' : 'Issue consumable stock'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
+                </button>
+                {nextStepHint ? (
+                  <p className="mt-2 text-center text-sm font-bold text-blue-800">{nextStepHint}</p>
+                ) : (
+                  <p className="mt-2 text-xs leading-relaxed text-slate-600">
+                    {selectedItems[0]?.item.trackingMode === 'individual'
+                      ? 'Custody and barcode activate after receipt acknowledgment.'
+                      : isReusableBorrow
+                        ? 'Stock is reserved now; the borrower can view the schedule in the requester dashboard.'
+                        : 'Stock is deducted now; employee approval is not required.'}
+                  </p>
+                )}
+              </>
+            )}
 
             {submittedBatch && (
-              <section role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm sm:p-6">
+              <section role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-emerald-700">Issuance batch · {submittedBatch.status}</p>
-                    <h2 className="mt-1 text-sm font-black text-emerald-950">{submittedBatch.status === 'Pending' ? `Waiting for ${submittedBatch.employeeName} to decide` : submittedBatch.status === 'Issued' ? `Approved by ${submittedBatch.employeeName}` : `Request ${submittedBatch.status.toLowerCase()}`}</h2>
+                    <p className="text-xs font-extrabold uppercase tracking-wide text-emerald-800">{submittedBatch.items.every((item) => item.trackingMode === 'individual') ? 'Per-unit handover' : submittedBatch.items.every((item) => item.issueBehavior === 'returnable') ? 'Reusable stock borrowing' : 'Consumable distribution'} · {submittedBatch.status}</p>
+                    <h3 className="mt-1 text-sm font-black text-emerald-950">{submittedBatch.status === 'Pending' ? `Reserved for ${submittedBatch.employeeName} · awaiting receipt` : submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'individual') ? `Custody acknowledged by ${submittedBatch.employeeName}` : submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.issueBehavior === 'returnable') ? `Borrowing recorded for ${submittedBatch.employeeName}` : submittedBatch.status === 'Issued' ? `Consumables issued to ${submittedBatch.employeeName}` : `Issuance ${submittedBatch.status.toLowerCase()}`}</h3>
                   </div>
-                  <button type="button" disabled={isRefreshingBatch} onClick={() => void refreshSubmittedBatch()} className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50">
-                    {isRefreshingBatch ? 'Checking...' : 'Refresh approval status'}
+                  <button type="button" disabled={isRefreshingBatch} onClick={() => void refreshSubmittedBatch()} className="rounded-lg border border-emerald-400 bg-white px-3 py-2 text-xs font-extrabold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50">
+                    {isRefreshingBatch ? 'Checking...' : 'Refresh status'}
                   </button>
                 </div>
-                <p className="mt-1 break-all text-xs font-semibold text-emerald-800">{submittedBatch.employeeEmail}</p>
-                <ul className="mt-3 space-y-1.5 border-t border-emerald-200 pt-3 text-xs text-emerald-900">
+                <p className="mt-1 break-all text-xs font-semibold text-emerald-900">{submittedBatch.employeeEmail}</p>
+                {submittedBatch.borrowDetails && <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-950">
+                  <p className="font-extrabold">Reusable-stock borrowing schedule</p>
+                  <p className="mt-1">Borrow: {formatBorrowDateTime(submittedBatch.borrowDetails.useAt)} · Return: {formatBorrowDateTime(submittedBatch.borrowDetails.expectedReturnAt)}</p>
+                  <p className="mt-1">Event: {submittedBatch.borrowDetails.purpose} · Location: {submittedBatch.borrowDetails.useLocation}</p>
+                </div>}
+                <ul className="mt-3 space-y-1.5 border-t border-emerald-200 pt-3 text-sm text-emerald-950">
                   {submittedBatch.items.map((item) => (
                     <li key={`${item.itemCode}-${item.itemName}`} className="flex justify-between gap-3">
                       <span className="min-w-0">
                         <span className="block truncate">{item.itemCode} · {item.itemName}</span>
-                        {item.tags.map((tag) => <span key={tag.tagCode} className="mt-2 block rounded-lg border border-emerald-100 bg-white px-2.5 py-2 text-[0.62rem] font-bold text-emerald-800">
+                        {item.tags.map((tag) => <span key={tag.tagCode} className="mt-2 block rounded-lg border border-emerald-100 bg-white px-2.5 py-2 text-xs font-bold text-emerald-900">
                           <span className="block">Barcode · Unit {tag.unitNumber}: {tag.tagCode}</span>
                           <span className="mt-1 block"><BarcodeSvg value={tag.tagCode} /></span>
                         </span>)}
@@ -765,35 +1191,45 @@ export default function MainIssuance() {
                     </li>
                   ))}
                 </ul>
-                {submittedBatch.status === 'Pending' && <p className="mt-3 text-[0.68rem] leading-relaxed text-emerald-800">Email notified the employee. They approve or reject in the Requester Dashboard. Batch #{submittedBatch.id}</p>}
-                {submittedBatch.status === 'Issued' && expectedLabelCount > 0 && !hasCompleteLabelSet && <p role="alert" className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-900">Expected {expectedLabelCount} unit tags but found {generatedLabels.length}. Refresh and reconcile the issuance before printing labels.</p>}
-                {batchDetailsError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[0.68rem] font-semibold text-rose-700">{batchDetailsError}</p>}
+                {submittedBatch.status === 'Pending' && <p className="mt-3 text-xs leading-relaxed text-emerald-900">Naka-reserve ang unit hanggang makumpirma ang aktuwal na handover. {submittedBatch.requesterAccountLinked ? 'Employee: confirm receipt in the Requester account.' : 'GSO: record the signed receipt or authorized handover after pickup.'} Email {submittedBatch.emailSent ? 'sent' : 'unavailable, issuance recorded'}. Batch #{submittedBatch.id}</p>}
+                {submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'returnable') && <p className="mt-3 text-xs leading-relaxed text-emerald-900">Borrowing saved and stock reserved until return. {submittedBatch.requesterAccountLinked ? 'A notice is available in the employee’s requester dashboard.' : 'No verified requester account is linked; use the employee email for the schedule.'} Email {submittedBatch.emailSent ? 'sent' : 'unavailable'}.</p>}
+                {submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'consumable') && <p className="mt-3 text-xs leading-relaxed text-emerald-900">Stock deducted and account updated. No employee action or unit barcode is needed. Email {submittedBatch.emailSent ? 'sent' : 'unavailable, account updated'}.</p>}
+                {submittedBatch.status === 'Pending' && submittedBatch.items.every((item) => item.trackingMode === 'individual') && <fieldset className="mt-4 rounded-xl border border-blue-200 bg-white p-3.5">
+                  <legend className="px-1 text-xs font-extrabold uppercase tracking-wide text-blue-900">Record signed handover</legend>
+                  <p className="text-xs leading-relaxed text-slate-600">Use after the employee or authorized recipient physically receives the unit.</p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-700">Handover method</span><select value={handoverMethod} onChange={(event) => setHandoverMethod(event.target.value as 'signed_receipt' | 'authorized_handover')} disabled={isRecordingHandover} className={fieldControlClass}><option value="signed_receipt">Signed receipt</option><option value="authorized_handover">Authorized handover</option></select></label>
+                    <label className="block"><span className="mb-1.5 block text-xs font-bold text-slate-700">{handoverMethod === 'signed_receipt' ? 'Receipt reference' : 'Authorized recipient name'}</span><input value={handoverReference} onChange={(event) => setHandoverReference(event.target.value)} maxLength={200} required disabled={isRecordingHandover} className={fieldControlClass} placeholder={handoverMethod === 'signed_receipt' ? 'e.g. signed form no.' : 'Name of person who received the unit'} /></label>
+                  </div>
+                  {handoverError && <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">{handoverError}</p>}
+                  <button type="button" disabled={isRecordingHandover || !handoverReference.trim()} onClick={() => void recordManualHandover()} className="mt-3 rounded-lg bg-blue-700 px-3.5 py-2.5 text-xs font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50">{isRecordingHandover ? 'Saving handover...' : 'Record receipt and activate custody'}</button>
+                </fieldset>}
+                {submittedBatch.status === 'Issued' && expectedLabelCount > 0 && !hasCompleteLabelSet && <p role="alert" className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">Expected {expectedLabelCount} unit tags but found {generatedLabels.length}. Refresh and reconcile the issuance before printing labels.</p>}
+                {batchDetailsError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800">{batchDetailsError}</p>}
                 {generatedLabels.length > 0 && <>
-                  <p className="mt-3 text-[0.68rem] font-bold text-emerald-900">{generatedLabels.length} unique per-unit barcode label{generatedLabels.length === 1 ? '' : 's'} linked to this issuance.</p>
-                  <p className="mt-1 text-[0.65rem] leading-relaxed text-emerald-800">The full AST tag stays printed below the barcode. The barcode carries its shorter unique suffix so the bars can print wider; the GSO return scanner resolves it to the full tag automatically.</p>
+                  <p className="mt-3 text-xs font-bold text-emerald-950">{generatedLabels.length} unique per-unit barcode label{generatedLabels.length === 1 ? '' : 's'} linked to this issuance.</p>
+                  <p className="mt-1 text-xs leading-relaxed text-emerald-900">The full AST tag stays printed below the barcode. The barcode carries its shorter unique suffix so the bars can print wider; the GSO return scanner resolves it to the full tag automatically.</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {submittedBarcodeLabels.map((label) => <article key={label.tagCode} className="asset-barcode-label rounded-lg border border-emerald-200 bg-white p-3 text-center">
                       <div className="barcode-preview"><BarcodeSvg value={label.tagCode} /></div>
-                      <p className="label-barcode-value mt-1 text-[0.55rem] font-bold tracking-wide text-slate-600">{label.tagCode}</p>
-                      <button type="button" disabled={!hasCompleteLabelSet} onClick={() => previewBarcodeLabel(label)} className="mt-2 rounded-lg bg-emerald-700 px-3 py-2 text-[0.68rem] font-extrabold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">Preview label</button>
+                      <p className="label-barcode-value mt-1 text-xs font-bold tracking-wide text-slate-700">{label.tagCode}</p>
+                      <button type="button" disabled={!hasCompleteLabelSet} onClick={() => previewBarcodeLabel(label)} className="mt-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">Preview label</button>
                     </article>)}
                   </div>
-                  <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-[0.65rem] leading-relaxed text-emerald-900">Bawat label ay may sariling preview. Sa Windows print dialog para sa CLabel-CT221B, piliin ang driver Paper size na 50*30 (huwag 40*60) at Layout na Landscape. Itakda ang Scale sa Actual size (100%), Margins: None, Headers and footers: Off, at Copies: 1. Suriin ang preview bago pindutin ang Print.</div>
+                  <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-relaxed text-emerald-950">Bawat label ay may sariling preview. Sa Windows print dialog para sa CLabel-CT221B, piliin ang driver Paper size na 50*30 (huwag 40*60) at Layout na Landscape. Itakda ang Scale sa Actual size (100%), Margins: None, Headers and footers: Off, at Copies: 1. Suriin ang preview bago pindutin ang Print.</div>
                 </>}
-                {submittedBatch.status === 'Issued' && expectedLabelCount === 0 && submittedBatch.items.every((item) => item.trackingMode === 'quantity') && (
-                  <p className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-[0.68rem] font-semibold text-blue-800">Quantity-tracked stock was issued without per-unit barcode labels.</p>
-                )}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <button type="button" onClick={clearSubmittedBatch} className="rounded-lg bg-emerald-700 px-3 py-2 text-[0.68rem] font-extrabold text-white hover:bg-emerald-800">
+                  <button type="button" onClick={clearSubmittedBatch} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800">
                     Start another issuance
                   </button>
-                  <a href="/gso/issuance" className="rounded-lg border border-emerald-300 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-emerald-800 hover:bg-emerald-100">
+                  <a href="/gso/issuance" className="rounded-lg border border-emerald-400 bg-white px-3 py-2 text-xs font-extrabold text-emerald-900 hover:bg-emerald-100">
                     View issuance records
                   </a>
                 </div>
               </section>
             )}
-          </aside>
+            {isShowingSentBatch && submitErrorAlert}
+          </section>
         </form>
       </div>
       {labelToPrint && !shouldOpenPrintDialog && (

@@ -5,6 +5,8 @@ export type EmployeeIssuanceRecord = {
     id: string
     code: string
     name: string
+    trackingMode: 'individual' | 'quantity'
+    issueBehavior: 'consumable' | 'returnable'
     condition: string
     quantity: number
     unitOfMeasure: string
@@ -70,14 +72,24 @@ export type EmployeeIssuanceBatchDetails = {
   employeeCode: string
   employeeName: string
   employeeEmail: string
+  requesterAccountLinked?: boolean
+  emailSent?: boolean
   requestedAt: string
   decidedAt: string | null
+  decisionNote?: string | null
   expiresAt: string
+  borrowUseDate: string | null
+  expectedReturnDate: string | null
+  borrowUseAt: string | null
+  expectedReturnAt: string | null
+  useLocation: string | null
+  usePurpose: string | null
   items: Array<{
     issuanceId: string
     itemCode: string
     itemName: string
     trackingMode: 'individual' | 'quantity'
+    issueBehavior?: 'consumable' | 'returnable'
     condition: string
     quantity: number
     unitOfMeasure: string
@@ -117,7 +129,20 @@ export type AssetTagInspectionRecord = {
   lastInspectedBy: string | null
 }
 
-export async function createEmployeeIssuance(employeeCode: string, itemId: string, notes: string, quantity = 1) {
+export async function createEmployeeIssuance(
+  employeeCode: string,
+  itemId: string,
+  notes: string,
+  quantity = 1,
+  borrowDetails: {
+    useAt: string
+    expectedReturnAt: string
+    useDate: string
+    expectedReturnDate: string
+    useLocation: string
+    purpose: string
+  } | null = null,
+) {
   const result = await apiRequest<{
     issuance: {
       id: string
@@ -136,7 +161,7 @@ export async function createEmployeeIssuance(employeeCode: string, itemId: strin
     }
   }>('/issuances', {
     method: 'POST',
-    body: JSON.stringify({ employeeCode, itemId, quantity, notes }),
+    body: JSON.stringify({ employeeCode, itemId, quantity, notes, borrowDetails }),
   })
   return result.issuance
 }
@@ -145,6 +170,14 @@ export async function createEmployeeIssuanceBatch(
   employeeCode: string,
   items: Array<{ itemId: string; quantity: number }>,
   notes: string,
+  borrowDetails: {
+    useAt: string
+    expectedReturnAt: string
+    useDate: string
+    expectedReturnDate: string
+    useLocation: string
+    purpose: string
+  } | null = null,
 ) {
   const result = await apiRequest<{
     batch: {
@@ -153,12 +186,22 @@ export async function createEmployeeIssuanceBatch(
       employeeCode: string
       employeeName: string
       employeeEmail: string
+      requesterAccountLinked: boolean
+      borrowDetails: {
+        useAt: string
+        expectedReturnAt: string
+        useDate: string
+        expectedReturnDate: string
+        useLocation: string
+        purpose: string
+      } | null
       items: Array<{
         id: string
         itemId: string
         itemCode: string
         itemName: string
         trackingMode: 'individual' | 'quantity'
+        issueBehavior: 'consumable' | 'returnable'
         condition: string
         quantity: number
         unitOfMeasure: string
@@ -167,12 +210,24 @@ export async function createEmployeeIssuanceBatch(
       notes: string
       requestedAt: string
       expiresAt: string
+      emailSent: boolean
     }
   }>('/issuances/batch', {
     method: 'POST',
-    body: JSON.stringify({ employeeCode, items, notes }),
+    body: JSON.stringify({ employeeCode, items, notes, borrowDetails }),
   })
   return result.batch
+}
+
+export async function recordEmployeeIssuanceHandover(
+  batchId: string,
+  input: { method: 'signed_receipt' | 'authorized_handover'; reference: string },
+) {
+  const result = await apiRequest<{ decision: { status: string; generatedTagCount: number } }>(
+    `/issuances/batch/${encodeURIComponent(batchId)}/handover`,
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+  return result.decision
 }
 
 export async function getEmployeeIssuanceBatch(batchId: string) {

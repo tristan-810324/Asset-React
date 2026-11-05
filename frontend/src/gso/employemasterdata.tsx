@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { ApiError } from '../auth/authApi'
 import { createDepartment, createEmployee, listDepartments, listEmployees, updateEmployee, type EmployeeProfile, type EmployeeProfileInput } from './employeesApi'
-import { createEmployeeReturn, listEmployeeIssuances } from './issuancesApi'
+import { listEmployeeIssuances } from './issuancesApi'
 
 interface DepartmentItem {
   id: string
@@ -18,14 +18,6 @@ const initialDepartments: DepartmentItem[] = [
   { id: 'dept-6', name: 'Academic Affairs' },
   { id: 'dept-7', name: 'Human Resources' },
 ]
-
-const returnConditionOptions = ['New', 'Good', 'Fair', 'Needs Repair', 'Unserviceable', 'Retired']
-
-function returnConditionForInspection(condition?: string) {
-  if (!condition) return 'Good'
-  if (returnConditionOptions.includes(condition)) return condition
-  return condition === 'Under Maintenance' ? 'Needs Repair' : 'Good'
-}
 
 interface EmployeeHistoryLog {
   date: string
@@ -96,7 +88,7 @@ function employeeRecordFromProfile(profile: EmployeeProfile, existing?: Employee
   }
 }
 
-function employeeProfileInput(employee: EmployeeRecord, pictureData?: string | null): EmployeeProfileInput {
+function employeeProfileInput(employee: EmployeeRecord): EmployeeProfileInput {
   return {
     employeeCode: employee.id,
     firstName: employee.firstName,
@@ -107,27 +99,10 @@ function employeeProfileInput(employee: EmployeeRecord, pictureData?: string | n
     position: employee.position,
     email: employee.email,
     status: employee.status as 'Active' | 'Inactive',
-    ...(pictureData !== undefined ? { pictureData } : {}),
   }
 }
 
-const maxEmployeePictureSizeBytes = 1024 * 1024
-
-function readEmployeePicture(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error('Unable to read the selected picture.'))
-    reader.onload = () => {
-      if (typeof reader.result === 'string') resolve(reader.result)
-      else reject(new Error('Unable to read the selected picture.'))
-    }
-    reader.readAsDataURL(file)
-  })
-}
-
 export default function EmployeeMasterData() {
-  const [showAddEmployeeModal, setShowAddEmployeeModal] = useState(false)
-
   // Dynamic departments state
   const [departments, setDepartments] = useState<DepartmentItem[]>(initialDepartments)
   const [showDepartmentModal, setShowDepartmentModal] = useState(false)
@@ -148,7 +123,6 @@ export default function EmployeeMasterData() {
   const [persistedEmployeeIds, setPersistedEmployeeIds] = useState<Set<string>>(() => new Set())
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(true)
   const [employeeDataError, setEmployeeDataError] = useState('')
-  const [employeeSaveError, setEmployeeSaveError] = useState('')
   const [showAllIssuedItems, setShowAllIssuedItems] = useState(false)
   const [showEmployeeHistoryModal, setShowEmployeeHistoryModal] = useState(false)
   const [historyDialogTab, setHistoryDialogTab] = useState<'issuance' | 'profile'>('issuance')
@@ -204,74 +178,6 @@ export default function EmployeeMasterData() {
     return () => { active = false }
   }, [])
 
-  // Handle Surrender/Return Issuance Modal state
-  const [showHandleIssuanceModal, setShowHandleIssuanceModal] = useState(false)
-  const [selectedReturnIssuanceId, setSelectedReturnIssuanceId] = useState('')
-  const [returnQuantity, setReturnQuantity] = useState('1')
-  const [returnCondition, setReturnCondition] = useState('Good')
-  const [returnPriority, setReturnPriority] = useState<'High' | 'Medium'>('High')
-  const [surrenderReason, setSurrenderReason] = useState('')
-  const [returnSubmitError, setReturnSubmitError] = useState('')
-  const [isSubmittingReturn, setIsSubmittingReturn] = useState(false)
-
-  // Form states for Add Employee
-  const [formData, setFormData] = useState({
-    empCode: '',
-    department: 'Registrar Office',
-    lastName: '',
-    middleName: '',
-    firstName: '',
-    suffix: '',
-    position: '',
-    email: '',
-    picture: null as File | null,
-    status: 'Active',
-  })
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
-  }
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const acceptedPictureTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-    if (!acceptedPictureTypes.includes(file.type)) {
-      setEmployeeSaveError('Choose a JPG, PNG, WebP, or GIF picture.')
-      e.target.value = ''
-      return
-    }
-    if (file.size > maxEmployeePictureSizeBytes) {
-      setEmployeeSaveError('The picture must be 1 MB or smaller.')
-      e.target.value = ''
-      return
-    }
-    setEmployeeSaveError('')
-    setFormData((prev) => ({ ...prev, picture: file }))
-  }
-
-  const handleClearForm = () => {
-    setFormData({
-      empCode: '',
-      department: departments[0]?.name || 'Registrar Office',
-      lastName: '',
-      middleName: '',
-      firstName: '',
-      suffix: '',
-      position: '',
-      email: '',
-      picture: null,
-      status: 'Active',
-    })
-    setEmployeeSaveError('')
-  }
-
-  const closeAddEmployeeModal = () => {
-    setShowAddEmployeeModal(false)
-    setEmployeeSaveError('')
-  }
-
   const handleAddDepartment = async (e: React.FormEvent) => {
     e.preventDefault()
     const trimmed = newDepartmentName.trim()
@@ -282,8 +188,7 @@ export default function EmployeeMasterData() {
 
     const existing = departments.find((department) => department.name.toLowerCase() === trimmed.toLowerCase())
     if (existing) {
-      setFormData((prev) => ({ ...prev, department: existing.name }))
-      setDepartmentManagerError('That department already exists and has been selected.')
+      setDepartmentManagerError('That department already exists.')
       return
     }
 
@@ -295,7 +200,6 @@ export default function EmployeeMasterData() {
         const alreadyAdded = current.some((item) => item.name.toLowerCase() === department.name.toLowerCase())
         return alreadyAdded ? current : [...current, newDepartment]
       })
-      setFormData((prev) => ({ ...prev, department: department.name }))
       setNewDepartmentName('')
       alert('The new department was added successfully!')
     } catch (error) {
@@ -321,7 +225,6 @@ export default function EmployeeMasterData() {
     setSelectedEmployee((current) =>
       current?.department === dept.name ? { ...current, department: name } : current
     )
-    setFormData((current) => (current.department === dept.name ? { ...current, department: name } : current))
     setSelectedDeptFilter((current) => (current === dept.name ? name : current))
 
     setEditingDeptId(null)
@@ -349,67 +252,11 @@ export default function EmployeeMasterData() {
     setSelectedEmployee((current) =>
       current?.department === deptToDelete.name ? { ...current, department: fallbackDept } : current
     )
-    setFormData((current) =>
-      current.department === deptToDelete.name ? { ...current, department: fallbackDept } : current
-    )
     setSelectedDeptFilter((current) => (current === deptToDelete.name ? 'all' : current))
 
     setDeptToDelete(null)
     setDeptDeleteReason('')
     setDepartmentManagerError('')
-  }
-
-  const handleSaveEmployee = async () => {
-    setEmployeeSaveError('')
-    const employeeCode = formData.empCode.trim()
-    const firstName = formData.firstName.trim()
-    const lastName = formData.lastName.trim()
-    if (!employeeCode || !firstName || !lastName) {
-      setEmployeeSaveError('Enter the employee code, first name, and last name.')
-      return
-    }
-
-    const email = formData.email.trim() || `${firstName.toLowerCase()}.${lastName.toLowerCase()}@dyci.edu.ph`
-    if (employees.some((employee) => employee.id.toLowerCase() === employeeCode.toLowerCase())) {
-      setEmployeeSaveError('May employee profile na gumagamit ng Employee Code na iyan.')
-      return
-    }
-    if (employees.some((employee) => employee.email.toLowerCase() === email.toLowerCase())) {
-      setEmployeeSaveError('May employee profile na gumagamit ng email address na iyan.')
-      return
-    }
-
-    const newEmp: EmployeeRecord = {
-      id: employeeCode,
-      firstName,
-      middleName: formData.middleName.trim(),
-      lastName,
-      suffix: formData.suffix.trim(),
-      initials: `${firstName[0] || ''}${lastName[0] || ''}`.toUpperCase() || 'EM',
-      department: formData.department,
-      position: formData.position.trim() || 'Employee',
-      email,
-      assigned: 0,
-      status: formData.status,
-      statusTone: formData.status === 'Active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600',
-      assignedItems: [],
-      history: [],
-      changeHistory: [],
-    }
-
-    try {
-      const pictureData = formData.picture ? await readEmployeePicture(formData.picture) : null
-      const { employee } = await createEmployee(employeeProfileInput(newEmp, pictureData))
-      const savedEmployee = employeeRecordFromProfile(employee)
-      setEmployees((current) => [savedEmployee, ...current])
-      setPersistedEmployeeIds((current) => new Set(current).add(savedEmployee.id))
-      setEmployeeDataError('')
-      handleClearForm()
-      setShowAddEmployeeModal(false)
-      alert('The new employee was added successfully!')
-    } catch (error) {
-      setEmployeeSaveError(error instanceof Error ? error.message : 'Unable to save the employee profile.')
-    }
   }
 
   // Open Edit Employee Modal
@@ -504,79 +351,6 @@ export default function EmployeeMasterData() {
     }
   }
 
-  // Handle Surrender/Return Form Submission
-  const handleConfirmSurrender = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!selectedEmployee || !selectedReturnIssuanceId) {
-      alert('Select an issued item to process surrender.')
-      return
-    }
-
-    const targetItem = selectedEmployee.assignedItems.find((item) => item.id === selectedReturnIssuanceId)
-    if (!targetItem) return
-    const requestedQuantity = Number(returnQuantity)
-    if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1 || requestedQuantity > targetItem.quantity) {
-      setReturnSubmitError(`Enter a whole number from 1 to ${targetItem.quantity} ${targetItem.unitOfMeasure}.`)
-      return
-    }
-    if (!surrenderReason.trim()) {
-      setReturnSubmitError('Please enter a surrender or return reason in the notes field.')
-      return
-    }
-    setReturnSubmitError('')
-    setIsSubmittingReturn(true)
-    const returnReason = returnCondition === 'Needs Repair'
-      ? `${surrenderReason.trim()}\nRepair priority: ${returnPriority}`
-      : surrenderReason.trim()
-    try {
-      const request = await createEmployeeReturn(
-        selectedEmployee.id,
-        targetItem.code,
-        returnCondition,
-        returnReason,
-        targetItem.id,
-        requestedQuantity,
-      )
-      const requestedAt = new Date(request.requestedAt)
-      const formattedDate = new Intl.DateTimeFormat('en-US', {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric',
-      }).format(Number.isNaN(requestedAt.getTime()) ? new Date() : requestedAt)
-      const remainingQuantity = Math.max(0, request.remainingQuantity ?? (targetItem.quantity - request.quantity))
-      const assignedItems = selectedEmployee.assignedItems
-        .map((item) => item.id === targetItem.id ? { ...item, quantity: remainingQuantity } : item)
-        .filter((item) => item.quantity > 0)
-      const newHistoryEntry: EmployeeHistoryLog = {
-        date: formattedDate,
-        event: 'Returned',
-        item: targetItem.name,
-        code: targetItem.code,
-        quantity: request.quantity,
-        unitOfMeasure: targetItem.unitOfMeasure,
-        note: `Returned ${request.quantity} ${targetItem.unitOfMeasure}. ${remainingQuantity > 0 ? `${remainingQuantity} ${targetItem.unitOfMeasure} remain assigned. ` : ''}Condition after GSO inspection: ${returnCondition}. GSO notes: ${returnReason}`,
-      }
-      const updatedEmp: EmployeeRecord = {
-        ...selectedEmployee,
-        assigned: assignedItems.reduce((total, item) => total + item.quantity, 0),
-        assignedItems,
-        history: [newHistoryEntry, ...selectedEmployee.history],
-      }
-      setEmployees((current) => current.map((emp) => (emp.id === selectedEmployee.id ? updatedEmp : emp)))
-      setSelectedEmployee(updatedEmp)
-      setSurrenderReason('')
-      setReturnQuantity('1')
-      setReturnPriority('High')
-      setShowHandleIssuanceModal(false)
-      alert(`Processed return of ${request.quantity} ${targetItem.unitOfMeasure} for ${targetItem.code}. ${remainingQuantity > 0 ? `${remainingQuantity} ${targetItem.unitOfMeasure} remain assigned to ${selectedEmployee.firstName}.` : 'No units remain assigned to this employee.'} ${request.emailSent ? `A confirmation email was sent to ${selectedEmployee.email}.` : 'The return was recorded, but the confirmation email could not be sent.'}`)
-    } catch (error) {
-      setReturnSubmitError(error instanceof ApiError ? error.message : error instanceof Error ? error.message : 'Unable to process item return.')
-    } finally {
-      setIsSubmittingReturn(false)
-    }
-  }
-
-
   const handleOpenEmployeeProfile = (employee: EmployeeRecord) => {
     setSelectedEmployee(employee)
     setShowAllIssuedItems(false)
@@ -641,216 +415,12 @@ export default function EmployeeMasterData() {
          
         </div>
 
-        {/* EMPLOYEE ACTION */}
-        <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
-          <button
-            type="button"
-            onClick={() => {
-              setEmployeeSaveError('')
-              setShowAddEmployeeModal(true)
-            }}
-            className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50"
-          >
-            + Add Employee
-          </button>
-        </div>
       </section>
 
       {employeeDataError && (
         <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
           {employeeDataError}
         </p>
-      )}
-
-      {/* ADD EMPLOYEE MODAL */}
-      {showAddEmployeeModal && (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm sm:p-6"
-          onClick={closeAddEmployeeModal}
-        >
-        <section
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="add-employee-modal-title"
-          onClick={(event) => event.stopPropagation()}
-          className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-blue-100 bg-white p-5 shadow-2xl shadow-slate-950/20 sm:p-6"
-        >
-          <div className="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-            <div>
-              <h2 id="add-employee-modal-title" className="text-base font-black text-slate-900">Add Employee Form</h2>
-              <p className="mt-0.5 text-xs font-medium text-slate-500">
-                Fill in the required information to register a new employee profile.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-              <button
-                type="button"
-                onClick={() => setShowDepartmentModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm transition hover:bg-blue-50"
-              >
-                + Add Department
-              </button>
-              <button
-                type="button"
-                onClick={closeAddEmployeeModal}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow-sm transition hover:bg-slate-50"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-
-          {employeeSaveError && (
-            <p role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-              {employeeSaveError}
-            </p>
-          )}
-
-          {/* EMPLOYEE FIELDS */}
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Status</span>
-              <select
-                name="status"
-                value={formData.status}
-                onChange={handleInputChange}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              >
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Email</span>
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                placeholder="name@dyci.edu.ph"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Surname</span>
-              <input
-                type="text"
-                name="lastName"
-                value={formData.lastName}
-                onChange={handleInputChange}
-                placeholder="Enter surname"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Middle Name</span>
-              <input
-                type="text"
-                name="middleName"
-                value={formData.middleName}
-                onChange={handleInputChange}
-                placeholder="Enter middle name"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">First Name</span>
-              <input
-                type="text"
-                name="firstName"
-                value={formData.firstName}
-                onChange={handleInputChange}
-                placeholder="Enter first name"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Suffix</span>
-              <input
-                type="text"
-                name="suffix"
-                value={formData.suffix}
-                onChange={handleInputChange}
-                placeholder="e.g. Jr., III"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Department</span>
-              <select
-                name="department"
-                value={formData.department}
-                onChange={handleInputChange}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              >
-                {departments.map((dept) => (
-                  <option key={dept.id} value={dept.name}>
-                    {dept.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Position</span>
-              <input
-                type="text"
-                name="position"
-                value={formData.position}
-                onChange={handleInputChange}
-                placeholder="Job title or designation"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Employee Code</span>
-              <input
-                type="text"
-                name="empCode"
-                value={formData.empCode}
-                onChange={handleInputChange}
-                placeholder="e.g. EMP-1300"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-
-            <label className="block sm:col-span-2">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Picture</span>
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                onChange={handleFileChange}
-                className="block h-10 w-full rounded-lg border border-slate-200 bg-white text-[0.65rem] text-slate-600 file:mr-3 file:h-full file:border-0 file:bg-slate-50 file:px-3 file:text-[0.65rem] file:font-bold"
-              />
-              <span className="mt-1 block text-[0.6rem] font-medium text-slate-400">JPG, PNG, WebP, or GIF up to 1 MB</span>
-            </label>
-          </div>
-
-          <div className="mt-5 flex justify-end gap-2.5">
-            <button
-              type="button"
-              onClick={handleSaveEmployee}
-              className="rounded-lg bg-blue-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-blue-700 shadow-sm shadow-blue-600/20"
-            >
-              Save Employee
-            </button>
-            <button
-              type="button"
-              onClick={handleClearForm}
-              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-            >
-              Clear form
-            </button>
-          </div>
-        </section>
-        </div>
       )}
 
       {/* MODAL FOR CREATING & MANAGING DEPARTMENTS (EDITABLE LIKE ITEMS MASTER DATA) */}
@@ -1391,7 +961,7 @@ export default function EmployeeMasterData() {
               </div>
             </div>
 
-            {/* Modal Footer with Edit Profile and Handle Issuance */}
+            {/* Modal footer with employee profile actions */}
             <footer className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                 <button
@@ -1400,22 +970,6 @@ export default function EmployeeMasterData() {
                   className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
                 >
                   Edit Profile
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const firstIssuedItem = selectedEmployee.assignedItems[0]
-                    setSelectedReturnIssuanceId(firstIssuedItem?.id || '')
-                    setReturnQuantity(String(firstIssuedItem?.quantity || 1))
-                    setReturnCondition(returnConditionForInspection(firstIssuedItem?.condition))
-                    setReturnPriority('High')
-                    setSurrenderReason('')
-                    setReturnSubmitError('')
-                    setShowHandleIssuanceModal(true)
-                  }}
-                  className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-extrabold text-amber-900 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-100"
-                >
-                  Handle Issuance (Surrender/Return)
                 </button>
               </div>
               <button
@@ -1598,173 +1152,6 @@ export default function EmployeeMasterData() {
               )}
             </div>
           </section>
-        </div>
-      )}
-
-      {/* HANDLE ISSUANCE / SURRENDER MODAL */}
-      {showHandleIssuanceModal && selectedEmployee && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-sm font-black text-slate-900">Handle Issuance Surrender / Return</h3>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Process item return for <span className="font-bold text-blue-700">{selectedEmployee.firstName} {selectedEmployee.lastName}</span>
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowHandleIssuanceModal(false)}
-                className="rounded-xl border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleConfirmSurrender} className="mt-4 space-y-3">
-              {selectedEmployee.assignedItems.length > 0 ? (
-                <>
-                  <label className="block">
-                    <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                      Select Currently Issued Item to Return
-                    </span>
-                    <select
-                      required
-                      value={selectedReturnIssuanceId}
-                      onChange={(e) => {
-                        const nextId = e.target.value
-                        setSelectedReturnIssuanceId(nextId)
-                        const nextItem = selectedEmployee.assignedItems.find((item) => item.id === nextId)
-                        if (nextItem) {
-                          setReturnQuantity(String(nextItem.quantity))
-                          setReturnCondition(returnConditionForInspection(nextItem.condition))
-                        }
-                        setReturnPriority('High')
-                      }}
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                    >
-                      {selectedEmployee.assignedItems.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.code} — {item.name} · {item.quantity} {item.unitOfMeasure} ({item.condition})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                      Quantity to Surrender / Return
-                    </span>
-                    <input
-                      type="number"
-                      required
-                      min={1}
-                      max={selectedEmployee.assignedItems.find((item) => item.id === selectedReturnIssuanceId)?.quantity ?? 1}
-                      step={1}
-                      value={returnQuantity}
-                      onChange={(e) => setReturnQuantity(e.target.value)}
-                      disabled={isSubmittingReturn}
-                      aria-label="Quantity to surrender or return"
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
-                    />
-                    <span className="mt-1 block text-[0.62rem] font-medium text-slate-400">
-                      Enter a whole number up to the currently assigned quantity.
-                    </span>
-                  </label>
-
-                  <label className="block">
-                    <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                      Condition After GSO Inspection
-                    </span>
-                    <select
-                      required
-                      value={returnCondition}
-                      onChange={(e) => {
-                        const nextCondition = e.target.value
-                        setReturnCondition(nextCondition)
-                        if (nextCondition !== 'Needs Repair') setReturnPriority('High')
-                      }}
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                    >
-                      {returnConditionOptions.map((condition) => (
-                        <option key={condition} value={condition}>{condition}</option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {returnCondition === 'Needs Repair' && (
-                    <label className="block">
-                      <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                        Repair Priority
-                      </span>
-                      <select
-                        required
-                        value={returnPriority}
-                        onChange={(e) => setReturnPriority(e.target.value as 'High' | 'Medium')}
-                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-800 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                      >
-                        <option value="High">High Priority</option>
-                        <option value="Medium">Medium Priority</option>
-                      </select>
-                    </label>
-                  )}
-
-                  <label className="block">
-                    <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                      Surrender / Return Reason or Notes
-                    </span>
-                    <textarea
-                      required
-                      maxLength={returnCondition === 'Needs Repair' ? 976 : 1000}
-                      value={surrenderReason}
-                      onChange={(e) => setSurrenderReason(e.target.value)}
-                      placeholder="e.g. Returned item due to clearance or department transfer."
-                      className="min-h-20 w-full rounded-xl border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                    />
-                  </label>
-
-                  {returnSubmitError && (
-                    <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                      {returnSubmitError}
-                    </p>
-                  )}
-
-                  <div className="mt-5 flex justify-end gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowHandleIssuanceModal(false)}
-                      disabled={isSubmittingReturn}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isSubmittingReturn}
-                      className="rounded-xl bg-amber-600 px-5 py-2 text-xs font-extrabold text-white transition hover:bg-amber-700 shadow-md shadow-amber-600/20 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {isSubmittingReturn ? 'Processing Return…' : 'Confirm Return'}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="py-6 text-center">
-                  <p className="text-xs font-semibold text-slate-500">
-                    This employee currently has no active issued items to surrender.
-                  </p>
-                  <div className="mt-4 flex justify-center">
-                    <button
-                      type="button"
-                      onClick={() => setShowHandleIssuanceModal(false)}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-              )}
-            </form>
-          </div>
         </div>
       )}
 

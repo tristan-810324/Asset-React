@@ -7,15 +7,28 @@ export type GsoNavigationItem =
   | 'Overview'
   | 'Item Master Data'
   | 'Employee Master Data'
-  | 'Issuance & Returned'
-  | 'To Be Repaired'
+  | 'Issuance and Borrowing'
+  | 'Main Issuance'
+  | 'Request and Borrowing'
+  | 'Returns and Records'
+  | 'Issuances Records'
+  | 'Return Items'
+  | 'Repair and Maintenance'
   | 'Notifications'
-  | 'Requests & Borrowing'
-  | 'Requester Verification'
-  | 'Maintenance'
+  | 'Requester Verifications'
 
-type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Maintenance'>
+type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Issuance and Borrowing' | 'Returns and Records'>
 type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
+
+type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string }
+type NavigationGroup = {
+  kind: 'group'
+  name: 'Issuance and Borrowing' | 'Returns and Records'
+  icon: NavigationIconName
+  href: string
+  activePages: GsoNavigationItem[]
+}
+type NavigationEntry = NavigationLink | NavigationGroup
 
 const iconPaths: Record<NavigationIconName, ReactNode> = {
   archive: (
@@ -127,15 +140,27 @@ function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconN
   )
 }
 
-const navigation: { name: VisibleNavigationItem; label?: string; icon: NavigationIconName; href?: string; badge?: string; action?: 'notifications' }[] = [
-  { name: 'Overview', icon: 'grid', href: '/gso' },
-  { name: 'Item Master Data', icon: 'package', href: '/gso/items' },
-  { name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
-  { name: 'Issuance & Returned', label: 'Issuance & Returns', icon: 'clipboard-check', href: '/gso/issuance' },
-  { name: 'To Be Repaired', icon: 'wrench', href: '/gso/to-be-repaired' },
-  { name: 'Requests & Borrowing', icon: 'clipboard-plus', href: '/gso/requests-borrowing' },
-  { name: 'Requester Verification', icon: 'users', href: '/gso/requester-verification' },
-  { name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
+const navigation: NavigationEntry[] = [
+  { kind: 'link', name: 'Overview', icon: 'grid', href: '/gso' },
+  { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
+  { kind: 'link', name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
+  {
+    kind: 'group',
+    name: 'Issuance and Borrowing',
+    icon: 'clipboard-plus',
+    href: '/gso/main-issuance',
+    activePages: ['Main Issuance', 'Request and Borrowing'],
+  },
+  {
+    kind: 'group',
+    name: 'Returns and Records',
+    icon: 'history',
+    href: '/gso/return-items',
+    activePages: ['Issuances Records', 'Return Items'],
+  },
+  { kind: 'link', name: 'Repair and Maintenance', icon: 'wrench', href: '/gso/to-be-repaired' },
+  { kind: 'link', name: 'Requester Verifications', icon: 'users', href: '/gso/requester-verification' },
+  { kind: 'link', name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
 ]
 
 type GsoNavbarProps = {
@@ -179,22 +204,9 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOp
         <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
         <nav className="mt-3 space-y-1.5" aria-label="Primary navigation">
           {navigation.map((item) => {
-            const isActive = currentPage === item.name
-            if (item.action === 'notifications') {
-              return (
-                <button
-                  key={item.name}
-                  type="button"
-                  onClick={() => { onOpenNotifications(); onClose() }}
-                  className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-bold transition ${isActive ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35' : 'text-slate-300 hover:bg-white/8 hover:text-white'}`}
-                  aria-haspopup="dialog"
-                  aria-expanded={notificationsOpen}
-                >
-                  <NavigationIcon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
-                  <span className="flex-1">{item.label ?? item.name}</span>
-                </button>
-              )
-            }
+            const isActive = item.kind === 'group'
+              ? item.activePages.includes(currentPage)
+              : currentPage === item.name
             return (
               <a
                 key={item.name}
@@ -208,12 +220,7 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOp
                 aria-current={isActive ? 'page' : undefined}
               >
                 <NavigationIcon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
-                <span className="flex-1">{item.label ?? item.name}</span>
-                {item.badge && (
-                  <span className={`rounded-md px-1.5 py-0.5 text-[0.62rem] font-black ${isActive ? 'bg-white/18 text-white' : 'bg-white/10 text-blue-100'}`}>
-                    {item.badge}
-                  </span>
-                )}
+                <span className="flex-1">{item.name}</span>
               </a>
             )
           })}

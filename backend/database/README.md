@@ -37,6 +37,9 @@ There is currently no checked-in migration runner or migration ledger. The confi
 | 023 | `023_inventory_receipts.sql` | Receipt history for initial stock and later restocks |
 | 024 | `024_inventory_storage_location.sql` | Storage location for stock records and per-unit tags |
 | 025 | `025_inventory_serial_numbers.sql` | Stores manufacturer serial numbers before issuance |
+| 026 | `026_inventory_issue_behavior.sql` | Distinguishes consumable quantity stock from returnable stock |
+| 027 | `027_reusable_stock_borrow_details.sql` | Stores reusable-stock return dates, use location, and purpose |
+| 028 | `028_reusable_borrowing_times.sql` | Adds the scheduled borrow and return times |
 
 Migration 005 repeats a constraint shape that is already present in the checked-in 004 file. It may have been needed by databases that had an earlier version of 004, so it is retained until applied history can be verified.
 

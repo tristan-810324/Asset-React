@@ -91,7 +91,7 @@ function validateCreateRequest(input) {
         purpose: text(data.purpose, 'purpose', 2000),
         neededDate,
         returnDate,
-        pickupLocation: text(data.pickupLocation, 'pickup location', 250, { optional: true }),
+        useLocation: text(data.useLocation, 'place of use', 250),
         remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
         items,
       },

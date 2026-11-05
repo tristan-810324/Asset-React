@@ -185,7 +185,7 @@ export default function ReturnItems() {
           return history.value.assignedItems.flatMap((assignedItem) => {
             if (pendingReturnCodes.has(assignedItem.code.toLowerCase())) return []
             const inventoryItem = inventoryItemsByCode.get(assignedItem.code.toLowerCase())
-            if (!inventoryItem || inventoryItem.trackingMode !== 'quantity') return []
+            if (!inventoryItem || inventoryItem.trackingMode !== 'quantity' || inventoryItem.issueBehavior !== 'returnable') return []
             return [{
               id: assignedItem.id,
               employeeCode: employee.id,
@@ -683,7 +683,7 @@ export default function ReturnItems() {
   }
 
   return (
-    <GsoPageFrame activePage="Issuance & Returned" searchPlaceholder="Search returned asset, code, or employee...">
+    <GsoPageFrame activePage="Return Items" searchPlaceholder="Search returned asset, code, or employee...">
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -698,15 +698,12 @@ export default function ReturnItems() {
           </div>
           
         </div>
-        <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Issuance and return records">
+        <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Returns and records pages">
+          <a href="/gso/return-items" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
+            + Return Items ({returnedItems.length})
+          </a>
           <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
             + Issuances Records ({mainIssuancesCount})
-          </a>
-          <a href="/gso/main-issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-            + Main Issuance
-          </a>
-          <a href="/gso/return-items" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
-            + Returned Items ({returnedItems.length})
           </a>
         </nav>
       </section>
@@ -753,8 +750,8 @@ export default function ReturnItems() {
       <section className="mt-5 rounded-2xl border border-amber-100 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6" aria-labelledby="bulk-return-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 id="bulk-return-title" className="text-sm font-black text-slate-900">Return bulk stock by quantity</h2>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">Use this flow for quantity-tracked items. GSO records the returned quantity and condition, then sends the employee a confirmation email. Bulk stock shares one inventory condition; use per-unit tracking when units can differ.</p>
+            <h2 id="bulk-return-title" className="text-sm font-black text-slate-900">Return reusable quantity stock</h2>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">Use this flow for reusable quantity-tracked items. GSO records the returned quantity and condition, then sends the employee a confirmation email. Bulk stock shares one inventory condition; use per-unit tracking when units can differ. Consumable stock is not returned through this form.</p>
           </div>
           <span className="rounded-full bg-amber-50 px-3 py-1.5 text-[0.62rem] font-extrabold text-amber-700">No unit barcode required</span>
         </div>
@@ -827,7 +824,7 @@ export default function ReturnItems() {
           </form>
         ) : (
           <p className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs font-semibold text-slate-500">
-            No active bulk-stock issuances are available to return by quantity.
+            No active reusable quantity-stock issuances are available to return.
           </p>
         )}
       </section>

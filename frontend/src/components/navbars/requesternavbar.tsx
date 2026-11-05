@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AuthUser } from '../../auth/authApi'
 
-export type RequesterPage = 'Home' | 'Request Center' | 'My Requests' | 'Updates' | 'Profile'
+export type RequesterPage = 'Home' | 'Request Center' | 'My Requests' | 'My Issued Items' | 'Notifications' | 'Return Items' | 'Profile'
 
-type IconName = 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'file' | 'grid' | 'menu' | 'user' | 'users'
+type IconName = 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'file' | 'grid' | 'menu' | 'package' | 'return' | 'user' | 'users'
 
 const iconPaths: Record<IconName, ReactNode> = {
   bell: <><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,
@@ -13,6 +13,8 @@ const iconPaths: Record<IconName, ReactNode> = {
   file: <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z" /><path d="M13 3v7h7M8 14h8M8 17h8" /></>,
   grid: <><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1" /><rect x="14" y="3.5" width="6.5" height="6.5" rx="1" /><rect x="3.5" y="14" width="6.5" height="6.5" rx="1" /><rect x="14" y="14" width="6.5" height="6.5" rx="1" /></>,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  package: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 8 9 5 9-5M3 8v9l9 5 9-5V8M12 13v9" /></>,
+  return: <><path d="M9 14 4 9l5-5" /><path d="M4 9h9a7 7 0 0 1 0 14h-2" /></>,
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
   users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
 }
@@ -25,8 +27,9 @@ const navigation: Array<{ name: RequesterPage; label: string; icon: IconName; hr
   { name: 'Home', label: 'Overview', icon: 'grid', href: '/requester' },
   { name: 'Request Center', label: 'Request Center', icon: 'file', href: '/requester/request-center' },
   { name: 'My Requests', label: 'My Requests', icon: 'clipboard', href: '/requester/my-requests' },
-  { name: 'Updates', label: 'Updates', icon: 'bell', href: '/requester/notifications' },
-  { name: 'Profile', label: 'My Profile', icon: 'users', href: '/requester/profile' },
+  { name: 'My Issued Items', label: 'My Issued Items', icon: 'package', href: '/requester/issued-items' },
+  { name: 'Notifications', label: 'Notifications', icon: 'bell', href: '/requester/notifications' },
+  { name: 'Return Items', label: 'Return Items', icon: 'return', href: '/requester/return-items' },
 ]
 
 export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { currentPage: RequesterPage; mobileMenuOpen: boolean; onClose: () => void }) {
@@ -83,7 +86,7 @@ export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignO
         <div className="min-w-0"><p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">Requester Portal / <span className="text-slate-700">{pageName}</span></p><p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p></div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
-        <a href="/requester/notifications" className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label="Open request updates" aria-current={pageName === 'Updates' ? 'page' : undefined}><Icon name="bell" className="h-[1.1rem] w-[1.1rem]" />{pageName === 'Updates' && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-600" />}</a>
+        <a href="/requester/notifications" className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label="Open notifications" aria-current={pageName === 'Notifications' ? 'page' : undefined}><Icon name="bell" className="h-[1.1rem] w-[1.1rem]" />{pageName === 'Notifications' && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-600" />}</a>
         <div ref={accountMenuRef} className="relative">
           <button type="button" onClick={() => setAccountMenuOpen((open) => !open)} className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition hover:border-blue-200 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label="Open account menu" aria-haspopup="menu" aria-expanded={accountMenuOpen}>
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span>

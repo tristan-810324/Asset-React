@@ -17,7 +17,9 @@ import {
   type InventoryCategoryItemName,
   type InventoryChangeRecord,
   type InventoryAssetTag,
+  type InventoryCurrentBorrower,
   type InventoryItemRecord,
+  type InventoryIssueBehavior,
   type InventoryReceiptRecord,
   type InventoryTrackingMode,
 } from './inventoryApi'
@@ -39,10 +41,12 @@ type InventoryItem = {
   name: string
   description: string
   trackingMode: InventoryTrackingMode
+  issueBehavior: InventoryIssueBehavior
   manufacturerSerialNumber: string | null
   storageLocation: string
   assetTags: InventoryAssetTag[]
   receiptHistory: InventoryReceiptRecord[]
+  currentBorrowers: InventoryCurrentBorrower[]
   initials: string
   category: string
   acquired: string
@@ -73,7 +77,93 @@ type InventoryItem = {
 
 const conditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']
 const addItemConditionOptions = ['New', 'Good', 'Fair']
-const unitOfMeasureOptions = ['piece', 'unit', 'box', 'pack', 'ream', 'set', 'pair', 'roll', 'bottle', 'carton', 'bundle']
+
+type UnitGroup = { label?: string; units: string[] }
+
+const perUnitAssetUnits: UnitGroup[] = [{ units: ['piece', 'set'] }]
+const reusableStockUnits: UnitGroup[] = [{ units: ['piece', 'set', 'pair'] }]
+const consumableStockUnits: UnitGroup[] = [
+  { label: 'Count', units: ['piece', 'pair'] },
+  { label: 'Pack / container', units: ['box', 'pack', 'ream', 'pad', 'roll', 'bottle', 'can', 'tube', 'sack'] },
+  { label: 'Measure', units: ['liter', 'gallon', 'meter', 'kilogram'] },
+]
+
+function inventoryTypeLabel(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
+  if (trackingMode === 'individual') return 'Per-unit asset'
+  return issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock'
+}
+
+function unitGroupsFor(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
+  if (trackingMode === 'individual') return perUnitAssetUnits
+  return issueBehavior === 'consumable' ? consumableStockUnits : reusableStockUnits
+}
+
+function unitHintFor(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
+  if (trackingMode === 'individual') return 'Keep piece unless one barcode covers several parts, such as a desktop set.'
+  return issueBehavior === 'consumable'
+    ? 'Choose the smallest amount you give out. Example: ballpens bought by the box but given one at a time → piece.'
+    : 'Choose what you count when it comes back. Example: chairs → piece, sound system → set.'
+}
+
+// existingUnits keeps units already saved on records selectable, even when they are no longer offered for new stock.
+function UnitOfMeasureOptions({ trackingMode, issueBehavior, existingUnits }: {
+  trackingMode: InventoryTrackingMode
+  issueBehavior: InventoryIssueBehavior
+  existingUnits: string[]
+}) {
+  const groups = unitGroupsFor(trackingMode, issueBehavior)
+  const listedUnits = groups.flatMap((group) => group.units)
+  const unlistedUnits = Array.from(new Set(existingUnits)).filter((unit) => unit && !listedUnits.includes(unit))
+  const renderUnits = (units: string[]) => units.map((unit) => <option key={unit} value={unit}>{unit}</option>)
+  return (
+    <>
+      {unlistedUnits.map((unit) => <option key={unit} value={unit}>{unit} (existing)</option>)}
+      {groups.map((group) => group.label
+        ? <optgroup key={group.label} label={group.label}>{renderUnits(group.units)}</optgroup>
+        : renderUnits(group.units))}
+    </>
+  )
+}
+
+type StockFormFields = {
+  category: string
+  itemName: string
+  description: string
+  trackingMode: InventoryTrackingMode
+  issueBehavior: InventoryIssueBehavior
+  unitOfMeasure: string
+}
+
+function sameStockRecords(form: StockFormFields, inventoryItems: InventoryItem[]) {
+  const itemName = form.itemName.trim().toLocaleLowerCase()
+  if (!itemName) return []
+  const category = form.category.toLocaleLowerCase()
+  return inventoryItems.filter((item) => item.trackingMode === form.trackingMode
+    && item.issueBehavior === form.issueBehavior
+    && item.category.toLocaleLowerCase() === category
+    && item.name.toLocaleLowerCase() === itemName)
+}
+
+function recordWithSameDescription(form: StockFormFields, inventoryItems: InventoryItem[]) {
+  const description = form.description.trim().toLocaleLowerCase()
+  if (!description) return undefined
+  return sameStockRecords(form, inventoryItems).find((item) => item.description.toLocaleLowerCase() === description)
+}
+
+// A same-description record wins because that is what a restock would add to; otherwise use the newest record.
+function existingUnitFor(form: StockFormFields, inventoryItems: InventoryItem[]) {
+  return (recordWithSameDescription(form, inventoryItems) || sameStockRecords(form, inventoryItems)[0])?.unit || ''
+}
+
+// Runs when the item or stock type changes. A unit the user picked is kept while it still fits;
+// a unit that was only filled in from the previous item is not carried over.
+function unitAfterStockChange(previous: StockFormFields, next: StockFormFields, inventoryItems: InventoryItem[]) {
+  const existingUnit = existingUnitFor(next, inventoryItems)
+  if (existingUnit) return existingUnit
+  const unitCameFromPreviousStock = previous.unitOfMeasure === existingUnitFor(previous, inventoryItems)
+  const unitIsListed = unitGroupsFor(next.trackingMode, next.issueBehavior).some((group) => group.units.includes(previous.unitOfMeasure))
+  return unitCameFromPreviousStock || !unitIsListed ? 'piece' : previous.unitOfMeasure
+}
 
 function categoryItemNameOptionsFor(
   categoryName: string,
@@ -133,6 +223,12 @@ function calculateAcquisitionCost(quantity: string | number, unitCost: string | 
   const normalizedUnitCost = unitCost === '' ? 0 : Number(unitCost)
   const total = normalizedQuantity * normalizedUnitCost
   return Number.isFinite(total) ? Math.round((total + Number.EPSILON) * 100) / 100 : 0
+}
+
+// The API returns receiptHistory newest first; free deliveries are skipped so a donation does not prefill PHP 0.
+function lastDeliveryUnitCost(item: InventoryItem) {
+  const lastPricedReceipt = item.receiptHistory.find((receipt) => Number(receipt.unitCost) > 0)
+  return lastPricedReceipt ? Number(lastPricedReceipt.unitCost).toFixed(2) : ''
 }
 
 function toneForCondition(condition: string) {
@@ -254,7 +350,7 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
         <strong style="color:#0f172a;">${escapeHTML(item.name)}</strong><br>
         <span style="font-size:10pt;color:#475569;">${escapeHTML(item.code)}</span><br>
         <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span><br>
-        <span style="font-size:9pt;color:#1d4ed8;font-weight:bold;">${item.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}</span>
+        <span style="font-size:9pt;color:#1d4ed8;font-weight:bold;">${escapeHTML(inventoryTypeLabel(item.trackingMode, item.issueBehavior))}</span>
       </td>
       <td style="width:150px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong>${escapeHTML(item.acquired)}</strong><br>
@@ -375,7 +471,7 @@ function generateInventoryWord(data: InventoryItem[], selectedDate: string) {
         <strong style="color:#0f172a;">${escapeHTML(item.name)}</strong><br>
         <span style="font-size:9pt;color:#475569;">Code: ${escapeHTML(item.code)}</span><br>
         <span style="font-size:9pt;color:#64748b;">${escapeHTML(item.category)}</span><br>
-        <span style="font-size:9pt;color:#1d4ed8;font-weight:bold;">${item.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}</span>
+        <span style="font-size:9pt;color:#1d4ed8;font-weight:bold;">${escapeHTML(inventoryTypeLabel(item.trackingMode, item.issueBehavior))}</span>
       </td>
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;white-space:nowrap;">
         <strong>${escapeHTML(item.acquired)}</strong><br>
@@ -583,12 +679,14 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
     name: record.itemName,
     description: record.description,
     trackingMode: record.trackingMode,
+    issueBehavior: record.issueBehavior,
     manufacturerSerialNumber: record.serialNumber
       || record.assetTags?.find((tag) => tag.serialNumber)?.serialNumber
       || null,
     storageLocation: record.storageLocation || 'GSO Storage',
     assetTags: record.assetTags || [],
     receiptHistory: record.receiptHistory || [],
+    currentBorrowers: record.currentBorrowers || [],
     initials: record.itemName.trim().slice(0, 2).toUpperCase() || 'IT',
     category: record.category,
     acquired: formatAcquiredDate(record.dateAcquired),
@@ -624,6 +722,109 @@ function inventoryAvatarTone(index: number) {
     : 'border-[#17377f] bg-[#d6b333] text-[#17377f]'
 }
 
+function isReusableStock(item: Pick<InventoryItem, 'trackingMode' | 'issueBehavior'>) {
+  return item.trackingMode === 'quantity' && item.issueBehavior === 'returnable'
+}
+
+// Borrowing dates arrive as Manila wall-clock text, or a plain date on older and requester records.
+function formatBorrowDate(value: string) {
+  const hasTime = value.includes('T')
+  const date = new Date(hasTime ? `${value}:00+08:00` : `${value}T00:00:00+08:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-PH', {
+    dateStyle: 'medium',
+    ...(hasTime ? { timeStyle: 'short' as const } : {}),
+    timeZone: 'Asia/Manila',
+  }).format(date)
+}
+
+const borrowerStateTones: Record<InventoryCurrentBorrower['state'], string> = {
+  Borrowed: 'bg-blue-50 text-blue-800',
+  Reserved: 'bg-violet-50 text-violet-800',
+  'For repair': 'bg-amber-50 text-amber-800',
+}
+
+function BorrowerDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="inline font-semibold text-slate-600">{label}: </dt>
+      <dd className="inline wrap-break-word font-bold text-slate-900">{value}</dd>
+    </div>
+  )
+}
+
+function ReusableStockStatus({ item }: { item: InventoryItem }) {
+  const total = Number(item.quantity) || 0
+  const available = Number(item.availableQuantity) || 0
+  const quantityIn = (state: InventoryCurrentBorrower['state']) => item.currentBorrowers
+    .filter((borrower) => borrower.state === state)
+    .reduce((sum, borrower) => sum + Number(borrower.quantity), 0)
+  const borrowed = quantityIn('Borrowed')
+  const reserved = quantityIn('Reserved')
+  // Stock that is neither lent out nor available is being kept back for repair or its condition.
+  const onHold = Math.max(total - available - borrowed - reserved, 0)
+  const counts = [
+    { label: 'Total', value: total, tone: 'border-slate-200 bg-slate-50 text-slate-900' },
+    { label: 'Borrowed', value: borrowed, tone: 'border-blue-200 bg-blue-50 text-blue-900' },
+    ...(reserved > 0 ? [{ label: 'Reserved', value: reserved, tone: 'border-violet-200 bg-violet-50 text-violet-900' }] : []),
+    ...(onHold > 0 ? [{ label: 'On hold', value: onHold, tone: 'border-amber-200 bg-amber-50 text-amber-900' }] : []),
+    { label: 'Available', value: available, tone: available > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900' },
+  ]
+
+  return (
+    <section aria-labelledby="borrowing-status-title" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="mb-4 border-b border-slate-100 pb-3">
+        <h3 id="borrowing-status-title" className="text-sm font-extrabold text-slate-900">Borrowing status</h3>
+        <p className="mt-1 text-sm text-slate-600">How many are out, how many remain, and who has them right now. Counted per {item.unit}.</p>
+      </div>
+      <dl className="grid grid-cols-[repeat(auto-fit,minmax(5rem,1fr))] gap-2 sm:gap-3">
+        {counts.map((count) => (
+          <div key={count.label} className={`min-w-0 rounded-xl border px-3 py-2.5 ${count.tone}`}>
+            <dt className="text-xs font-bold">{count.label}</dt>
+            <dd className="mt-0.5 text-2xl font-black leading-tight">{count.value.toLocaleString()}</dd>
+          </div>
+        ))}
+      </dl>
+      {onHold > 0 && (
+        <p className="mt-2 text-xs font-semibold text-amber-800">On hold means it cannot be lent right now because of a repair or its condition.</p>
+      )}
+
+      <h4 className="mt-5 text-xs font-extrabold uppercase tracking-wide text-slate-600">Current borrowers ({item.currentBorrowers.length})</h4>
+      {item.currentBorrowers.length > 0 ? (
+        <ul className="inventory-list-scrollbar mt-2 max-h-80 divide-y divide-slate-200 overflow-y-auto rounded-xl border border-slate-200">
+          {item.currentBorrowers.map((borrower) => (
+            <li key={borrower.id} className="px-3.5 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
+                <div className="min-w-0">
+                  <p className="wrap-break-word text-sm font-extrabold text-slate-900">{borrower.borrowerName}</p>
+                  <p className="mt-0.5 wrap-break-word text-xs font-semibold text-slate-600">
+                    {[borrower.reference, borrower.department].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-extrabold text-slate-900">{Number(borrower.quantity).toLocaleString()} {item.unit}</span>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-extrabold ${borrowerStateTones[borrower.state]}`}>{borrower.state}</span>
+                  {borrower.isOverdue && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-extrabold text-rose-800">Overdue</span>}
+                </div>
+              </div>
+              <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+                {borrower.useAt
+                  ? <BorrowerDetail label="Borrow" value={formatBorrowDate(borrower.useAt)} />
+                  : <BorrowerDetail label={borrower.state === 'Reserved' ? 'Requested' : 'Issued'} value={formatBorrowDate(borrower.issuedAt)} />}
+                <BorrowerDetail label="Return by" value={borrower.expectedReturnAt ? formatBorrowDate(borrower.expectedReturnAt) : 'Not set'} />
+                {borrower.useLocation && <BorrowerDetail label="Place" value={borrower.useLocation} />}
+                {borrower.purpose && <BorrowerDetail label="Purpose" value={borrower.purpose} />}
+              </dl>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3.5 py-3 text-sm font-medium text-slate-700">No one is borrowing this item right now.</p>
+      )}
+    </section>
+  )
+}
+
 export default function ItemsMasterData() {
   const [showAddItemModal, setShowAddItemModal] = useState(false)
 
@@ -656,12 +857,15 @@ export default function ItemsMasterData() {
   const [isUpdatingItem, setIsUpdatingItem] = useState(false)
   const [itemEditError, setItemEditError] = useState('')
   const [bulkRestockItemId, setBulkRestockItemId] = useState('')
+  // Holds the cost filled in from a restock target until the user types their own.
+  const [prefilledRestockCost, setPrefilledRestockCost] = useState('')
   const [editFormData, setEditFormData] = useState({
     itemCode: '',
     category: '',
     itemName: '',
     description: '',
     trackingMode: 'individual' as InventoryTrackingMode,
+    issueBehavior: 'returnable' as InventoryIssueBehavior,
     dateAcquired: '',
     timeAcquired: '',
     unitCost: '',
@@ -688,8 +892,10 @@ export default function ItemsMasterData() {
     itemName: '',
     description: '',
     trackingMode: 'individual' as InventoryTrackingMode,
+    issueBehavior: 'returnable' as InventoryIssueBehavior,
     dateAcquired: '',
     timeAcquired: '',
+    receiptReference: '',
     unitCost: '',
     acquisitionCost: '0.00',
     quantity: '1',
@@ -752,17 +958,31 @@ export default function ItemsMasterData() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
-    if (name === 'trackingMode' || name === 'category' || ['itemName', 'description', 'unitOfMeasure', 'condition'].includes(name)) {
+    const resetsRestockTarget = name === 'trackingMode' || name === 'issueBehavior' || name === 'category' || ['itemName', 'description', 'unitOfMeasure', 'condition'].includes(name)
+    if (resetsRestockTarget) {
       setBulkRestockItemId('')
+    }
+    if (resetsRestockTarget || name === 'unitCost') {
+      setPrefilledRestockCost('')
     }
     setFormData((previous) => {
       const next = { ...previous, [name]: value }
       if (name === 'trackingMode') {
         next.trackingMode = value === 'quantity' ? 'quantity' : 'individual'
+        next.issueBehavior = next.trackingMode === 'quantity' ? 'consumable' : 'returnable'
+      }
+      if (name === 'issueBehavior') {
+        next.issueBehavior = value === 'consumable' ? 'consumable' : 'returnable'
       }
       if (name === 'category') {
         next.itemName = ''
         next.itemCode = nextInventoryItemCode(value, items)
+      }
+      if (['category', 'itemName', 'trackingMode', 'issueBehavior'].includes(name)) {
+        next.unitOfMeasure = unitAfterStockChange(previous, next, items)
+      }
+      if (name === 'description') {
+        next.unitOfMeasure = recordWithSameDescription(next, items)?.unit || previous.unitOfMeasure
       }
       if (name === 'unitCost' || name === 'quantity') {
         next.acquisitionCost = calculateAcquisitionCost(
@@ -773,20 +993,43 @@ export default function ItemsMasterData() {
       if (name === 'quantity' && Number(value) === 1 && !previous.unitOfMeasure.trim()) {
         next.unitOfMeasure = 'piece'
       }
+      // A prefilled cost belongs to the restock target, so it goes away with that target.
+      if (resetsRestockTarget && prefilledRestockCost && previous.unitCost === prefilledRestockCost) {
+        next.unitCost = ''
+        next.acquisitionCost = calculateAcquisitionCost(next.quantity, '').toFixed(2)
+      }
       return next
     })
   }
 
+  const handleRestockTargetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const nextItemId = e.target.value
+    setBulkRestockItemId(nextItemId)
+    const costWasTyped = formData.unitCost !== '' && formData.unitCost !== prefilledRestockCost
+    if (costWasTyped) return
+    const nextTarget = items.find((item) => item.id === nextItemId)
+    const nextCost = nextTarget ? lastDeliveryUnitCost(nextTarget) : ''
+    setPrefilledRestockCost(nextCost)
+    setFormData((previous) => ({
+      ...previous,
+      unitCost: nextCost,
+      acquisitionCost: calculateAcquisitionCost(previous.quantity, nextCost).toFixed(2),
+    }))
+  }
+
   const handleClearForm = (inventoryItems = items, categoryName = categories[0]?.name || '') => {
     setBulkRestockItemId('')
+    setPrefilledRestockCost('')
     setFormData({
       itemCode: nextInventoryItemCode(categoryName, inventoryItems),
       category: categoryName,
       itemName: '',
       description: '',
       trackingMode: 'individual',
+      issueBehavior: 'returnable',
       dateAcquired: '',
       timeAcquired: '',
+      receiptReference: '',
       unitCost: '',
       acquisitionCost: '0.00',
       quantity: '1',
@@ -838,12 +1081,15 @@ export default function ItemsMasterData() {
       setNewItemName('')
       const category = categories.find((entry) => entry.id === itemName.categoryId)
       if (category) {
-        setFormData((current) => ({
-          ...current,
-          category: category.name,
-          itemCode: nextInventoryItemCode(category.name, items),
-          itemName: itemName.name,
-        }))
+        setFormData((current) => {
+          const next = {
+            ...current,
+            category: category.name,
+            itemCode: nextInventoryItemCode(category.name, items),
+            itemName: itemName.name,
+          }
+          return { ...next, unitOfMeasure: unitAfterStockChange(current, next, items) }
+        })
       }
       notifyAction('Item name added', `Item name "${itemName.name}" was added.`)
     } catch (error) {
@@ -942,6 +1188,7 @@ export default function ItemsMasterData() {
       itemName: selectedItem.name,
       description: selectedItem.description,
       trackingMode: selectedItem.trackingMode,
+      issueBehavior: selectedItem.issueBehavior,
       dateAcquired: selectedItem.dateAcquiredValue || '',
       timeAcquired: selectedItem.timeAcquiredValue || '',
       unitCost: String(selectedItem.unitCostValue ?? 0),
@@ -971,6 +1218,10 @@ export default function ItemsMasterData() {
       }
       if (name === 'trackingMode') {
         next.trackingMode = value === 'quantity' ? 'quantity' : 'individual'
+        next.issueBehavior = next.trackingMode === 'quantity' ? 'consumable' : 'returnable'
+      }
+      if (name === 'issueBehavior') {
+        next.issueBehavior = value === 'consumable' ? 'consumable' : 'returnable'
       }
       if (name === 'unitCost' || name === 'quantity') {
         const nextUnitCost = name === 'unitCost' ? value : current.unitCost
@@ -994,16 +1245,44 @@ export default function ItemsMasterData() {
   const handleUpdateSelectedItem = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedItem?.id) return
-    if (!editFormData.itemCode.trim() || !editFormData.itemName.trim() || !editFormData.description.trim() || !editFormData.reason.trim()) {
-      setItemEditError('Choose an item name, enter an item description, and provide a reason for the change.')
+    if (!editFormData.category.trim() || !editFormData.itemCode.trim() || !editFormData.itemName.trim() || !editFormData.description.trim() || !editFormData.reason.trim()) {
+      setItemEditError('Choose a category and item name, enter an item description, and provide a reason for the change.')
       return
     }
     if (!editItemNameIsCatalogued && !editItemNameIsCurrentLegacyValue) {
       setItemEditError('Choose an item name saved under the selected category.')
       return
     }
-    const unitCost = editFormData.unitCost ? Number(editFormData.unitCost) : 0
-    const quantity = editFormData.quantity ? Number(editFormData.quantity) : 1
+    if (!editFormData.condition.trim()) {
+      setItemEditError('Select the item condition.')
+      return
+    }
+    if (!editFormData.dateAcquired.trim()) {
+      setItemEditError('Enter the date this inventory was acquired.')
+      return
+    }
+    if (!editFormData.unitOfMeasure.trim()) {
+      setItemEditError('Select the unit used to count or issue this inventory.')
+      return
+    }
+    if (!editFormData.unitCost.trim()) {
+      setItemEditError('Enter the cost per unit. Use 0.00 if the item was free or donated.')
+      return
+    }
+    if (!editFormData.quantity.trim()) {
+      setItemEditError('Enter the number of physical assets or the stock quantity.')
+      return
+    }
+    const unitCost = Number(editFormData.unitCost)
+    const quantity = Number(editFormData.quantity)
+    if (!Number.isFinite(unitCost) || unitCost < 0) {
+      setItemEditError('Enter a valid non-negative cost per unit.')
+      return
+    }
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      setItemEditError('Enter a whole-number quantity of at least 1.')
+      return
+    }
     const acquisitionCost = editFormData.acquisitionCost
       ? Number(editFormData.acquisitionCost)
       : calculateAcquisitionCost(quantity, unitCost)
@@ -1028,6 +1307,7 @@ export default function ItemsMasterData() {
         itemName: editFormData.itemName.trim(),
         description: editFormData.description.trim(),
         trackingMode: editFormData.trackingMode,
+        issueBehavior: editFormData.trackingMode === 'individual' ? 'returnable' : editFormData.issueBehavior,
         dateAcquired: editFormData.dateAcquired,
         timeAcquired: editFormData.timeAcquired,
         unitCost,
@@ -1051,17 +1331,37 @@ export default function ItemsMasterData() {
   }
 
   const handleSaveItem = async () => {
-    if (!formData.itemCode.trim() || !formData.itemName.trim() || !formData.description.trim()) {
-      showActionAlert('Enter the item code, item name, and item description.', 'Unable to save item')
+    if (!formData.category.trim()) {
+      showActionAlert('Select an item category.', 'Category required')
       return
     }
-    if (!formData.condition) {
+    if (!formData.itemCode.trim() || !formData.itemName.trim() || !formData.description.trim()) {
+      showActionAlert('Select an item name and enter its description.', 'Item details required')
+      return
+    }
+    if (!formData.condition.trim()) {
       showActionAlert('Select the condition for every unit in this batch or bulk stock record.', 'Condition required')
       return
     }
+    if (!formData.dateAcquired.trim()) {
+      showActionAlert('Enter the date this inventory was acquired.', 'Acquisition date required')
+      return
+    }
+    if (!formData.unitOfMeasure.trim()) {
+      showActionAlert('Select the unit used to count or issue this inventory.', 'Unit required')
+      return
+    }
+    if (!formData.unitCost.trim()) {
+      showActionAlert('Enter the cost per unit. If the item was free or donated, enter 0.00.', 'Unit cost required')
+      return
+    }
+    if (!formData.quantity.trim()) {
+      showActionAlert('Enter the number of physical assets or the stock quantity.', 'Quantity required')
+      return
+    }
 
-    const unitCost = formData.unitCost ? Number(formData.unitCost) : 0
-    const quantity = formData.quantity ? Number(formData.quantity) : 1
+    const unitCost = Number(formData.unitCost)
+    const quantity = Number(formData.quantity)
     const isIndividualTracking = formData.trackingMode === 'individual'
     if (!Number.isFinite(unitCost) || unitCost < 0) {
       showActionAlert('Enter a valid non-negative cost per unit.', 'Invalid cost')
@@ -1070,6 +1370,11 @@ export default function ItemsMasterData() {
     const maximumQuantity = isIndividualTracking ? MAX_INDIVIDUAL_ITEMS_PER_SAVE : 2147483647
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > maximumQuantity) {
       showActionAlert(`Enter a whole number from 1 to ${maximumQuantity.toLocaleString()} for the ${isIndividualTracking ? 'asset batch' : 'stock quantity'}.`, 'Invalid quantity')
+      return
+    }
+    if (unitCost === 0 && !window.confirm(
+      `Zero unit cost entered\n\nThis will be saved as PHP 0.00 per ${formData.unitOfMeasure.trim() || 'piece'}.\n\nClick OK only if this item really has no cost, such as a donation. Click Cancel to enter the price.`,
+    )) {
       return
     }
     setIsSavingItem(true)
@@ -1081,7 +1386,7 @@ export default function ItemsMasterData() {
           dateAcquired: formData.dateAcquired,
           timeAcquired: formData.timeAcquired,
           condition: formData.condition,
-          receiptReference: '',
+          receiptReference: formData.receiptReference.trim(),
         })
         const updatedItem = mapInventoryRecord(updatedRecord)
         const nextItems = items.map((item) => item.id === updatedItem.id ? updatedItem : item)
@@ -1110,8 +1415,9 @@ export default function ItemsMasterData() {
         itemName: formData.itemName.trim(),
         description: formData.description.trim(),
         trackingMode: formData.trackingMode,
+        issueBehavior: isIndividualTracking ? 'returnable' : formData.issueBehavior,
         storageLocation: 'GSO Storage',
-        receiptReference: '',
+        receiptReference: formData.receiptReference.trim(),
         dateAcquired: formData.dateAcquired,
         timeAcquired: formData.timeAcquired,
         unitCost,
@@ -1205,6 +1511,7 @@ export default function ItemsMasterData() {
     && formData.category && formData.itemName.trim() && formData.description.trim() && formData.condition
     ? items.filter((item) => item.id
       && item.trackingMode === 'quantity'
+      && item.issueBehavior === formData.issueBehavior
       && item.category.toLocaleLowerCase() === formData.category.toLocaleLowerCase()
       && item.name.toLocaleLowerCase() === formData.itemName.trim().toLocaleLowerCase()
       && item.description.toLocaleLowerCase() === formData.description.trim().toLocaleLowerCase()
@@ -1225,6 +1532,10 @@ export default function ItemsMasterData() {
         : formItemCodes[0] || formData.itemCode)
   const formQuantity = Number.isInteger(requestedItemCount) && requestedItemCount > 0 ? requestedItemCount : 0
   const formReceiptTotal = calculateAcquisitionCost(formQuantity, formData.unitCost)
+  const formUnitLabel = formData.unitOfMeasure.trim() || 'piece'
+  const formExistingUnits = sameStockRecords(formData, items).map((item) => item.unit)
+  const formCostIsMissing = !formData.unitCost.trim()
+  const formCostIsPrefilled = Boolean(formRestockTarget && prefilledRestockCost)
   const selectedFormCategoryId = categories.find((category) => category.name === formData.category)?.id || ''
   const categoryManagedItemNames = itemNameOptions.filter((itemName) => itemName.categoryId === itemNameCategoryId)
   const managedItemNames = categoryManagedItemNames.filter((itemName) => itemName.name.toLowerCase().includes(itemNameSearch.trim().toLowerCase()))
@@ -1302,7 +1613,7 @@ export default function ItemsMasterData() {
               <div className="min-w-0">
                 <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Inventory management</p>
                 <h2 id="add-item-modal-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Add an inventory item</h2>
-                <p className="mt-1 text-xs font-semibold text-slate-500">Add item details, select how it is tracked, and record its acquisition.</p>
+                <p className="mt-1 text-xs font-semibold text-slate-500">Fields marked * are required. Time of acquisition is optional.</p>
               </div>
             </div>
             <button
@@ -1323,13 +1634,15 @@ export default function ItemsMasterData() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
-              <span className={editFieldLabelClass}>Category</span>
+              <span className={editFieldLabelClass}>Category <span className="text-rose-600">*</span></span>
               <select
                 name="category"
                 value={formData.category}
                 onChange={handleInputChange}
+                required
                 className={editControlClass}
               >
+                <option value="" disabled>Select a category</option>
                 {categories.map((category) => (
                   <option key={category.id || category.name} value={category.name}>
                     {category.name}
@@ -1378,6 +1691,25 @@ export default function ItemsMasterData() {
               </span>
             </label>
 
+            <label className="block">
+              <span className={editFieldLabelClass}>Condition <span className="text-rose-600">*</span></span>
+              <select
+                name="condition"
+                value={formData.condition}
+                onChange={handleInputChange}
+                required
+                className={editControlClass}
+              >
+                <option value="" disabled>Select condition</option>
+                {addItemConditionOptions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
+              </select>
+              <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                {formData.trackingMode === 'individual'
+                  ? 'All units in this batch start with the same condition. Add items separately if conditions differ.'
+                  : 'Bulk stock is kept in one condition group; create another stock record if its condition differs.'}
+              </span>
+            </label>
+
             <label className="block sm:col-span-2">
               <span className={editFieldLabelClass}>Item description <span className="text-rose-600">*</span></span>
               <input
@@ -1391,6 +1723,32 @@ export default function ItemsMasterData() {
                 className={editControlClass}
               />
             </label>
+
+            {formData.trackingMode === 'quantity' && formRestockCandidates.length > 0 && (
+              <label className="block sm:col-span-2">
+                <span className={editFieldLabelClass}>Bulk SKU / restock existing item</span>
+                <select
+                  value={bulkRestockItemId}
+                  onChange={handleRestockTargetChange}
+                  className={editControlClass}
+                >
+                  <option value="">Create a new bulk SKU</option>
+                  {formRestockCandidates.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.code} · {item.quantity} {item.unit} in stock · {item.storageLocation}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                  Choose an existing SKU to add this delivery to its stock and receipt history. Condition and unit must match.
+                </span>
+                {formCostIsPrefilled && (
+                  <span className="mt-1 block text-xs font-semibold leading-relaxed text-blue-800">
+                    Cost per {formUnitLabel} was filled in from the last delivery ({formatMoney(prefilledRestockCost)}). Change it above if this delivery has a different price.
+                  </span>
+                )}
+              </label>
+            )}
             </div>
             </section>
 
@@ -1400,12 +1758,12 @@ export default function ItemsMasterData() {
                 <p className="mt-1 text-sm text-slate-600">Choose how this item is tracked and enter its acquisition details.</p>
               </div>
               <fieldset>
-              <legend className={editFieldLabelClass}>Tracking mode</legend>
+              <legend className={editFieldLabelClass}>Tracking mode <span className="text-rose-600">*</span></legend>
               <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Select how this inventory will be counted and issued.</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {([
                   { value: 'individual' as const, title: 'Per-unit asset', description: 'Equipment tracked separately; its barcode label becomes available after issuance approval.' },
-                  { value: 'quantity' as const, title: 'Bulk quantity', description: 'Interchangeable supplies tracked together by quantity, without a label while in storage.' },
+                  { value: 'quantity' as const, title: 'Bulk quantity', description: 'Interchangeable items counted together. Choose below whether they are consumed or returned by quantity.' },
                 ]).map((option) => (
                   <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${formData.trackingMode === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                     <input
@@ -1414,6 +1772,7 @@ export default function ItemsMasterData() {
                       value={option.value}
                       checked={formData.trackingMode === option.value}
                       onChange={handleInputChange}
+                      required={option.value === 'individual'}
                       className="mt-0.5 h-4 w-4 accent-blue-600"
                     />
                     <span>
@@ -1425,32 +1784,64 @@ export default function ItemsMasterData() {
               </div>
               </fieldset>
 
+              {formData.trackingMode === 'quantity' && (
+                <fieldset className="mt-5">
+                  <legend className={editFieldLabelClass}>How is this stock issued? <span className="text-rose-600">*</span></legend>
+                  <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Both options are quantity-tracked and do not need a barcode for each unit.</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {([
+                      { value: 'consumable' as const, title: 'Consumable stock', description: 'Used up or given out; the quantity is not expected to be returned.' },
+                      { value: 'returnable' as const, title: 'Reusable quantity stock', description: 'Temporarily issued and returned by count; individual units are not identified.' },
+                    ]).map((option) => (
+                      <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${formData.issueBehavior === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                        <input
+                          type="radio"
+                          name="issueBehavior"
+                          value={option.value}
+                          checked={formData.issueBehavior === option.value}
+                          onChange={handleInputChange}
+                          required={option.value === 'consumable'}
+                          className="mt-0.5 h-4 w-4 accent-blue-600"
+                        />
+                        <span>
+                          <span className="block text-sm font-extrabold text-slate-900">{option.title}</span>
+                          <span className="mt-1 block text-xs leading-relaxed text-slate-600">{option.description}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              )}
+
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
 
             <label className="block">
-              <span className={editFieldLabelClass}>Date of acquisition</span>
-              <input
-                type="date"
-                name="dateAcquired"
-                value={formData.dateAcquired}
+              <span className={editFieldLabelClass}>Issued per <span className="text-rose-600">*</span></span>
+              <select
+                name="unitOfMeasure"
+                value={formData.unitOfMeasure}
                 onChange={handleInputChange}
-                className={editControlClass}
-              />
+                disabled={Boolean(formRestockTarget)}
+                required
+                className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
+              >
+                <UnitOfMeasureOptions
+                  trackingMode={formData.trackingMode}
+                  issueBehavior={formData.issueBehavior}
+                  existingUnits={[...formExistingUnits, formData.unitOfMeasure]}
+                />
+              </select>
+              <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                {formRestockTarget
+                  ? `Locked to match ${formRestockTarget.code}.`
+                  : formExistingUnits.includes(formData.unitOfMeasure)
+                    ? `Matches your existing ${formData.itemName.trim()} stock.`
+                    : unitHintFor(formData.trackingMode, formData.issueBehavior)}
+              </span>
             </label>
 
             <label className="block">
-              <span className={editFieldLabelClass}>Time of acquisition</span>
-              <input
-                type="time"
-                name="timeAcquired"
-                value={formData.timeAcquired}
-                onChange={handleInputChange}
-                className={editControlClass}
-              />
-            </label>
-
-            <label className="block">
-              <span className={editFieldLabelClass}>Cost per unit</span>
+              <span className={editFieldLabelClass}>Cost per {formUnitLabel} <span className="text-rose-600">*</span></span>
               <input
                 type="number"
                 min="0"
@@ -1458,13 +1849,19 @@ export default function ItemsMasterData() {
                 name="unitCost"
                 value={formData.unitCost}
                 onChange={handleInputChange}
+                required
                 placeholder="0.00"
                 className={editControlClass}
               />
+              <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                {formCostIsPrefilled
+                  ? 'Filled in from the last delivery. Change it if this delivery has a different price.'
+                  : `Enter the price of 1 ${formUnitLabel}. Enter 0.00 if it was free or donated.`}
+              </span>
             </label>
 
             <label className="block">
-              <span className={editFieldLabelClass}>{formData.trackingMode === 'individual' ? 'Number of physical assets' : 'Stock quantity'}</span>
+              <span className={editFieldLabelClass}>{formData.trackingMode === 'individual' ? 'Number of physical assets' : 'Stock quantity'} <span className="text-rose-600">*</span></span>
               <input
                 type="number"
                 min="1"
@@ -1473,6 +1870,7 @@ export default function ItemsMasterData() {
                 name="quantity"
                 value={formData.quantity}
                 onChange={handleInputChange}
+                required
                 placeholder="Enter number of items"
                 className={editControlClass}
               />
@@ -1501,67 +1899,28 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className={editFieldLabelClass}>Unit of measure</span>
-              <select
-                name="unitOfMeasure"
-                value={formData.unitOfMeasure}
+              <span className={editFieldLabelClass}>Date of acquisition <span className="text-rose-600">*</span></span>
+              <input
+                type="date"
+                name="dateAcquired"
+                value={formData.dateAcquired}
                 onChange={handleInputChange}
-                disabled={Boolean(formRestockTarget)}
-                className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
-              >
-                {unitOfMeasureOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-              </select>
+                required
+                className={editControlClass}
+              />
             </label>
-            </div>
-            </section>
-
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-            <div className="mb-4 border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-extrabold text-slate-900">Stock &amp; condition</h3>
-              <p className="mt-1 text-sm text-slate-600">Set the initial condition and choose an existing bulk item to restock when applicable.</p>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
 
             <label className="block">
-              <span className={editFieldLabelClass}>Condition</span>
-              <select
-                name="condition"
-                value={formData.condition}
+              <span className={editFieldLabelClass}>Time of acquisition <span className="font-semibold text-slate-600">(optional)</span></span>
+              <input
+                type="time"
+                name="timeAcquired"
+                value={formData.timeAcquired}
                 onChange={handleInputChange}
                 className={editControlClass}
-              >
-                <option value="" disabled>Select condition</option>
-                {addItemConditionOptions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
-              </select>
-              <span className="mt-2 block text-xs leading-relaxed text-slate-600">
-                {formData.trackingMode === 'individual'
-                  ? 'All units in this batch start with the same condition. Add items separately if conditions differ.'
-                  : 'Bulk stock is kept in one condition group; create another stock record if its condition differs.'}
-              </span>
+              />
             </label>
-
-            {formData.trackingMode === 'quantity' && formRestockCandidates.length > 0 && (
-              <label className="block sm:col-span-2">
-                <span className={editFieldLabelClass}>Bulk SKU / restock existing item</span>
-                <select
-                  value={bulkRestockItemId}
-                  onChange={(event) => setBulkRestockItemId(event.target.value)}
-                  className={editControlClass}
-                >
-                  <option value="">Create a new bulk SKU</option>
-                  {formRestockCandidates.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.code} · {item.quantity} {item.unit} in stock · {item.storageLocation}
-                    </option>
-                  ))}
-                </select>
-                <span className="mt-2 block text-xs leading-relaxed text-slate-600">
-                  Choose an existing SKU to add this delivery to its stock and receipt history. Condition and unit must match.
-                </span>
-              </label>
-            )}
-
-          </div>
+            </div>
             </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
@@ -1586,9 +1945,14 @@ export default function ItemsMasterData() {
                   {formData.trackingMode === 'individual'
                     ? `Will create ${formQuantity} individual asset record${formQuantity === 1 ? '' : 's'}${formItemCodes.length > 1 ? ` (${formItemCodes[0]} – ${formItemCodes[formItemCodes.length - 1]})` : ''}. Barcode labels become available after issuance approval.`
                     : formRestockTarget
-                      ? `Will add ${formQuantity} ${formRestockTarget.unit} to ${formRestockTarget.code}; stock will become ${Number(formRestockTarget.quantityValue || 0) + formQuantity} ${formRestockTarget.unit}. No stock label is printed while the item is in storage.`
-                      : `Will create one bulk stock record for ${formQuantity} ${formData.unitOfMeasure || 'piece'} (${formBulkCodeRange?.display || formData.itemCode}). No stock label is printed while the item is in storage.`}
+                      ? `Will add ${formQuantity} ${formRestockTarget.unit} to ${formRestockTarget.code}; stock will become ${Number(formRestockTarget.quantityValue || 0) + formQuantity} ${formRestockTarget.unit}. Type: ${inventoryTypeLabel(formData.trackingMode, formData.issueBehavior)}. No per-unit barcode is printed.`
+                      : `Will create one ${inventoryTypeLabel(formData.trackingMode, formData.issueBehavior).toLocaleLowerCase()} record for ${formQuantity} ${formData.unitOfMeasure || 'piece'} (${formBulkCodeRange?.display || formData.itemCode}). No per-unit barcode is printed.`}
                 </p>
+                {formCostIsMissing && (
+                  <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold leading-relaxed text-amber-900">
+                    Cost is required. Enter the price from the receipt, or enter 0.00 if this item was free or donated.
+                  </p>
+                )}
               </div>
             </div>
           </section>
@@ -1744,7 +2108,10 @@ export default function ItemsMasterData() {
                             onClick={() => {
                               const category = categories.find((entry) => entry.id === itemName.categoryId)
                               if (category) {
-                                setFormData((current) => ({ ...current, category: category.name, itemCode: nextInventoryItemCode(category.name, items), itemName: itemName.name }))
+                                setFormData((current) => {
+                                  const next = { ...current, category: category.name, itemCode: nextInventoryItemCode(category.name, items), itemName: itemName.name }
+                                  return { ...next, unitOfMeasure: unitAfterStockChange(current, next, items) }
+                                })
                               }
                               setShowMasterDataModal(false)
                             }}
@@ -2134,7 +2501,7 @@ export default function ItemsMasterData() {
                           {item.category}
                         </span>
                         <span className={`mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[0.58rem] font-extrabold ${item.trackingMode === 'individual' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
-                          {item.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}
+                          {inventoryTypeLabel(item.trackingMode, item.issueBehavior)}
                         </span>
                       </span>
                     </div>
@@ -2207,6 +2574,7 @@ export default function ItemsMasterData() {
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-8 sm:py-6">
               <div className="mx-auto max-w-4xl space-y-4">
+                {isReusableStock(selectedItem) && <ReusableStockStatus item={selectedItem} />}
                 <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Item overview</h3>
@@ -2226,20 +2594,24 @@ export default function ItemsMasterData() {
                         </div>
                         <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
                           <dt className="text-sm font-medium text-slate-600">Tracking</dt>
-                          <dd className="text-right text-sm font-bold text-slate-900">{selectedItem.trackingMode === 'individual' ? 'Per-unit asset' : 'Bulk quantity'}</dd>
+                          <dd className="text-right text-sm font-bold text-slate-900">{inventoryTypeLabel(selectedItem.trackingMode, selectedItem.issueBehavior)}</dd>
                         </div>
-                        <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
-                          <dt className="text-sm font-medium text-slate-600">Issued to</dt>
-                          <dd className="text-right text-sm font-bold text-slate-900">{/\d/.test(selectedItem.dateIssued) ? selectedItem.assignedTo : 'Not issued'}</dd>
-                        </div>
-                        <div className="border-t border-slate-200 pt-2">
-                          <dt className="text-sm font-semibold text-blue-800">Date issued</dt>
-                          <dd className="mt-0.5 text-sm font-bold text-blue-800">
-                            {/\d/.test(selectedItem.dateIssued)
-                              ? <>{selectedItem.dateIssued} ({selectedItem.timeIssued})</>
-                              : selectedItem.status === 'Pending Approval' ? 'Pending employee approval' : 'Not issued'}
-                          </dd>
-                        </div>
+                        {!isReusableStock(selectedItem) && (
+                          <>
+                            <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                              <dt className="text-sm font-medium text-slate-600">Issued to</dt>
+                              <dd className="text-right text-sm font-bold text-slate-900">{/\d/.test(selectedItem.dateIssued) ? selectedItem.assignedTo : 'Not issued'}</dd>
+                            </div>
+                            <div className="border-t border-slate-200 pt-2">
+                              <dt className="text-sm font-semibold text-blue-800">Date issued</dt>
+                              <dd className="mt-0.5 text-sm font-bold text-blue-800">
+                                {/\d/.test(selectedItem.dateIssued)
+                                  ? <>{selectedItem.dateIssued} ({selectedItem.timeIssued})</>
+                                  : selectedItem.status === 'Pending Approval' ? 'Pending employee approval' : 'Not issued'}
+                              </dd>
+                            </div>
+                          </>
+                        )}
                       </dl>
                     </section>
 
@@ -2297,29 +2669,27 @@ export default function ItemsMasterData() {
                   </section>
                 )}
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h3 className="text-sm font-extrabold text-slate-900">Item history</h3>
-                      <p className="mt-1 text-sm text-slate-600">Review condition, issuance, return, and item change history.</p>
-                    </div>
-                    <span className="text-xs font-semibold text-slate-500">History is saved with this item record.</span>
+                <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5">
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Item History</h3>
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      onClick={() => {
+                        setItemHistoryTab('condition')
+                        setShowItemHistoryModal(true)
+                      }}
+                      className="shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+                    >
+                      View History
+                    </button>
                   </div>
+                  <p className="mt-1 text-sm text-slate-600">Review condition, issuance, return, and item change history.</p>
                 </section>
               </div>
             </div>
 
-            <footer className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-              <button
-                type="button"
-                onClick={() => {
-                  setItemHistoryTab('condition')
-                  setShowItemHistoryModal(true)
-                }}
-                className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
-              >
-                View history
-              </button>
+            <footer className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-8">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 {selectedItem.id ? (
                   <button
@@ -2348,34 +2718,33 @@ export default function ItemsMasterData() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="item-history-dialog-title"
-            className="flex max-h-[86vh] min-h-0 w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
+            className="flex max-h-[90vh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
           >
-            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-6">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className={'grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-sm font-black shadow-sm ' + selectedItemAvatarClass}>
-                  {selectedItem.initials}
-                </span>
-                <div className="min-w-0">
-                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Inventory management</p>
-                  <h2 id="item-history-dialog-title" className="mt-0.5 text-base font-black text-slate-900">Item History</h2>
-                  <p className="mt-1 truncate text-xs font-semibold text-slate-500">{selectedItem.name} <span className="px-1 text-slate-300">/</span> {selectedItem.code}</p>
-                </div>
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="min-w-0">
+                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Inventory management</p>
+                <h2 id="item-history-dialog-title" className="mt-1 text-xl font-black text-slate-950 sm:text-2xl">
+                  Item History
+                </h2>
+                <p className="mt-2 truncate text-base font-bold text-slate-800">
+                  {selectedItem.name} · {selectedItem.code}
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowItemHistoryModal(false)}
-                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+                className="shrink-0 rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
               >
                 Close
               </button>
             </header>
 
-            <div className="flex shrink-0 flex-wrap gap-2 border-b border-slate-200 bg-slate-50/70 px-5 py-3 sm:px-6">
+            <div className="flex shrink-0 flex-wrap gap-2 border-b-2 border-slate-300 bg-white px-5 py-3.5 sm:px-8">
               <button
                 type="button"
                 aria-pressed={itemHistoryTab === 'changes'}
                 onClick={() => setItemHistoryTab('changes')}
-                className={'rounded-xl px-4 py-2.5 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ' + (itemHistoryTab === 'changes' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border border-slate-300 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50')}
+                className={`rounded-xl px-4 py-3 text-base font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${itemHistoryTab === 'changes' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50'}`}
               >
                 Item Change History
               </button>
@@ -2383,84 +2752,65 @@ export default function ItemsMasterData() {
                 type="button"
                 aria-pressed={itemHistoryTab === 'condition'}
                 onClick={() => setItemHistoryTab('condition')}
-                className={'rounded-xl px-4 py-2.5 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ' + (itemHistoryTab === 'condition' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border border-slate-300 bg-white text-slate-700 hover:border-blue-200 hover:bg-blue-50')}
+                className={`rounded-xl px-4 py-3 text-base font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${itemHistoryTab === 'condition' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50'}`}
               >
                 Item Condition History
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 p-4 sm:p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
               {itemHistoryTab === 'condition' ? (
                 selectedItem.history.length > 0 ? (
                   <div className="space-y-3">
                     {selectedItem.history.map((log, index) => (
-                      <article key={log.changedAt + '-' + index} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="flex min-w-0 items-start gap-3">
-                            <span className={'grid h-10 w-10 shrink-0 place-items-center rounded-full border-2 text-[0.62rem] font-black ' + selectedItemAvatarClass}>
-                              {selectedItem.initials}
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="text-sm font-semibold text-slate-600">{log.previous}</span>
-                                <span className="text-sm font-bold text-slate-300">/</span>
-                                <span className={'rounded-full px-2.5 py-1 text-xs font-extrabold ' + log.tone}>{log.next}</span>
-                              </div>
-                              <p className="mt-2 text-sm leading-relaxed text-slate-700">{log.note}</p>
-                              <p className="mt-1.5 text-xs font-semibold text-slate-500">{log.actorLabel ? log.actorLabel + ': ' + log.by : 'By ' + log.by}</p>
-                            </div>
+                      <article key={log.changedAt + '-' + index} className="flex flex-col items-start justify-between gap-3 rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md sm:flex-row sm:gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-base font-semibold text-slate-800">{log.previous}</span>
+                            <span className="text-base font-bold text-slate-400">/</span>
+                            <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + log.tone}>{log.next}</span>
                           </div>
-                          <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{log.changedAt}</span>
+                          <p className="mt-3 text-base leading-relaxed text-slate-800">{log.note}</p>
+                          <p className="mt-2 text-sm font-bold text-slate-700">{log.actorLabel ? log.actorLabel + ': ' + log.by : 'By ' + log.by}</p>
                         </div>
+                        <span className="shrink-0 rounded-full bg-slate-200 px-3 py-1.5 text-sm font-bold text-slate-800">{log.changedAt}</span>
                       </article>
                     ))}
                   </div>
                 ) : (
-                  <div className="flex min-h-52 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-5 py-8 text-center">
-                    <span className={'mb-3 grid h-12 w-12 place-items-center rounded-full border-2 text-xs font-black ' + selectedItemAvatarClass}>{selectedItem.initials}</span>
-                    <p className="text-sm font-extrabold text-slate-800">No condition history yet</p>
-                    <p className="mt-1 max-w-sm text-sm leading-relaxed text-slate-600">Condition and return updates for this item will appear here.</p>
-                  </div>
+                  <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
+                    No condition history recorded yet.
+                  </p>
                 )
               ) : selectedItem.changeHistory && selectedItem.changeHistory.length > 0 ? (
                 <div className="space-y-3">
                   {[...selectedItem.changeHistory]
                     .sort((left, right) => new Date(left.changedAt).getTime() - new Date(right.changedAt).getTime())
                     .map((change, index) => (
-                      <article key={change.changedAt + '-' + index} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                        <div className="flex items-start gap-3">
-                          <span className={'grid h-10 w-10 shrink-0 place-items-center rounded-full border-2 text-[0.62rem] font-black ' + selectedItemAvatarClass}>
-                            {selectedItem.initials}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-sm font-extrabold text-slate-900">{change.action === 'updated' ? 'Item updated' : change.reason}</p>
-                              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">{formatCreatedAt(change.changedAt)}</span>
-                            </div>
-                            {change.action === 'updated' && change.reason && (
-                              <p className="mt-2 text-sm leading-relaxed text-slate-600">Reason: {change.reason}</p>
-                            )}
-                            {getChangeDetails(change).length > 0 && (
-                              <ul className="mt-2 space-y-1 text-sm leading-relaxed text-slate-700">
-                                {getChangeDetails(change).map((detail) => (
-                                  <li key={detail}>{detail}</li>
-                                ))}
-                              </ul>
-                            )}
-                            <p className="mt-2 text-xs font-semibold text-slate-500">
-                              {change.action === 'updated' ? 'Edited by' : 'By'} {change.changedBy || 'Unknown user'} / {formatCreatedAt(change.changedAt)}
-                            </p>
-                          </div>
+                      <article key={change.changedAt + '-' + index} className="rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md">
+                        <div className="min-w-0">
+                          <p className="text-base font-semibold leading-relaxed text-slate-950">{change.action === 'updated' ? 'Item updated' : change.reason}</p>
+                          {change.action === 'updated' && change.reason && (
+                            <p className="mt-3 text-base leading-relaxed text-slate-800">Reason: {change.reason}</p>
+                          )}
+                          {getChangeDetails(change).length > 0 && (
+                            <ul className="mt-3 space-y-1 text-base leading-relaxed text-slate-800">
+                              {getChangeDetails(change).map((detail) => (
+                                <li key={detail}>{detail}</li>
+                              ))}
+                            </ul>
+                          )}
+                          <p className="mt-3 text-sm font-bold text-slate-700">
+                            {change.action === 'updated' ? 'Edited by' : 'By'} {change.changedBy || 'Unknown user'} · {formatCreatedAt(change.changedAt)}
+                          </p>
                         </div>
                       </article>
                     ))}
                 </div>
               ) : (
-                <div className="flex min-h-52 flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white px-5 py-8 text-center">
-                  <span className={'mb-3 grid h-12 w-12 place-items-center rounded-full border-2 text-xs font-black ' + selectedItemAvatarClass}>{selectedItem.initials}</span>
-                  <p className="text-sm font-extrabold text-slate-800">No item changes yet</p>
-                  <p className="mt-1 max-w-sm text-sm leading-relaxed text-slate-600">Updates to this inventory item will be listed here.</p>
-                </div>
+                <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
+                  No item changes recorded yet.
+                </p>
               )}
             </div>
           </section>
@@ -2556,12 +2906,13 @@ export default function ItemsMasterData() {
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block sm:col-span-2">
-                      <span className={editFieldLabelClass}>Tracking mode</span>
+                      <span className={editFieldLabelClass}>Tracking mode <span className="text-rose-600">*</span></span>
                       <select
                         name="trackingMode"
                         value={editFormData.trackingMode}
                         onChange={handleEditInputChange}
                         disabled={selectedItem.assetTags.length > 0}
+                        required
                         className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
                       >
                         <option value="individual">Per-unit asset - unique barcode for each physical unit</option>
@@ -2569,17 +2920,45 @@ export default function ItemsMasterData() {
                       </select>
                       <span className="mt-2 block text-xs leading-relaxed text-slate-600">Tracking mode can only change before asset tags are created. Existing barcode history is preserved.</span>
                     </label>
+                    {editFormData.trackingMode === 'quantity' && (
+                      <fieldset className="sm:col-span-2">
+                        <legend className={editFieldLabelClass}>How is this stock issued? <span className="text-rose-600">*</span></legend>
+                        <p className="mb-3 text-xs leading-relaxed text-slate-600">Choose whether the quantity is consumed or expected back. Neither option uses per-unit barcodes.</p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {([
+                            { value: 'consumable' as const, title: 'Consumable stock', description: 'Used up or given out; the quantity is not expected to be returned.' },
+                            { value: 'returnable' as const, title: 'Reusable quantity stock', description: 'Temporarily issued and returned by count; individual units are not identified.' },
+                          ]).map((option) => (
+                            <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${editFormData.issueBehavior === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                              <input
+                                type="radio"
+                                name="issueBehavior"
+                                value={option.value}
+                                checked={editFormData.issueBehavior === option.value}
+                                onChange={handleEditInputChange}
+                                required={option.value === 'consumable'}
+                                className="mt-0.5 h-4 w-4 accent-blue-600"
+                              />
+                              <span>
+                                <span className="block text-sm font-extrabold text-slate-900">{option.title}</span>
+                                <span className="mt-1 block text-xs leading-relaxed text-slate-600">{option.description}</span>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                    )}
                     <label className="block">
-                      <span className={editFieldLabelClass}>Date acquired</span>
-                      <input type="date" name="dateAcquired" value={editFormData.dateAcquired} onChange={handleEditInputChange} className={editControlClass} />
+                      <span className={editFieldLabelClass}>Date acquired <span className="text-rose-600">*</span></span>
+                      <input type="date" name="dateAcquired" required value={editFormData.dateAcquired} onChange={handleEditInputChange} className={editControlClass} />
                     </label>
                     <label className="block">
-                      <span className={editFieldLabelClass}>Time acquired</span>
+                      <span className={editFieldLabelClass}>Time acquired <span className="font-semibold text-slate-600">(optional)</span></span>
                       <input type="time" name="timeAcquired" value={editFormData.timeAcquired} onChange={handleEditInputChange} className={editControlClass} />
                     </label>
                     <label className="block">
-                      <span className={editFieldLabelClass}>Cost per unit</span>
-                      <input type="number" min="0" step="0.01" name="unitCost" value={editFormData.unitCost} onChange={handleEditInputChange} className={editControlClass} />
+                      <span className={editFieldLabelClass}>Cost per {editFormData.unitOfMeasure.trim() || 'unit'} <span className="text-rose-600">*</span></span>
+                      <input type="number" min="0" step="0.01" name="unitCost" required value={editFormData.unitCost} onChange={handleEditInputChange} className={editControlClass} />
                     </label>
                     <label className="block">
                       <span className={editFieldLabelClass}>Acquisition cost <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-[0.65rem] font-bold text-slate-700">Calculated</span></span>
@@ -2597,24 +2976,28 @@ export default function ItemsMasterData() {
                 <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Stock &amp; condition</h3>
-                    <p className="mt-1 text-sm text-slate-600">Keep the item quantity, unit of measure, and condition up to date.</p>
+                    <p className="mt-1 text-sm text-slate-600">Keep the item quantity, unit, and condition up to date.</p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
-                      <span className={editFieldLabelClass}>Quantity</span>
-                      <input type="number" min="0" step="1" name="quantity" value={editFormData.quantity} onChange={handleEditInputChange} disabled={selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0} className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`} />
+                      <span className={editFieldLabelClass}>Quantity <span className="text-rose-600">*</span></span>
+                      <input type="number" min="1" step="1" name="quantity" required value={editFormData.quantity} onChange={handleEditInputChange} disabled={selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0} className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`} />
                       {selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0 && <span className="mt-2 block text-xs text-slate-600">Quantity is locked because asset tags already exist.</span>}
                     </label>
                     <label className="block">
-                      <span className={editFieldLabelClass}>Unit of measure</span>
-                      <select name="unitOfMeasure" value={editFormData.unitOfMeasure} onChange={handleEditInputChange} className={editControlClass}>
-                        {!unitOfMeasureOptions.includes(editFormData.unitOfMeasure) && <option value={editFormData.unitOfMeasure}>{editFormData.unitOfMeasure} (existing)</option>}
-                        {unitOfMeasureOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                      <span className={editFieldLabelClass}>Issued per <span className="text-rose-600">*</span></span>
+                      <select name="unitOfMeasure" required value={editFormData.unitOfMeasure} onChange={handleEditInputChange} className={editControlClass}>
+                        <UnitOfMeasureOptions
+                          trackingMode={editFormData.trackingMode}
+                          issueBehavior={editFormData.issueBehavior}
+                          existingUnits={[selectedItem.unit, editFormData.unitOfMeasure]}
+                        />
                       </select>
+                      <span className="mt-2 block text-xs leading-relaxed text-slate-600">{unitHintFor(editFormData.trackingMode, editFormData.issueBehavior)}</span>
                     </label>
                     <label className="block sm:col-span-2">
-                      <span className={editFieldLabelClass}>Condition</span>
-                      <select name="condition" value={editFormData.condition} onChange={handleEditInputChange} className={editControlClass}>
+                      <span className={editFieldLabelClass}>Condition <span className="text-rose-600">*</span></span>
+                      <select name="condition" required value={editFormData.condition} onChange={handleEditInputChange} className={editControlClass}>
                         {conditions.map((condition) => <option key={condition} value={condition}>{condition}</option>)}
                       </select>
                     </label>

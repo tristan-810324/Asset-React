@@ -75,14 +75,10 @@ export default function USBScannerMonitor() {
   const [selectedScanner, setSelectedScanner] = useState<StoredScanner | null>(() => (
     typeof window === 'undefined' ? null : readSelectedScanner()
   ))
-  const [connection, setConnection] = useState<'unknown' | 'connected' | 'disconnected'>('unknown')
-  const [isSelecting, setIsSelecting] = useState(false)
-  const [error, setError] = useState('')
+  const [, setConnection] = useState<'unknown' | 'connected' | 'disconnected'>('unknown')
   const [toast, setToast] = useState<ScannerToast | null>(null)
   const selectedScannerRef = useRef<StoredScanner | null>(selectedScanner)
   const lastToastRef = useRef<{ connected: boolean; at: number } | null>(null)
-  const hidAvailable = Boolean(getHidApi())
-  const scannerName = selectedScanner?.name || ''
 
   const reportConnection = useCallback((device: HidDeviceLike, connected: boolean) => {
     const selectedScanner = selectedScannerRef.current
@@ -179,53 +175,6 @@ export default function USBScannerMonitor() {
     }
   }, [reportConnection])
 
-  async function selectScanner() {
-    const hid = getHidApi()
-    if (!hid) {
-      setError('Hindi suportado ng browser na ito ang USB device monitoring. Subukan ang Chrome o Edge sa HTTPS o localhost.')
-      return
-    }
-
-    setIsSelecting(true)
-    setError('')
-    try {
-      const devices = await hid.requestDevice({ filters: [] })
-      const device = devices[0]
-      if (!device) {
-        setError('Walang scanner na napili. Pumili ng device sa browser dialog para masimulan ang test.')
-        return
-      }
-
-      const selectedScanner: StoredScanner = {
-        key: scannerKey(device),
-        name: device.productName || `USB scanner ${device.vendorId}:${device.productId}`,
-        vendorId: device.vendorId,
-        productId: device.productId,
-      }
-      selectedScannerRef.current = selectedScanner
-      setSelectedScanner(selectedScanner)
-      try {
-        window.localStorage.setItem(selectedScannerStorageKey, JSON.stringify(selectedScanner))
-      } catch {
-        // The current page can still monitor the selected scanner without storage.
-      }
-      reportConnection(device, true)
-    } catch (reason) {
-      const errorName = reason instanceof DOMException ? reason.name : ''
-      setError(errorName === 'NotFoundError'
-        ? 'Walang compatible na HID scanner na nakita. Maaaring keyboard-style lang ang scanner na ito.'
-        : 'Hindi napili ang scanner. Tiyaking pinayagan ito sa browser dialog at subukan ulit.')
-    } finally {
-      setIsSelecting(false)
-    }
-  }
-
-  const connectionLabel = connection === 'connected'
-    ? `HID connected${scannerName ? `: ${scannerName}` : ''}`
-    : connection === 'disconnected'
-      ? `HID disconnected${scannerName ? `: ${scannerName}` : ''}`
-      : 'Not monitoring'
-
   return (
     <div className="fixed bottom-4 right-4 z-90 w-[min(22rem,calc(100vw-2rem))] space-y-3 font-['Plus_Jakarta_Sans']">
       {toast && (
@@ -250,36 +199,6 @@ export default function USBScannerMonitor() {
           </div>
         </section>
       )}
-
-      <section className="rounded-2xl border border-slate-200 bg-white/95 p-4 text-slate-900 shadow-xl backdrop-blur">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-black">USB HID connection test</h2>
-          <span className={`rounded-full px-2.5 py-1 text-[0.65rem] font-extrabold ${connection === 'connected' ? 'bg-emerald-100 text-emerald-800' : connection === 'disconnected' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}`}>
-            {hidAvailable === false ? 'Unsupported' : connection === 'connected' ? 'Connected' : connection === 'disconnected' ? 'Disconnected' : 'Not enabled'}
-          </span>
-        </div>
-        <p className="mt-1 text-xs leading-5 text-slate-600">
-          {!hidAvailable
-            ? 'Hindi ma-e-expose ng browser na ito ang plug/unplug events. Gumagana pa rin ang pag-scan bilang keyboard input.'
-            : connection === 'connected'
-              ? `${connectionLabel}. Hindi pa verified na barcode scanner ito.`
-              : connection === 'disconnected'
-                ? `${scannerName || 'Selected HID device'} is unplugged. Isaksak ulit para makita kung ito ang scanner.`
-                : 'Piliin at payagan ang compatible scanner para makita ang connect at unplug popups.'}
-        </p>
-        {hidAvailable && (
-          <button
-            type="button"
-            onClick={() => void selectScanner()}
-            disabled={isSelecting}
-            className="mt-3 w-full rounded-xl bg-blue-700 px-3 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60"
-          >
-            {isSelecting ? 'Waiting for browser…' : selectedScanner ? 'Change scanner' : 'Select scanner'}
-          </button>
-        )}
-        {error && <p role="alert" className="mt-2 text-xs font-semibold leading-5 text-rose-700">{error}</p>}
-        <p className="mt-2 text-[0.65rem] leading-4 text-slate-500">Para makumpirma, mag-scan ng totoong AST label sa Returned Items at tingnan kung nawawala ang device kapag tinanggal ang scanner. HID name alone is not proof. Events are saved in GSO Notifications.</p>
-      </section>
     </div>
   )
 }

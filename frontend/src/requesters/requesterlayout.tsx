@@ -131,7 +131,9 @@ function pageFromPath(path: string): RequesterPage {
   const requesterPath = path.replace(/^\/borrower(?=\/|$)/, '/requester')
   if (requesterPath === '/requester/request-center' || requesterPath === '/requester/requests/new') return 'Request Center'
   if (requesterPath === '/requester/my-requests' || requesterPath.startsWith('/requester/requests/')) return 'My Requests'
-  if (requesterPath === '/requester/notifications') return 'Updates'
+  if (requesterPath === '/requester/issued-items') return 'My Issued Items'
+  if (requesterPath === '/requester/notifications') return 'Notifications'
+  if (requesterPath === '/requester/return-items') return 'Return Items'
   if (requesterPath === '/requester/profile') return 'Profile'
   return 'Home'
 }

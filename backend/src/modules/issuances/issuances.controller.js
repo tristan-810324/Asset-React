@@ -24,6 +24,11 @@ const listMyPendingIssuanceBatches = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { batches } });
 });
 
+const listMyIssuanceActivity = asyncHandler(async (req, res) => {
+  const batches = await issuancesService.listMyIssuanceActivity(req.user);
+  res.json({ success: true, data: { batches } });
+});
+
 const getIssuanceBatch = asyncHandler(async (req, res) => {
   const batch = await issuancesService.getIssuanceBatch(req.params.batchId);
   res.json({ success: true, data: { batch } });
@@ -49,6 +54,11 @@ const decideMyIssuanceBatch = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { decision } });
 });
 
+const recordIssuanceHandover = asyncHandler(async (req, res) => {
+  const decision = await issuancesService.recordIssuanceHandover(req.params.batchId, req.body, req.user);
+  res.json({ success: true, data: { decision } });
+});
+
 const lookupApproval = asyncHandler(async (req, res) => {
   const issuance = await issuancesService.lookupApproval(req.query.token);
   res.json({ success: true, data: { issuance } });
@@ -64,11 +74,13 @@ module.exports = {
   createIssuanceBatch,
   listEmployeeIssuances,
   listMyPendingIssuanceBatches,
+  listMyIssuanceActivity,
   getIssuanceBatch,
   listApprovedIssuanceBatches,
   getAssetTag,
   inspectAssetTag,
   decideMyIssuanceBatch,
+  recordIssuanceHandover,
   lookupApproval,
   decideApproval,
 };

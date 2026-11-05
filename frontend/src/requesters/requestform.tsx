@@ -9,7 +9,7 @@ type FormValues = {
   purpose?: string
   neededDate?: string
   returnDate?: string
-  pickupLocation?: string
+  useLocation?: string
   remarks?: string
   departmentOrganization?: string
   activity?: string
@@ -44,7 +44,7 @@ const twoWeeksFromToday = () => {
 }
 
 function initialForm(type: RequestType): FormValues {
-  if (type === 'BORROWING') return { purpose: '', neededDate: '', returnDate: '', pickupLocation: '', remarks: '', items: [{ itemId: '', quantity: 1 }] }
+  if (type === 'BORROWING') return { purpose: '', neededDate: '', returnDate: '', useLocation: '', remarks: '', items: [{ itemId: '', quantity: 1 }] }
   if (type === 'FACILITY_USE') return { departmentOrganization: '', activity: '', purpose: '', activityType: 'CURRICULAR', otherActivityType: '', date: '', startTime: '', endTime: '', participantsMale: '', participantsFemale: '', venue: '', equipment: [], remarks: '' }
   if (type === 'JOB_REQUEST') return { departmentOrganization: '', purpose: '', requiredDate: '', tasks: [{ quantity: 1, particulars: '', natureOfWork: '', remarks: '' }], remarks: '' }
   if (type === 'PURCHASE_REQUISITION') return { departmentOrganization: '', category: '', purpose: '', requiredDate: '', items: [{ quantity: 1, description: '' }] }
@@ -139,13 +139,13 @@ function RequestFormContent() {
         <form onSubmit={onSubmit} className="mt-5 space-y-5">
           {type === 'BORROWING' && <>
             <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
-              <h2 className="text-lg font-black tracking-tight">Borrow an asset</h2>
-              <p className="mt-1 text-xs text-slate-500">Select available inventory, quantity, purpose, and requested dates.</p>
+              <h2 className="text-lg font-black tracking-tight">Request reusable stock</h2>
+              <p className="mt-1 text-xs text-slate-500">GSO reviews the quantity, use details, and return date before pickup.</p>
               {catalogError && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{catalogError}</p>}
               {!catalogError && catalog.length === 0 && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-800">Walang available na inventory item ngayon o naglo-load pa ang catalog.</p>}
               <div className="mt-4 space-y-3">
                 {(form.items || []).map((item: FormRow, index: number) => <div key={index} className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50/80 p-3 sm:grid-cols-[1fr_9rem_auto]">
-                  <Field label={`Item ${index + 1}`}><select className={inputClass} value={item.itemId} onChange={(event) => updateRow('items', index, 'itemId', event.target.value)} required><option value="">Select available item</option>{catalog.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} · {asset.itemCode} · {asset.availableQuantity} {asset.unitOfMeasure} available</option>)}</select></Field>
+                  <Field label={`Item ${index + 1}`}><select className={inputClass} value={item.itemId} onChange={(event) => updateRow('items', index, 'itemId', event.target.value)} required><option value="">Select reusable item</option>{catalog.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} · {asset.category} · {asset.availableQuantity} {asset.unitOfMeasure} available</option>)}</select></Field>
                   <Field label="Quantity"><input className={inputClass} type="number" min="1" max={catalog.find((asset) => asset.id === item.itemId)?.availableQuantity || undefined} value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field>
                   {(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>}
                 </div>)}
@@ -155,7 +155,7 @@ function RequestFormContent() {
                 <Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field>
                 <Field label="Expected return date"><input className={inputClass} type="date" min={form.neededDate || today()} value={form.returnDate} onChange={(event) => setField('returnDate', event.target.value)} required /></Field>
                 <Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field>
-                <Field label="Pickup location" hint="Optional; GSO may confirm the actual pickup point."><input className={inputClass} value={form.pickupLocation} onChange={(event) => setField('pickupLocation', event.target.value)} /></Field>
+                <Field label="Place of use"><input className={inputClass} value={form.useLocation} onChange={(event) => setField('useLocation', event.target.value)} placeholder="e.g. Conference room or covered court" required maxLength={250} /></Field>
                 <Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field>
               </div>
             </section>

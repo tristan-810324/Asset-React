@@ -81,7 +81,65 @@ function validateCreateIssuanceBatch(input) {
     throw httpError(400, 'May nadobleng inventory item sa request.');
   }
   const notes = requiredText(input.notes, 'issuance notes', 1000, { optional: true });
-  return { employeeCode, items, notes };
+  let borrowDetails = null;
+  if (input.borrowDetails !== undefined && input.borrowDetails !== null) {
+    if (typeof input.borrowDetails !== 'object' || Array.isArray(input.borrowDetails)) {
+      throw httpError(400, 'Hindi valid ang reusable-stock borrowing details.');
+    }
+    const useLocation = requiredText(input.borrowDetails.useLocation, 'place of use', 200);
+    const purpose = requiredText(input.borrowDetails.purpose, 'event or borrowing purpose', 500);
+    const isValidDate = (value) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+      const parsed = new Date(`${value}T00:00:00.000Z`);
+      return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+    };
+    const hasUseAt = input.borrowDetails.useAt !== undefined && input.borrowDetails.useAt !== null && input.borrowDetails.useAt !== '';
+    const hasReturnAt = input.borrowDetails.expectedReturnAt !== undefined && input.borrowDetails.expectedReturnAt !== null && input.borrowDetails.expectedReturnAt !== '';
+    if (hasUseAt !== hasReturnAt) throw httpError(400, 'Ilagay ang petsa at oras ng hiraman at pagsoli.');
+
+    let useDate;
+    let expectedReturnDate;
+    let useAt = null;
+    let expectedReturnAt = null;
+    if (hasUseAt) {
+      const parseManilaDateTime = (value, label) => {
+        const localValue = requiredText(value, label, 16);
+        const match = localValue.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/);
+        if (!match || !isValidDate(match[1]) || Number(match[2]) > 23 || Number(match[3]) > 59) {
+          throw httpError(400, `Gumamit ng valid na petsa at oras para sa ${label}.`);
+        }
+        const instant = new Date(`${localValue}:00+08:00`);
+        if (!Number.isFinite(instant.getTime())) throw httpError(400, `Gumamit ng valid na petsa at oras para sa ${label}.`);
+        return { localValue, instant, databaseValue: instant.toISOString() };
+      };
+      const use = parseManilaDateTime(input.borrowDetails.useAt, 'hiraman');
+      const expectedReturn = parseManilaDateTime(input.borrowDetails.expectedReturnAt, 'pagsoli');
+      if (use.instant.getTime() < Date.now()) throw httpError(400, 'Ang petsa at oras ng hiraman ay hindi puwedeng nakaraan na.');
+      if (expectedReturn.instant.getTime() <= use.instant.getTime()) {
+        throw httpError(400, 'Ang inaasahang petsa at oras ng pagsoli ay dapat mas huli sa hiraman.');
+      }
+      useDate = use.localValue.slice(0, 10);
+      expectedReturnDate = expectedReturn.localValue.slice(0, 10);
+      useAt = use.databaseValue;
+      expectedReturnAt = expectedReturn.databaseValue;
+    } else {
+      useDate = requiredText(input.borrowDetails.useDate, 'date of use', 10);
+      expectedReturnDate = requiredText(input.borrowDetails.expectedReturnDate, 'expected return date', 10);
+      if (!isValidDate(useDate) || !isValidDate(expectedReturnDate)) {
+        throw httpError(400, 'Gumamit ng valid na petsa para sa paggamit at pagsoli.');
+      }
+      const manilaDateParts = Object.fromEntries(new Intl.DateTimeFormat('en', {
+        timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+      const todayInManila = `${manilaDateParts.year}-${manilaDateParts.month}-${manilaDateParts.day}`;
+      if (useDate < todayInManila) throw httpError(400, 'Ang petsa ng paggamit ay hindi puwedeng nakaraan na.');
+      if (expectedReturnDate < useDate) {
+        throw httpError(400, 'Ang inaasahang petsa ng pagsoli ay dapat katumbas o mas huli sa petsa ng paggamit.');
+      }
+    }
+    borrowDetails = { useDate, expectedReturnDate, useAt, expectedReturnAt, useLocation, purpose };
+  }
+  return { employeeCode, items, notes, borrowDetails };
 }
 
 function validateToken(value) {
@@ -111,6 +169,7 @@ async function createIssuance(input, user) {
     employeeCode,
     items: [{ itemId, quantity }],
     notes,
+    borrowDetails: input.borrowDetails,
   }, user);
   const item = batch.items[0];
   return {
@@ -130,85 +189,112 @@ async function createIssuance(input, user) {
   };
 }
 async function createIssuanceBatch(input, user) {
-  if (!mailTransport) {
-    throw httpError(503, 'Hindi available ang issuance email. I-configure muna ang SMTP sa backend/.env.', true);
-  }
-
-  const { employeeCode, items, notes } = validateCreateIssuanceBatch(input);
+  const { employeeCode, items, notes, borrowDetails } = validateCreateIssuanceBatch(input);
   const token = crypto.randomBytes(32).toString('base64url');
   const batch = await issuancesRepository.createPendingIssuanceBatch({
     employeeCode,
     items,
     notes,
+    borrowDetails,
     tokenHash: hashToken(token),
     requestedByUserId: user.id,
   });
-  const dashboardLink = new URL('/requester', env.frontendOrigin).toString();
   const employeeName = escapeHtml(batch.employee_name);
   const note = escapeHtml(notes || 'No additional notes.');
+  const isConsumableDistribution = batch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'consumable');
+  const isReusableBorrow = batch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'returnable');
+  const subject = isConsumableDistribution
+    ? 'GSO consumable stock issued'
+    : isReusableBorrow
+      ? 'GSO reusable-stock borrowing recorded'
+      : 'Per-unit asset ready for handover';
+  const employeeActionText = isConsumableDistribution
+    ? 'GSO has issued this consumable stock. No approval or follow-up action is needed.'
+    : isReusableBorrow
+      ? 'GSO recorded your face-to-face borrowing. Return the borrowed items by the scheduled date and time.'
+    : batch.requesterAccountLinked
+      ? 'GSO reserved this per-unit asset for handover. Confirm receipt in your A.S.SET account only after you physically receive the unit.'
+      : 'GSO reserved this per-unit asset for handover. After pickup, GSO will record the signed receipt or authorized handover for you.';
+  const itemTypeLabel = (item) => item.trackingMode === 'individual'
+    ? 'Per-unit asset'
+    : item.issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock';
   const textItems = batch.items.map((item, index) =>
-    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Quantity: ${item.quantity} ${item.unitOfMeasure}\n   Condition: ${item.condition}`
+    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Type: ${itemTypeLabel(item)}\n   Quantity: ${item.quantity} ${item.unitOfMeasure}\n   Condition: ${item.condition}`
   );
+  const borrowingDetailsText = batch.borrowDetails ? [
+    '',
+    'Face-to-face reusable-stock borrowing details:',
+    `Borrow: ${batch.borrowDetails.useAt || batch.borrowDetails.useDate}`,
+    `Return: ${batch.borrowDetails.expectedReturnAt || batch.borrowDetails.expectedReturnDate}`,
+    `Event / purpose: ${batch.borrowDetails.purpose}`,
+    `Location: ${batch.borrowDetails.useLocation}`,
+  ] : [];
+  const borrowingDetailsHtml = batch.borrowDetails ? `
+    <div style="margin-top:16px;border-radius:10px;background:#fffbeb;padding:14px;color:#78350f">
+      <div style="font-weight:700">Face-to-face reusable-stock borrowing</div>
+      <div style="margin-top:6px">Borrow: <strong>${escapeHtml(batch.borrowDetails.useAt || batch.borrowDetails.useDate)}</strong></div>
+      <div style="margin-top:4px">Return: <strong>${escapeHtml(batch.borrowDetails.expectedReturnAt || batch.borrowDetails.expectedReturnDate)}</strong></div>
+      <div style="margin-top:4px">Event / purpose: <strong>${escapeHtml(batch.borrowDetails.purpose)}</strong></div>
+      <div style="margin-top:4px">Location: <strong>${escapeHtml(batch.borrowDetails.useLocation)}</strong></div>
+    </div>` : '';
   const htmlItems = batch.items.map((item) => `
     <li style="margin:0 0 12px">
       <strong>${escapeHtml(item.itemName)}</strong>
       <div style="margin-top:4px;color:#64748b">Asset code: ${escapeHtml(item.itemCode)}</div>
+      <div style="margin-top:4px;color:#64748b">Type: ${escapeHtml(itemTypeLabel(item))}</div>
       <div style="margin-top:4px;color:#334155">Quantity: <strong>${item.quantity} ${escapeHtml(item.unitOfMeasure)}</strong></div>
       <div style="margin-top:4px;color:#334155">Condition: <strong>${escapeHtml(item.condition)}</strong></div>
     </li>`).join('');
 
-  try {
+  let emailSent = false;
+  if (mailTransport) try {
     await mailTransport.sendMail({
       from: env.smtp.from,
       to: batch.employee_email,
-      subject: `New equipment issuance notification (${batch.items.length} item${batch.items.length === 1 ? '' : 's'})`,
+      subject: `${subject} (${batch.items.length} item${batch.items.length === 1 ? '' : 's'})`,
       text: [
         `Hello ${batch.employee_name},`,
         '',
-        `GSO prepared an issuance request for these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'}:`,
+        `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : 'a per-unit asset handover'} for these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'}:`,
         ...textItems,
+        ...borrowingDetailsText,
         `Notes: ${notes || 'No additional notes.'}`,
         '',
-        `Sign in to the A.S.SET Requester Dashboard to approve or reject this request: ${dashboardLink}`,
-        'After you approve it in the dashboard, GSO will generate a unique barcode for each physical unit.',
+        employeeActionText,
       ].join('\n'),
       html: `
         <div style="margin:0;background:#f1f5f9;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">
           <div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;padding:32px">
             <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET - GSO</div>
-            <h1 style="margin:16px 0 8px;font-size:22px">New equipment issuance</h1>
-            <p style="margin:0 0 24px;color:#475569">Hello ${employeeName}, GSO prepared the following issuance request for you.</p>
+            <h1 style="margin:16px 0 8px;font-size:22px">${escapeHtml(subject)}</h1>
+            <p style="margin:0 0 24px;color:#475569">Hello ${employeeName}, ${escapeHtml(employeeActionText)}</p>
             <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">
-              <div style="margin-bottom:14px;font-size:16px;font-weight:700">Items requested (${batch.items.length})</div>
+              <div style="margin-bottom:14px;font-size:16px;font-weight:700">Items recorded (${batch.items.length})</div>
               <ul style="margin:0;padding-left:20px">${htmlItems}</ul>
+              ${borrowingDetailsHtml}
               <div style="margin-top:16px;color:#334155">GSO notes: ${note}</div>
             </div>
-            <p style="margin:24px 0 14px;color:#475569">Review and approve or reject this request after signing in to your A.S.SET account. No decision is made from this email.</p>
-            <a href="${dashboardLink}" style="display:inline-block;margin:0 8px 8px 0;border-radius:9px;background:#2563eb;padding:12px 20px;color:#ffffff;font-weight:700;text-decoration:none">Open Requester Dashboard</a>
-            <p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#64748b">After approval in the dashboard, GSO will generate a unique barcode for each physical unit in this request.</p>
+            <p style="margin:24px 0 14px;color:#475569">${escapeHtml(employeeActionText)}</p>
           </div>
         </div>`,
     });
+    emailSent = true;
   } catch (error) {
-    try {
-      await issuancesRepository.markBatchEmailFailed(batch.id);
-    } catch {
-      console.error('Issuance batch email failed and the pending items could not be released.');
-    }
     console.error('Employee issuance batch email could not be delivered.', {
       code: error.code,
       responseCode: error.responseCode,
       command: error.command,
     });
-    throw httpError(503, 'Hindi naipadala ang issuance notification email. Naibalik sa Available ang mga item; pakisuri ang Gmail SMTP App Password sa backend/.env at subukan muli.', true);
   }
 
-  try {
-    await issuancesRepository.markBatchEmailSent(batch.id);
-  } catch (error) {
-    console.error('Issuance batch email was delivered, but its sent timestamp could not be saved.', {
-      message: error.message,
-    });
+  if (emailSent) {
+    try {
+      await issuancesRepository.markBatchEmailSent(batch.id);
+    } catch (error) {
+      console.error('Issuance batch email was delivered, but its sent timestamp could not be saved.', {
+        message: error.message,
+      });
+    }
   }
 
   return {
@@ -217,10 +303,13 @@ async function createIssuanceBatch(input, user) {
     employeeCode: batch.employee_code,
     employeeName: batch.employee_name,
     employeeEmail: batch.employee_email,
+    requesterAccountLinked: batch.requesterAccountLinked,
+    borrowDetails: batch.borrowDetails,
     items: batch.items,
     notes,
     requestedAt: batch.requestedAt,
     expiresAt: batch.expiresAt,
+    emailSent,
   };
 }
 
@@ -231,6 +320,10 @@ async function listEmployeeIssuances(employeeCodeValue) {
 
 async function listMyPendingIssuanceBatches(user) {
   return issuancesRepository.listMyPendingIssuanceBatches(user.id);
+}
+
+async function listMyIssuanceActivity(user) {
+  return issuancesRepository.listMyIssuanceActivity(user.id);
 }
 
 async function getIssuanceBatch(batchIdValue) {
@@ -289,8 +382,8 @@ async function decideMyIssuanceBatch(batchIdValue, input, user) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw httpError(400, 'Hindi valid ang issuance decision.');
   }
-  if (input.action !== 'approve' && input.action !== 'reject') {
-    throw httpError(400, 'Pumili ng approve o reject.');
+  if (input.action !== 'acknowledge') {
+    throw httpError(400, 'Gamitin ang receipt acknowledgment pagkatapos aktuwal na matanggap ang item.');
   }
 
   const result = await issuancesRepository.resolveApproval({
@@ -300,6 +393,31 @@ async function decideMyIssuanceBatch(batchIdValue, input, user) {
   });
   if (result.notFound) throw httpError(404, 'Hindi makita ang pending issuance para sa verified employee account na ito.');
   if (result.expired) throw httpError(410, 'Nag-expire na ang issuance request at naibalik na sa available stock.');
+  return result;
+}
+
+async function recordIssuanceHandover(batchIdValue, input, user) {
+  const batchId = requiredText(String(batchIdValue ?? ''), 'issuance request ID', 20);
+  if (!/^\d{1,20}$/.test(batchId) || batchId === '0') {
+    throw httpError(400, 'Hindi valid ang issuance request ID.');
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw httpError(400, 'Hindi valid ang handover record.');
+  }
+  const handoverMethod = input.method;
+  if (!['signed_receipt', 'authorized_handover'].includes(handoverMethod)) {
+    throw httpError(400, 'Pumili ng signed receipt o authorized handover.');
+  }
+  const handoverNote = requiredText(input.reference, 'receipt reference o pangalan ng authorized recipient', 200);
+  const result = await issuancesRepository.resolveApproval({
+    batchId,
+    gsoUserId: user.id,
+    action: 'acknowledge',
+    handoverMethod,
+    handoverNote,
+  });
+  if (result.notFound) throw httpError(404, 'Hindi makita ang pending per-unit handover.');
+  if (result.expired) throw httpError(410, 'Nag-expire na ang handover record.');
   return result;
 }
 
@@ -345,11 +463,13 @@ module.exports = {
   createIssuanceBatch,
   listEmployeeIssuances,
   listMyPendingIssuanceBatches,
+  listMyIssuanceActivity,
   getIssuanceBatch,
   listApprovedIssuanceBatches,
   getAssetTag,
   inspectAssetTag,
   decideMyIssuanceBatch,
+  recordIssuanceHandover,
   lookupApproval,
   decideApproval,
   expirePendingIssuances,

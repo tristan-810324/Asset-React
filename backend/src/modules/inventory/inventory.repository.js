@@ -7,6 +7,7 @@ const itemColumns = `
   i.item_name AS "itemName",
   i.description,
   i.tracking_mode AS "trackingMode",
+  i.issue_behavior AS "issueBehavior",
   i.serial_number AS "serialNumber",
   i.location AS "storageLocation",
   COALESCE((
@@ -201,10 +202,84 @@ function stockUsageJoin(includeRequesterInventory) {
   ) AS stock_usage ON TRUE`;
 }
 
+// Who holds reusable stock right now, read from the same records and quantities that
+// stockUsageJoin subtracts, so this list always agrees with availableQuantity.
+function currentBorrowersColumn(includeRequesterInventory) {
+  const requesterBorrowers = includeRequesterInventory
+    ? `UNION ALL
+
+        SELECT 'request-' || asset.id::TEXT AS id,
+               requester.name AS borrower_name,
+               request.reference_no AS reference,
+               profile.department,
+               CASE
+                 WHEN request.status IN ('Approved', 'Ready for Pickup') THEN 'Reserved'
+                 WHEN request.status = 'For Repair' THEN 'For repair'
+                 ELSE 'Borrowed'
+               END AS state,
+               asset.quantity,
+               to_char(COALESCE(asset.issued_at, request.updated_at) AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS issued_at,
+               request.form_data->>'neededDate' AS use_at,
+               COALESCE(to_char(asset.due_date, 'YYYY-MM-DD'), request.form_data->>'returnDate') AS expected_return_at,
+               request.form_data->>'useLocation' AS use_location,
+               request.form_data->>'purpose' AS purpose,
+               request.status IN ('Issued', 'Return Requested')
+                 AND COALESCE(asset.due_date < (NOW() AT TIME ZONE 'Asia/Manila')::DATE, FALSE) AS is_overdue
+          FROM service_request_assets AS asset
+          JOIN service_requests AS request ON request.id = asset.request_id
+          JOIN users AS requester ON requester.id = request.requested_by_user_id
+          LEFT JOIN requester_identity_profiles AS profile ON profile.user_id = requester.id
+         WHERE asset.item_id = i.id
+           AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')`
+    : '';
+  return `COALESCE((
+    SELECT json_agg(json_build_object(
+      'id', borrower.id,
+      'borrowerName', borrower.borrower_name,
+      'reference', borrower.reference,
+      'department', borrower.department,
+      'state', borrower.state,
+      'quantity', borrower.quantity,
+      'issuedAt', borrower.issued_at,
+      'useAt', borrower.use_at,
+      'expectedReturnAt', borrower.expected_return_at,
+      'useLocation', borrower.use_location,
+      'purpose', borrower.purpose,
+      'isOverdue', borrower.is_overdue
+    ) ORDER BY borrower.state, borrower.expected_return_at NULLS LAST, borrower.borrower_name, borrower.id)
+      FROM (
+        SELECT 'issuance-' || issue.id::TEXT AS id,
+               employee.first_name || ' ' || employee.last_name AS borrower_name,
+               employee.employee_code AS reference,
+               employee.department,
+               CASE WHEN issue.status = 'Issued' THEN 'Borrowed' ELSE 'Reserved' END AS state,
+               issue.quantity - issue.returned_quantity AS quantity,
+               to_char(COALESCE(issue.decided_at, issue.requested_at) AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS issued_at,
+               COALESCE(to_char(batch.borrow_use_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI'), batch.borrow_use_date::TEXT) AS use_at,
+               COALESCE(to_char(batch.expected_return_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI'), batch.expected_return_date::TEXT) AS expected_return_at,
+               batch.use_location,
+               batch.use_purpose AS purpose,
+               issue.status = 'Issued'
+                 AND COALESCE(batch.expected_return_at < NOW(), batch.expected_return_date < (NOW() AT TIME ZONE 'Asia/Manila')::DATE, FALSE) AS is_overdue
+          FROM employee_issuances AS issue
+          JOIN employees AS employee ON employee.id = issue.employee_id
+          LEFT JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+         WHERE issue.item_id = i.id
+           AND issue.status IN ('Pending', 'Issued')
+           AND issue.quantity > issue.returned_quantity
+
+        ${requesterBorrowers}
+      ) AS borrower
+     WHERE i.tracking_mode = 'quantity'
+       AND i.issue_behavior = 'returnable'
+  ), '[]'::JSON) AS "currentBorrowers"`;
+}
+
 async function listItems() {
   const includeRequesterInventory = await hasRequesterInventory(pool);
   const result = await pool.query(
-    `SELECT ${itemColumns}
+    `SELECT ${itemColumns},
+            ${currentBorrowersColumn(includeRequesterInventory)}
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
        ${stockUsageJoin(includeRequesterInventory)}
@@ -225,7 +300,8 @@ async function listItems() {
 async function getItemById(queryable, id) {
   const includeRequesterInventory = await hasRequesterInventory(queryable);
   const result = await queryable.query(
-    `SELECT ${itemColumns}
+    `SELECT ${itemColumns},
+            ${currentBorrowersColumn(includeRequesterInventory)}
        FROM item_catalog AS i
        LEFT JOIN users AS creator ON creator.id = i.created_by_user_id
        ${stockUsageJoin(includeRequesterInventory)}
@@ -277,6 +353,7 @@ async function createItem({
   unitOfMeasure,
   condition,
   trackingMode,
+  issueBehavior,
   serialNumber,
   receiptReference,
   storageLocation,
@@ -289,9 +366,9 @@ async function createItem({
       `INSERT INTO item_catalog (
          item_code, category_id, category, item_name, description, date_acquired, time_acquired,
          unit_cost, acquisition_cost, current_value, quantity, unit_of_measure,
-         condition, tracking_mode, location, serial_number, created_by_user_id
+         condition, tracking_mode, issue_behavior, location, serial_number, created_by_user_id
        )
-       SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+       SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
          FROM item_categories AS category_row
         WHERE lower(category_row.name) = lower($2)
        RETURNING id`,
@@ -309,6 +386,7 @@ async function createItem({
         unitOfMeasure,
         condition,
         trackingMode,
+        issueBehavior,
         storageLocation || 'GSO Storage',
         serialNumber || null,
         createdByUserId,
@@ -351,6 +429,7 @@ async function createItem({
         unitOfMeasure: created.unitOfMeasure,
         condition: created.condition,
         trackingMode: created.trackingMode,
+        issueBehavior: created.issueBehavior,
         storageLocation: created.storageLocation,
         receiptReference,
       }), createdByUserId],
@@ -377,9 +456,9 @@ async function createItems(items, { createdByUserId }) {
         `INSERT INTO item_catalog (
            item_code, category_id, category, item_name, description, date_acquired, time_acquired,
            unit_cost, acquisition_cost, current_value, quantity, unit_of_measure,
-           condition, tracking_mode, location, serial_number, created_by_user_id
+           condition, tracking_mode, issue_behavior, location, serial_number, created_by_user_id
          )
-         SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+         SELECT $1, category_row.id, category_row.name, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
            FROM item_categories AS category_row
           WHERE lower(category_row.name) = lower($2)
          RETURNING id`,
@@ -397,6 +476,7 @@ async function createItems(items, { createdByUserId }) {
           item.unitOfMeasure,
           item.condition,
           item.trackingMode,
+          item.issueBehavior,
           item.storageLocation || 'GSO Storage',
           item.serialNumber || null,
           createdByUserId,
@@ -439,6 +519,7 @@ async function createItems(items, { createdByUserId }) {
           unitOfMeasure: created.unitOfMeasure,
           condition: created.condition,
           trackingMode: created.trackingMode,
+          issueBehavior: created.issueBehavior,
           storageLocation: created.storageLocation,
           receiptReference: item.receiptReference || '',
         }), createdByUserId],
@@ -463,6 +544,7 @@ function itemSnapshot(item) {
     itemName: item.item_name,
     description: item.description,
     trackingMode: item.tracking_mode,
+    issueBehavior: item.issue_behavior,
     dateAcquired: item.date_acquired,
     timeAcquired: item.time_acquired,
     unitCost: item.unit_cost,
@@ -502,7 +584,18 @@ async function updateItem(id, item, { changedByUserId }) {
     }
 
     const nextTrackingMode = item.trackingMode ?? previous.tracking_mode ?? 'individual';
+    const nextIssueBehavior = nextTrackingMode === 'individual'
+      ? 'returnable'
+      : item.issueBehavior ?? previous.issue_behavior ?? 'returnable';
     const trackingModeChanged = nextTrackingMode !== (previous.tracking_mode ?? 'individual');
+    if (nextTrackingMode === 'individual' && nextIssueBehavior === 'consumable') {
+      throw Object.assign(new Error('Ang per-unit asset ay dapat itakda bilang ibinabalik na item.'), { status: 400 });
+    }
+    if (nextIssueBehavior === 'consumable'
+      && previous.issue_behavior !== 'consumable'
+      && activeIssuanceQuantity > 0) {
+      throw Object.assign(new Error('Hindi maaaring markahang consumable habang may pending o naka-issue pang quantity. Ibalik muna ang mga ito.'), { status: 409 });
+    }
     const tagCountResult = await client.query(
       'SELECT COUNT(*)::INTEGER AS count FROM asset_unit_tags WHERE item_id = $1',
       [id],
@@ -577,6 +670,7 @@ async function updateItem(id, item, { changedByUserId }) {
               unit_of_measure = $12,
               condition = $13,
               tracking_mode = $14,
+              issue_behavior = $15,
               serial_number = CASE WHEN $14 = 'quantity' THEN NULL ELSE inventory_item.serial_number END
          FROM item_categories AS category_row
         WHERE inventory_item.id = $1
@@ -597,6 +691,7 @@ async function updateItem(id, item, { changedByUserId }) {
         item.unitOfMeasure,
         item.condition,
         nextTrackingMode,
+        nextIssueBehavior,
       ],
     );
     if (!updateResult.rows[0]) {
@@ -643,6 +738,7 @@ async function updateItem(id, item, { changedByUserId }) {
           unitOfMeasure: updated.unitOfMeasure,
           condition: updated.condition,
           trackingMode: updated.trackingMode,
+          issueBehavior: updated.issueBehavior,
         }),
         changedByUserId,
       ],

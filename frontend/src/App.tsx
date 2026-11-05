@@ -9,6 +9,8 @@ import MyRequests from './requesters/myrequests'
 import RequestDetail from './requesters/requestdetail'
 import RequesterProfile from './requesters/requesterprofile'
 import RequesterNotifications from './requesters/notifications'
+import RequesterReturnItems from './requesters/requesterreturnitems'
+import RequesterIssuedItems from './requesters/requesterissueditems'
 import ITSSDashboard from './ITSS/itssdashboard'
 
 
@@ -160,11 +162,17 @@ export default function App() {
   if (path === '/requester/my-requests' || path === '/borrower/my-requests') {
     return <ProtectedDashboard requiredRole="BORROWER"><MyRequests /></ProtectedDashboard>
   }
+  if (path === '/requester/issued-items' || path === '/borrower/issued-items') {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequesterIssuedItems /></ProtectedDashboard>
+  }
   if (path === '/requester/profile' || path === '/borrower/profile') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequesterProfile /></ProtectedDashboard>
   }
   if (path === '/requester/notifications' || path === '/borrower/notifications') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequesterNotifications /></ProtectedDashboard>
+  }
+  if (path === '/requester/return-items' || path === '/borrower/return-items') {
+    return <ProtectedDashboard requiredRole="BORROWER"><RequesterReturnItems /></ProtectedDashboard>
   }
   if (/^\/(?:requester|borrower)\/requests\/\d+$/.test(path)) {
     return <ProtectedDashboard requiredRole="BORROWER"><RequestDetail /></ProtectedDashboard>
