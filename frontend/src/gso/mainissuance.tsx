@@ -976,9 +976,9 @@ export default function MainIssuance() {
                       >
                         <span className="flex items-start justify-between gap-3">
                           <span className="min-w-0">
-                            <span className="block truncate text-sm font-extrabold text-slate-900">{item.itemName || item.description}</span>
-                            <span className="mt-0.5 block truncate text-xs font-semibold text-slate-600">{item.itemCode} · {item.category}</span>
-                            <span title={item.description} className="mt-1 block truncate text-xs text-slate-500">{item.description}</span>
+                            <span title={item.description} className="block truncate text-sm font-extrabold text-slate-900">{item.description || item.itemName}</span>
+                            <span className="mt-0.5 block truncate text-xs font-bold text-blue-700">{item.itemName}</span>
+                            <span className="mt-1 block truncate text-xs text-slate-500">{item.itemCode} · {item.category}</span>
                           </span>
                           <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-extrabold ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-800'}`}>
                             {isSelected ? 'Selected' : 'Select'}

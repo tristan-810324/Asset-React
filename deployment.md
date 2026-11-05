@@ -1,413 +1,171 @@
-# A.SSET Deployment Guide
+﻿# PERN Deployment Practice Guide
 
-Ang dokumentong ito ang step-by-step guide para i-deploy ang project gamit ang libreng setup:
-
-```text
-Vercel (frontend) + Render (backend) + Neon (PostgreSQL) + Gmail SMTP (OTP email)
-```
-
-> **Scope:** Documentation only. Walang kailangang baguhin sa application code para sa deployment steps na ito.
-
-## 1. Project tech stack
-
-### Frontend
-
-- React 19
-- TypeScript
-- Vite
-- Tailwind CSS 4
-- React DOM
-- ESLint
-- Custom path-based routing gamit ang `window.location.pathname`
-
-Location: `frontend/`
-
-### Backend
-
-- Node.js
-- Express 5
-- CommonJS modules
-- `pg` para sa PostgreSQL connection
-- `jsonwebtoken` para sa JWT authentication
-- `bcryptjs` para sa password hashing
-- `nodemailer` para sa email verification at password-reset OTP
-- `cors` para sa frontend-backend communication
-- `dotenv` para sa environment variables
-
-Location: `backend/`
-
-### Database
-
-- PostgreSQL
-- Raw SQL migrations at seed files
-- Walang ORM tulad ng Prisma o Sequelize
-
-Database files:
+Gabay ito para mag-rehearse ng deployment gamit ang parehong providers:
 
 ```text
-backend/database/migrations/001_initial_schema.sql
-backend/database/migrations/002_email_verification_otp.sql
-backend/database/migrations/003_inventory_items.sql
-backend/database/migrations/004_inventory_categories_and_change_history.sql
-backend/database/migrations/005_inventory_created_audit_action.sql
-backend/database/migrations/006_employees_and_audit_logs.sql
-backend/database/migrations/007_employee_issuance_returns.sql
-backend/database/seeds/001_initial_seed.sql
+Vercel (React/Vite frontend)
+        |
+        | HTTPS requests
+        v
+Render (Express API) ---- Neon (PostgreSQL)
+        |
+        +---- Gmail SMTP (OTP email)
 ```
 
-### Authentication features
+Para sa practice, gumawa ng magkakahiwalay na **practice Vercel project**, **practice Render service**, at **practice Neon database/branch**. Huwag ikonekta ang practice service sa production database o production secrets.
 
-- Login
-- JWT authentication
-- Role-based access para sa `IT_ADMIN` at `GSO_STAFF`
-- Email verification OTP
-- Password reset OTP
-- Bcrypt password hashing
-- Login event tracking
-- Authentication rate-limit records
+## 1. Importanteng database checkpoint bago mag-full deploy
 
-## 2. Deployment architecture
+Nasa [backend/database/README.md](./backend/database/README.md) ang migration catalog. Ang checked-in migrations ay `001` hanggang `028`, wala pang migration runner o migration ledger, at hindi sapat ang mga migration na iyon para sa lahat ng schema na ginagamit ng kasalukuyang backend.
 
-```text
-User browser
-    |
-    v
-Vercel frontend
-    |
-    | HTTPS API requests
-    v
-Render Express backend
-    |
-    +--> Neon PostgreSQL
-    |
-    +--> Gmail SMTP
-```
+Ayon sa audit notes ng database README, may mga ginagamit na object na wala sa checked-in migrations:
 
-Halimbawa ng final URLs:
+- Tables: `asset_movements` at `app_notifications`
+- `item_catalog.lifecycle_status` at `item_catalog.reorder_level`
+- `service_requests.external_forwarded_at`, `external_forwarded_to`, at `external_reference`
 
-```text
-Frontend: https://asset.vercel.app
-Backend:  https://asset-backend.onrender.com
-API:      https://asset-backend.onrender.com/api/v1
-```
+Bago asahang gagana ang buong app, kailangang ihanda at i-test ang schema reconciliation migration sa disposable database. Huwag basta i-run ang lahat ng SQL sa existing database at huwag mag-delete o mag-reset ng production database. Basahin muna ang migration notes at tiyaking alam kung alin na ang na-apply.
 
-## 3. Prerequisites
+Puwede pa ring i-rehearse ang provider setup at database connection sa practice environment. Tandaan na ang `/api/v1/health` ay sumusubok lang ng koneksyon sa PostgreSQL; hindi nito tinitiyak na kumpleto ang schema para sa bawat feature.
 
-Kailangan mo ng accounts sa:
+> **Seed warning:** Ang `backend/database/seeds/001_initial_seed.sql` ay para sa disposable/local database. May demo accounts ito at nire-reset nito ang seeded credentials kapag ni-run ulit. Huwag itong patakbuhin sa production.
 
-1. GitHub, kung saan naka-host ang repository
-2. Vercel, para sa frontend
-3. Render, para sa backend
-4. Neon, para sa PostgreSQL database
-5. Gmail o ibang SMTP provider, para sa OTP email
+## 2. Ihanda ang ligtas na practice environment
 
-Siguraduhin ding nasa GitHub ang latest version ng repository bago mag-deploy.
+1. Gumamit ng reviewed, non-production Git branch gaya ng `deploy-practice`.
+2. Gumawa ng hiwalay na practice Neon database o branch.
+3. Gumawa ng hiwalay na practice Render Web Service na naka-connect sa practice branch.
+4. Gumawa ng hiwalay na Vercel project para sa practice branch, o gumamit ng Preview deployment.
+5. Gumamit ng test account at test email. Huwag maglagay ng totoong user data sa practice database.
 
-## 4. Mga kailangang gawin muna sa VS Code at terminal
-
-Ang section na ito ang checklist bago gumawa ng Vercel, Render, at Neon services. Ang commands ay para sa **PowerShell sa Windows** at dapat i-run nang paisa-isa.
-
-### 4.1 Buksan ang project root
+Kung gagawa ka ng practice branch mula sa kasalukuyang branch, tiyaking na-review muna ang mga pagbabago at walang secret na masasama:
 
 ```powershell
-cd "C:\Users\hp\OneDrive\ドキュメント\2.React-Projects\2.Project-Asset"
-git status
+git status --short
+git branch --show-current
+git switch -c deploy-practice
+git push -u origin deploy-practice
 ```
 
-Basahin muna ang output ng `git status`. Huwag i-revert o burahin ang existing changes na hindi mo sinadyang gawin.
+Kung mayroon nang `deploy-practice` branch, lumipat doon gamit ang `git switch deploy-practice` sa halip na gumawa ulit ng branch.
 
-### 4.2 I-check ang secret files
+## 3. Local preflight sa Windows PowerShell
 
-Huwag kailanman i-commit ang:
-
-```text
-backend/.env
-```
-
-Ang file na ito ay para sa local development lamang at naglalaman ng database URL, JWT secret, at SMTP credentials. Ang dapat lamang ma-commit ay:
-
-```text
-backend/.env.example
-```
-
-Kasama na sa project `.gitignore` ang `.env`, `.env.*` (maliban sa `.env.example`), `node_modules`, at build output. I-check pa rin ang files bago mag-commit:
+Buksan ang terminal sa project root:
 
 ```powershell
+Set-Location "C:\React-Projects\2.Project-Asset"
+node --version
 git status --short
 git diff --cached --name-only
 ```
 
-Kung aksidenteng na-stage ang `.env`, alisin lamang ito sa staging area nang hindi binubura ang local file:
+Ang Vite version sa frontend lockfile ay nangangailangan ng Node.js `20.19+` o `22.12+`. Gumamit ng magkatugmang Node version sa local build at deployment services; ang Node.js 22.12+ o 24.x ay pasok sa requirement na iyon.
+
+Huwag i-commit ang `backend/.env`. Ang backend `.gitignore` ay nagbubukod ng `.env` files. I-commit lang ang `.env.example`, na walang totoong credentials. Huwag gumamit ng `git add .` nang hindi muna nire-review ang staged files.
+
+### Frontend build check
 
 ```powershell
-git restore --staged backend/.env
-```
-
-### 4.3 I-install at i-validate ang frontend
-
-```powershell
-cd "C:\Users\hp\OneDrive\ドキュメント\2.React-Projects\2.Project-Asset\frontend"
+Set-Location "C:\React-Projects\2.Project-Asset\frontend"
 npm ci
-npm run build
 npm run lint
+npm run build
 ```
 
-Ang `npm ci` ay gumagamit ng committed `package-lock.json`. Dapat maging successful ang `npm run build` at `npm run lint` bago mag-deploy.
+Dapat gumawa ang Vite ng `frontend/dist/`. Build output ito; Vercel ang gagawa nito sa deployment.
 
-Ang `dist/` folder ay build output lamang. Hindi kailangang i-commit ito; Vercel ang gagawa ng build sa deployment.
+### Backend startup at health check
 
-### 4.4 I-install at i-test ang backend
-
-Sa hiwalay na VS Code terminal:
+Sa backend, gumawa ng local `.env` mula sa example kung wala pa, pagkatapos ay ilagay ang local database URL at local secrets:
 
 ```powershell
-cd "C:\Users\hp\OneDrive\ドキュメント\2.React-Projects\2.Project-Asset\backend"
+Set-Location "C:\React-Projects\2.Project-Asset\backend"
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 npm ci
 npm start
 ```
 
-Ang backend ay dapat mag-start sa local `PORT` na nasa `backend/.env` (karaniwang `5000`). Panatilihing bukas ang terminal habang nagte-test. Ihinto gamit ang `Ctrl+C`.
-
-Sa ibang terminal, i-check ang health endpoint:
+Habang bukas ang backend terminal, buksan ang pangalawang terminal at subukan:
 
 ```powershell
 Invoke-RestMethod http://localhost:5000/api/v1/health
 ```
 
-Dapat may response na:
+Dapat may `success: true`, `status: ok`, at `database: connected`. Ihinto ang local server gamit ang `Ctrl+C` pagkatapos mag-test.
 
-```json
-{
-  "success": true,
-  "data": {
-    "status": "ok",
-    "database": "connected"
-  }
-}
-```
+Wala pang aktuwal na backend test suite ang `backend/package.json`; placeholder ang `npm test`. Gamitin ang startup, health endpoint, at smoke tests sa ibaba bilang practice checks.
 
-Kung hindi successful ang health check, ayusin muna ang local `DATABASE_URL` o database setup bago mag-deploy.
+## 4. Ihanda ang Neon PostgreSQL practice database
 
-### 4.5 I-check ang files na posibleng idagdag
+1. Gumawa ng hiwalay na Neon project o branch para sa practice.
+2. Buksan ang **Connect** dialog at piliin ang tamang branch, database, at role.
+3. Para sa Render runtime, gamitin ang pooled connection string na may `-pooler` sa hostname at `sslmode=require`.
+4. Para sa SQL migration work o database administration, gamitin ang Neon SQL Editor o direct connection string kung kailangan.
+5. Panatilihing pribado ang buong connection string; kasama rito ang database password.
 
-Walang kailangang baguhin sa React, TypeScript, Express, o SQL source code para sa basic deployment.
+Walang automatic migration command sa project. Bago mag-apply ng SQL:
 
-Optional lamang ang file na ito:
+1. Basahin ang [migration catalog](./backend/database/README.md) at tingnan ang [backend/database/migrations/](./backend/database/migrations/).
+2. Sa bagong disposable database lang i-rehearse ang migration sequence. Sa kasalukuyang repo, sundin ang numeric order mula `001` hanggang `028`, at idagdag ang na-review na schema reconciliation migration bago mag-full app test.
+3. Itala kung aling migration ang matagumpay na na-apply. Walang migration ledger na awtomatikong magtatala nito.
+4. Huwag i-replay ang migration directory sa existing o production database nang hindi muna tinitiyak ang live schema at migration history.
+5. Gamitin ang seed file sa disposable practice database lamang, hindi sa production.
 
-```text
-frontend/vercel.json
-```
+## 5. I-deploy ang practice backend sa Render
 
-Idagdag lamang ito kung may 404 kapag direktang binuksan o nire-refresh ang `/login`, `/admin`, `/gso`, o ibang frontend route. Ang eksaktong content ay nasa section 9 ng guide na ito.
-
-Hindi kailangang gumawa ng bagong backend server file, database ORM file, o production `.env` file sa repository. Ang production secrets ay ilalagay sa Vercel at Render dashboards.
-
-### 4.6 I-check ang GitHub branch
-
-Tiyaking committed at pushed ang latest changes bago i-connect sa Vercel at Render:
-
-```powershell
-cd "C:\Users\hp\OneDrive\ドキュメント\2.React-Projects\2.Project-Asset"
-git status
-git branch --show-current
-git remote -v
-```
-
-Pagkatapos ma-review ang files:
-
-```powershell
-git add deployment.md
-git commit -m "Document deployment preparation and setup"
-git push
-```
-
-Kung gumawa ka ng optional `frontend/vercel.json`, isama ito:
-
-```powershell
-git add deployment.md frontend/vercel.json
-git commit -m "Document deployment preparation and setup"
-git push
-```
-
-Huwag gamitin ang `git add .` nang hindi muna tinitingnan ang `git status`, lalo na dahil may sensitive local environment file.
-
-## 5. Create the Neon PostgreSQL database
-
-1. Pumunta sa [Neon](https://neon.tech).
-2. Gumawa ng bagong PostgreSQL project.
-3. Piliin ang database name at region.
-4. Kopyahin ang PostgreSQL connection string.
-5. Buksan ang Neon SQL Editor.
-6. I-run ang SQL files sa eksaktong order na ito:
-
-```text
-1. backend/database/migrations/001_initial_schema.sql
-2. backend/database/migrations/002_email_verification_otp.sql
-3. backend/database/migrations/003_inventory_items.sql
-4. backend/database/migrations/004_inventory_categories_and_change_history.sql
-5. backend/database/migrations/005_inventory_created_audit_action.sql
-6. backend/database/migrations/006_employees_and_audit_logs.sql
-7. backend/database/migrations/007_employee_issuance_returns.sql
-8. backend/database/seeds/001_initial_seed.sql
-```
-
-Ginagamit ng initial schema ang `gen_random_uuid()`. Kung mag-error ang unang migration dahil hindi available ang UUID function, i-run muna ito sa Neon SQL Editor at pagkatapos ay ulitin ang migrations:
-
-```sql
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-```
-
-Ang connection string ay karaniwang ganito ang format:
-
-```text
-postgresql://username:password@host/database?sslmode=require
-```
-
-### Bakit kailangan ang order?
-
-- Ang first migration ang gumagawa ng tables, indexes, constraints, at authentication foundation.
-- Ang second migration ang nagdadagdag ng `email_verification_otp` token purpose.
-- Ang seed file ang naglalagay ng initial roles, permissions, at initial seed records.
-
-> Huwag ilagay ang actual database password sa GitHub, frontend code, o anumang committed file.
-
-## 6. Configure Gmail SMTP
-
-Ginagamit ng backend ang Nodemailer para sa:
-
-- First-login email verification
-- Password-reset OTP
-
-Para sa Gmail:
-
-1. I-enable ang 2-Step Verification sa Google account.
-2. Gumawa ng Gmail App Password.
-3. Gamitin ang 16-character App Password bilang `SMTP_PASS`.
-4. Huwag gamitin ang normal Gmail password.
-
-Kung walang SMTP configuration, hindi gagana ang email verification at password reset email. Puwede lamang iwanang blank ang SMTP variables para sa testing ng accounts na verified na.
-
-## 7. Deploy the backend to Render
-
-1. Pumunta sa [Render](https://render.com).
-2. Piliin ang **New → Web Service**.
-3. I-connect ang GitHub repository.
-4. Piliin ang repository na naglalaman ng project.
-5. Gamitin ang settings na ito:
+Gumawa ng **Web Service** mula sa GitHub repository. Piliin ang practice branch at itakda:
 
 ```text
 Root Directory: backend
-Build Command: npm install
+Runtime: Node
+Build Command: npm ci
 Start Command: npm start
+Health Check Path: /api/v1/health
+Node version: 22.12+ o 24.x
 ```
 
-Ang backend entry point ay `backend/index.js`. Nag-i-start ito ng Express server at nagche-check muna ng database connection bago makinig sa port.
+Huwag magtakda ng fixed `PORT=5000` sa Render. Ginagamit ng backend ang `process.env.PORT` kapag ibinigay ito ng host, at `5000` lang ang local default.
 
-### Render environment variables
-
-Idagdag sa Render service settings ang mga sumusunod:
+Idagdag ang environment variables sa Render service dashboard:
 
 ```text
 NODE_ENV=production
-FRONTEND_ORIGIN=https://YOUR-VERCEL-DOMAIN.vercel.app
-DATABASE_URL=your-neon-postgresql-connection-string
-JWT_SECRET=your-long-random-secret-at-least-32-characters
+FRONTEND_ORIGIN=https://YOUR-PRACTICE-VERCEL-ORIGIN
+DATABASE_URL=YOUR-NEON-PRACTICE-POOLED-CONNECTION-STRING
+JWT_SECRET=YOUR-LONG-RANDOM-SECRET
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
+SMTP_USER=your-test-email@gmail.com
 SMTP_PASS=your-gmail-app-password
-SMTP_FROM=your-email@gmail.com
+SMTP_FROM=your-test-email@gmail.com
 ```
 
-Ang `PORT` ay karaniwang awtomatikong ibinibigay ng Render. Kung hihingi ang Render ng explicit value, gamitin ang port na ipinapakita nito sa service configuration. Huwag i-hardcode ang localhost port para sa production.
+Mga paalala:
 
-### Generate a JWT secret
+- Dapat hindi bababa sa 32 characters ang `JWT_SECRET`; gumawa ng random secret at huwag i-reuse ang database password.
+- I-set ang `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, at `SMTP_PASS` bilang kumpletong grupo, o iwanang lahat na walang laman. Mag-e-error ang backend kapag ilan lang ang na-set. Optional ang `SMTP_FROM`; kung wala ito, gagamitin ang `SMTP_USER`.
+- Para sa Gmail SMTP, kailangan ang Google App Password kapag available sa account; nangangailangan ito ng 2-Step Verification. Huwag ilagay ang normal Gmail password.
+- Huwag gumawa o mag-upload ng production `.env` file sa repository. Ilagay ang secrets sa Render dashboard.
+- Iwanang walang pre-deploy migration command habang wala pang ligtas at nasubukang migration runner.
 
-Ang `JWT_SECRET` ay dapat:
-
-- At least 32 characters
-- Random
-- Hindi kapareho ng database password
-- Hindi naka-commit sa repository
-
-Halimbawa ng paggawa ng random secret sa PowerShell:
-
-```powershell
-[Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }))
-```
-
-### Test the backend
-
-Pagkatapos ng successful deployment, buksan:
+Pagkatapos ng deploy, subukan ang backend URL:
 
 ```text
-https://YOUR-RENDER-DOMAIN.onrender.com/api/v1/health
+https://YOUR-RENDER-SERVICE.onrender.com/api/v1/health
 ```
 
-Dapat makakuha ng successful response na may status na `ok` at database na `connected`.
+Dapat magbalik ito ng `status: ok` at `database: connected`. Kung wala pang Vercel origin, puwedeng pansamantalang placeholder ang `FRONTEND_ORIGIN` habang health check lang ang ginagawa. I-update ito bago subukan ang browser app.
 
-Halimbawa:
+## 6. I-configure at i-deploy ang frontend sa Vercel
+
+### SPA route rewrite
+
+Gumagamit ang frontend ng path-based routes tulad ng `/login`, `/admin`, at `/gso/items`. Para gumana ang direct link at refresh sa mga path na ito, gumawa ng `frontend/vercel.json` na may:
 
 ```json
 {
-  "success": true,
-  "data": {
-    "status": "ok",
-    "database": "connected"
-  }
-}
-```
-
-## 8. Deploy the frontend to Vercel
-
-1. Pumunta sa [Vercel](https://vercel.com).
-2. Piliin ang **Add New Project**.
-3. I-connect ang GitHub repository.
-4. Piliin ang project repository.
-5. Gamitin ang settings na ito:
-
-```text
-Root Directory: frontend
-Framework Preset: Vite
-Build Command: npm run build
-Output Directory: dist
-```
-
-### Vercel environment variable
-
-Sa Vercel project, pumunta sa **Settings → Environment Variables** at idagdag:
-
-```text
-VITE_API_BASE_URL=https://YOUR-RENDER-DOMAIN.onrender.com/api/v1
-```
-
-I-set ito para sa production environment. Puwede rin itong i-set para sa preview environment kung kailangan.
-
-> Kapag hindi na-set ang `VITE_API_BASE_URL`, gagamit ang frontend ng local default na `http://localhost:5000/api/v1`. Magreresulta ito sa failed API requests sa deployed site.
-
-## 9. SPA route handling sa Vercel
-
-Gumagamit ang frontend ng paths tulad ng:
-
-```text
-/login
-/forgot-password
-/reset-otp
-/reset-password
-/verify-email
-/admin
-/admin/users
-/gso
-/gso/items
-/gso/employees
-/gso/issuance
-/gso/requests-borrowing
-```
-
-Kung nagre-return ng 404 ang Vercel kapag direktang binuksan o nirefresh ang isa sa mga paths na ito, magdagdag ng file na `frontend/vercel.json`:
-
-```json
-{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
       "source": "/(.*)",
@@ -417,197 +175,95 @@ Kung nagre-return ng 404 ang Vercel kapag direktang binuksan o nirefresh ang isa
 }
 ```
 
-Pagkatapos magdagdag ng rewrite file, i-commit at i-push ito para mag-trigger ng bagong Vercel deployment.
+Nasa project root ang file na ito kapag `frontend` ang Vercel Root Directory.
 
-## 10. Update the backend CORS origin
+### Vercel project settings
 
-Pagkatapos makuha ang actual Vercel domain, palitan ang Render variable:
-
-```text
-FRONTEND_ORIGIN=https://actual-vercel-domain.vercel.app
-```
-
-Huwag gumamit ng trailing slash kung hindi kinakailangan:
+Gumawa ng hiwalay na practice project na konektado sa practice branch, pagkatapos itakda:
 
 ```text
-Correct:   https://asset.vercel.app
-Avoid:     https://asset.vercel.app/
+Root Directory: frontend
+Framework Preset: Vite
+Build Command: npm run build
+Output Directory: dist
+Node.js: 22.12+ o 24.x
 ```
 
-Pagkatapos baguhin ang variable, mag-redeploy o mag-restart ng Render service para ma-load ang bagong configuration.
+Puwedeng hayaang awtomatikong ma-detect ni Vercel ang install command mula sa `frontend/package-lock.json`. Kung magse-set ka ng override, gamitin ang `npm ci`.
 
-## 11. Create an admin account
-
-Ang repository ay may admin creation script:
+Sa **Settings → Environment Variables**, idagdag ang sumusunod para sa **Preview** environment ng practice project:
 
 ```text
-backend/scripts/create-admin.js
+VITE_API_BASE_URL=https://YOUR-PRACTICE-RENDER-SERVICE.onrender.com/api/v1
 ```
 
-Kung kailangan gumawa ng production admin account, i-run ang script sa backend environment na may production `DATABASE_URL`, ayon sa instructions ng script. Huwag maglagay ng production password sa command history o committed files.
+I-set ang kaukulang backend URL nang hiwalay para sa Production environment kapag handa ka nang mag-release. Ang `VITE_` variables ay napupunta sa browser bundle; huwag maglagay rito ng password, database URL, o JWT secret.
 
-Bago gumawa ng user:
-
-1. Tiyaking na-run na ang migrations.
-2. Tiyaking na-run na ang seed.
-3. Tiyaking available ang database.
-4. Gumamit ng malakas at unique na password.
-5. Palitan ang temporary credentials kung mayroon.
-
-## 12. End-to-end testing checklist
-
-### Database
-
-- [ ] Successful ang Neon connection.
-- [ ] Na-run ang `001_initial_schema.sql`.
-- [ ] Na-run ang `002_email_verification_otp.sql`.
-- [ ] Na-run ang `003_inventory_items.sql`.
-- [ ] Na-run ang `004_inventory_categories_and_change_history.sql`.
-- [ ] Na-run ang `005_inventory_created_audit_action.sql`.
-- [ ] Na-run ang `006_employees_and_audit_logs.sql`.
-- [ ] Na-run ang `007_employee_issuance_returns.sql`.
-- [ ] Na-run ang `001_initial_seed.sql`.
-- [ ] May initial roles at permissions.
-
-### Backend
-
-- [ ] Successful ang Render build.
-- [ ] Successful ang Render start command.
-- [ ] Gumagana ang `/api/v1/health`.
-- [ ] Ang health endpoint ay nagre-report ng `database: "connected"`.
-- [ ] Tama ang `FRONTEND_ORIGIN`.
-- [ ] Naka-set ang `DATABASE_URL`.
-- [ ] Naka-set ang `JWT_SECRET`.
-- [ ] Naka-set ang SMTP variables kung gagamit ng OTP email.
-
-### Frontend
-
-- [ ] Successful ang `npm run build`.
-- [ ] Naka-set ang `VITE_API_BASE_URL`.
-- [ ] Gumagana ang landing page.
-- [ ] Gumagana ang login.
-- [ ] Gumagana ang email verification OTP.
-- [ ] Gumagana ang forgot-password flow.
-- [ ] Gumagana ang password reset.
-- [ ] Gumagana ang admin route.
-- [ ] Gumagana ang GSO routes.
-- [ ] Hindi nag-404 kapag nirefresh ang internal routes.
-
-## 13. Free-tier limitations
-
-Ang setup na ito ay para sa personal projects, prototypes, school projects, at light usage. Maaaring magkaroon ng pagbabago sa free-tier limits ng bawat provider, kaya tingnan ang kasalukuyang provider documentation bago gamitin sa production.
-
-### Vercel Hobby
-
-- Libre para sa eligible personal, non-commercial projects.
-- Ang static Vite frontend ay angkop sa Vercel.
-- May usage, build, bandwidth, at request limits.
-- Maaaring kailanganin ang paid plan kung commercial ang paggamit o lalampas sa limits.
-
-### Render Free Web Service
-
-- Libre para sa hobby usage.
-- Maaaring mag-sleep kapag walang traffic.
-- Maaaring magkaroon ng cold start o mabagal na unang request.
-- Hindi dapat ituring na always-on production server.
-- Ang local filesystem ay hindi persistent storage.
-
-### Neon Free PostgreSQL
-
-- Ang free plan ay may storage, compute, at network limits.
-- Maaaring mag-scale-to-zero ang database kapag idle.
-- Gumawa ng backup/export bago gumawa ng destructive database changes.
-
-### Gmail SMTP
-
-- May sending limits at anti-abuse rules.
-- Gumamit ng App Password, hindi normal account password.
-- Para sa mas malaking traffic, gumamit ng transactional email provider.
-
-## 14. Troubleshooting
-
-### `Hindi makakonekta sa backend`
-
-I-check:
-
-1. Running ba ang Render service?
-2. Tama ba ang `VITE_API_BASE_URL`?
-3. May `/api/v1` ba sa dulo ng URL?
-4. Gumagana ba ang backend health endpoint?
-5. May CORS error ba sa browser console?
-
-Expected format:
+Pagkatapos mag-deploy, tandaan ang eksaktong Vercel origin, halimbawa:
 
 ```text
-https://YOUR-RENDER-DOMAIN.onrender.com/api/v1
+https://your-practice-project-git-deploy-practice.vercel.app
 ```
 
-### Database connection error sa Render
+## 7. Itugma ang CORS at subukan ang app
 
-I-check:
-
-1. Tama ang Neon `DATABASE_URL`.
-2. May `sslmode=require` kung hinihingi ng provider.
-3. Na-run ang migrations.
-4. Available pa ang Neon database.
-5. Walang extra quotes o spaces sa environment variable.
-
-### CORS error
-
-I-check ang Render variable:
+Sa Render, palitan ang `FRONTEND_ORIGIN` ng eksaktong practice Vercel origin. Walang path o trailing slash:
 
 ```text
-FRONTEND_ORIGIN=https://YOUR-ACTUAL-VERCEL-DOMAIN.vercel.app
+Tama:  https://your-practice-project.vercel.app
+Iwasan: https://your-practice-project.vercel.app/
 ```
 
-Dapat eksaktong tumugma ang origin ng browser sa configured origin.
+Pagkatapos baguhin ang variable, i-redeploy o i-restart ang practice Render service. Kung nag-iiba ang Vercel Preview URL, i-update din ang `FRONTEND_ORIGIN` para tumugma sa URL na sinusubukan.
 
-### Hindi gumagana ang OTP email
+Gawin ang mga smoke test na ito sa practice deployment:
 
-I-check:
+- [ ] Gumagana ang `/api/v1/health` at nakakonekta sa practice Neon database.
+- [ ] Naglo-load ang homepage at login page.
+- [ ] Gumagana ang direct open at refresh sa `/login`, `/admin`, at `/gso/items`.
+- [ ] Naka-configure ang frontend API URL sa practice Render service, hindi sa `localhost`.
+- [ ] Walang CORS o failed API request sa browser developer console.
+- [ ] Naka-test ang login at role access gamit ang practice accounts.
+- [ ] Na-test ang OTP email kung naka-configure ang SMTP.
+- [ ] Na-test ang pangunahing GSO workflows kapag kumpleto na ang database schema.
 
-1. Tama ang `SMTP_HOST`.
-2. Ang `SMTP_PORT` ay `587`.
-3. Tama ang Gmail address.
-4. App Password ang ginamit sa `SMTP_PASS`.
-5. Kumpleto ang apat na SMTP variables.
-6. Walang accidental spaces sa App Password.
+Ang initial admin account ay gawin gamit ang `backend/scripts/create-admin.js` pagkatapos maihanda ang schema at roles. Tiyaking nakaturo ang `DATABASE_URL` sa tamang practice database bago patakbuhin. Huwag gamitin ang seeded demo credentials sa production.
 
-### 404 kapag nirefresh ang route
+## 8. Production release checklist
 
-I-check kung mayroon nang `frontend/vercel.json` SPA rewrite na nasa section 8 ng guide na ito.
+Huwag ilipat sa production hangga't hindi pumapasa ang practice deployment at nalulutas ang migration/schema checkpoint sa Section 1.
 
-### Backend service mabagal sa unang request
+- [ ] Na-review at na-commit ang kinakailangang schema reconciliation migration.
+- [ ] Nasubukan ang migration sa disposable database at may backup/restore plan para sa production data.
+- [ ] Naka-set ang Render production service sa tamang branch at production Neon connection string.
+- [ ] Naka-set ang Vercel Production `VITE_API_BASE_URL` sa production API.
+- [ ] Eksaktong production frontend origin ang `FRONTEND_ORIGIN`.
+- [ ] Na-configure ang production `JWT_SECRET` at SMTP credentials sa provider dashboards.
+- [ ] Walang `backend/.env`, test credentials, o database URL sa staged/committed files.
+- [ ] Hindi ni-run ang `001_initial_seed.sql` sa production.
+- [ ] Na-test ang health endpoint at mahahalagang user workflows pagkatapos ng deploy.
+- [ ] Na-save ang deployment URL, commit, at oras ng release para sa rollback reference.
 
-Normal ito sa free Render service kapag nag-sleep ang instance. Hintaying matapos ang cold start at subukan muli.
+Kung pumalya ang bagong app deploy, ibalik sa huling matagumpay na application deployment sa provider dashboard o mag-deploy muli mula sa huling reviewed commit. Hiwalay ang database changes sa app rollback; huwag basta i-reverse o burahin ang schema/data. I-restore ang database mula sa backup kung kailangan at ayon sa na-verify na recovery plan.
 
-## 15. Security reminders
+## 9. Karaniwang problema
 
-- Huwag i-commit ang `backend/.env`.
-- I-commit lamang ang `backend/.env.example`.
-- Huwag ilagay ang `DATABASE_URL`, `JWT_SECRET`, SMTP password, o admin password sa frontend.
-- Huwag ilagay ang secrets sa screenshots, documentation, o public issue.
-- Gumamit ng unique production credentials.
-- Palitan agad ang secret kapag na-expose.
-- Regular na mag-export o mag-backup ng production database.
-- Huwag gamitin ang development database bilang production database.
+| Sintomas | Suriin |
+| --- | --- |
+| Vercel build error tungkol sa Node version | Gumamit ng Node `22.12+` o `24.x`; i-check din ang install/build logs. |
+| Frontend requests to `localhost:5000` | Itakda ang `VITE_API_BASE_URL` sa Preview o Production environment at gumawa ng bagong deployment. |
+| Browser CORS error | Itugma ang eksaktong browser origin sa Render `FRONTEND_ORIGIN`, kabilang ang `https://` at hostname. |
+| 404 sa refresh ng `/admin` o `/gso/items` | Tiyaking nasa `frontend/vercel.json` ang SPA rewrite at nasa `frontend` ang Vercel Root Directory. |
+| Render startup error na missing `DATABASE_URL` o `JWT_SECRET` | Itakda ang required variables sa Render dashboard at i-redeploy. |
+| Health check fails sa database | Suriin ang Neon connection string, `sslmode=require`, database status, at credentials. |
+| Health green pero may 500 sa feature/API | Maaaring wala sa database ang kinakailangang table o column. Ihambing ang live schema sa migration catalog; huwag magpatakbo ng random SQL sa production. |
+| Hindi nagpapadala ang OTP email | Tiyaking kumpleto ang apat na SMTP variables at tama ang Gmail App Password. |
 
-## 16. Final deployment summary
+## 10. Official references
 
-```text
-1. Run the frontend `npm ci`, build, and lint checks.
-2. Run the backend `npm ci`, start the server, and test `/api/v1/health`.
-3. Check that `backend/.env` is not staged or committed.
-4. Push the reviewed repository changes to GitHub.
-5. Create the Neon PostgreSQL database.
-6. Run both migrations and the seed SQL.
-7. Configure Gmail SMTP/App Password.
-8. Deploy `backend/` to Render.
-9. Configure Render environment variables.
-10. Test the deployed `/api/v1/health`.
-11. Deploy `frontend/` to Vercel.
-12. Configure `VITE_API_BASE_URL`.
-13. Add the optional Vercel SPA rewrite only if internal routes return 404.
-14. Update Render `FRONTEND_ORIGIN` with the real Vercel URL.
-15. Test login, OTP, password reset, admin, and GSO flows.
-```
+- [Vercel: Vite deployments at SPA deep links](https://vercel.com/docs/frameworks/frontend/vite)
+- [Vercel: build configuration at root directory](https://vercel.com/docs/builds/configure-a-build)
+- [Render: Web Services](https://render.com/docs/web-services)
+- [Render: pagpili ng Node.js version](https://render.com/docs/node-version)
+- [Neon: connection pooling](https://neon.tech/docs/connect/connection-pooling)
+- [Google: gumawa at gumamit ng App Password](https://support.google.com/accounts/answer/185833)

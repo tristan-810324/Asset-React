@@ -882,7 +882,7 @@ export default function ItemsMasterData() {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all')
   const [selectedItemNameFilter, setSelectedItemNameFilter] = useState('all')
   const [selectedConditionStatusFilter, setSelectedConditionStatusFilter] = useState('all')
-  const [selectedTrackingModeFilter, setSelectedTrackingModeFilter] = useState<'all' | InventoryTrackingMode>('all')
+  const [selectedTrackingModeFilter, setSelectedTrackingModeFilter] = useState<'all' | 'individual' | 'consumable' | 'reusable'>('all')
   const [selectedInventoryDate, setSelectedInventoryDate] = useState('')
 
   // Add Item form state
@@ -1479,7 +1479,10 @@ export default function ItemsMasterData() {
     const [conditionStatusType, conditionStatusValue] = selectedConditionStatusFilter.split(':', 2)
     const matchesCondition = conditionStatusType !== 'condition' || item.condition === conditionStatusValue
     const matchesStatus = conditionStatusType !== 'status' || item.status === conditionStatusValue
-    const matchesTrackingMode = selectedTrackingModeFilter === 'all' || item.trackingMode === selectedTrackingModeFilter
+    const matchesTrackingMode = selectedTrackingModeFilter === 'all'
+      || (selectedTrackingModeFilter === 'individual' && item.trackingMode === 'individual')
+      || (selectedTrackingModeFilter === 'consumable' && item.trackingMode === 'quantity' && item.issueBehavior === 'consumable')
+      || (selectedTrackingModeFilter === 'reusable' && item.trackingMode === 'quantity' && item.issueBehavior === 'returnable')
 
     return matchesSearch && matchesCategory && matchesItemName && matchesCondition && matchesStatus && matchesTrackingMode
   })
@@ -2452,12 +2455,13 @@ export default function ItemsMasterData() {
               <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Tracking mode</span>
               <select
                 value={selectedTrackingModeFilter}
-                onChange={(event) => setSelectedTrackingModeFilter(event.target.value as 'all' | InventoryTrackingMode)}
+                onChange={(event) => setSelectedTrackingModeFilter(event.target.value as 'all' | 'individual' | 'consumable' | 'reusable')}
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
-                <option value="all">All tracking modes</option>
+                <option value="all">All stock types</option>
                 <option value="individual">Per-unit assets</option>
-                <option value="quantity">Bulk quantities</option>
+                <option value="consumable">Consumable stocks</option>
+                <option value="reusable">Reusable stocks</option>
               </select>
             </label>
           </div>
@@ -2642,32 +2646,6 @@ export default function ItemsMasterData() {
                     </span>
                   </div>
                 </section>
-
-                {selectedItem.trackingMode === 'quantity' && (
-                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-                    <div className="mb-3 border-b border-slate-100 pb-3">
-                      <h3 className="text-sm font-extrabold text-slate-900">Stock receipt history</h3>
-                      <p className="mt-1 text-sm text-slate-600">Past deliveries and recorded unit costs for this stock item.</p>
-                    </div>
-                    {selectedItem.receiptHistory.length > 0 ? (
-                      <ul className="divide-y divide-slate-100">
-                        {selectedItem.receiptHistory.map((receipt) => (
-                          <li key={receipt.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 py-3">
-                            <div>
-                              <p className="text-sm font-bold text-slate-900">
-                                {formatAcquiredDate(receipt.dateAcquired)} / {Number(receipt.quantity).toLocaleString()} {selectedItem.unit}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-600">
-                                {receipt.referenceNumber || 'No receipt reference'} / Unit cost {formatMoney(receipt.unitCost)}
-                              </p>
-                            </div>
-                            <span className="text-sm font-extrabold text-slate-900">{formatMoney(receipt.totalCost)}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : <p className="text-sm text-slate-600">No receipts have been recorded for this item yet.</p>}
-                  </section>
-                )}
 
                 <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5">
                   <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
