@@ -64,7 +64,7 @@ $dump = "$env:TEMP\dyci-local.dump"
 
 $env:MIGRATION_DATABASE_URL = Read-Host "I-paste ang DIRECT connection string"
 & "$pg\pg_restore.exe" --no-owner --no-privileges --dbname=$env:MIGRATION_DATABASE_URL $dump
-npm run db:migrate -- --baseline=028
+npm run db:migrate -- --baseline=010  # kasama na sa local mo ang lahat ng 37 archived migrations
 
 $env:DATABASE_URL = $env:MIGRATION_DATABASE_URL
 node scripts/create-admin.js        # bagong IT Admin
@@ -125,13 +125,13 @@ Gumawa ulit ng **bagong project** mula sa parehong repository, na ang **Root Dir
 
 | Pangalan | Halaga |
 | --- | --- |
-| `VITE_API_BASE_URL` | `https://YOUR-BACKEND.vercel.app/api/v1` |
+| `VITE_API_BASE_URL` | `https://asset-react.vercel.app/api/v1` |
 
 Kapag wala o mali ang format nito, sadyang hihinto ang build na may malinaw na error, para hindi ma-deploy ang site na tumatawag sa `localhost`.
 
 ## 6. Ikonekta ang backend sa frontend
 
-1. Sa backend project, idagdag ang `FRONTEND_ORIGIN` na may eksaktong address ng frontend, halimbawa `https://YOUR-FRONTEND.vercel.app`. Kung higit sa isa ang address, paghiwalayin ng comma.
+1. Sa backend project, idagdag ang `FRONTEND_ORIGIN` na may eksaktong address ng frontend. Sa kasalukuyang production site, ito ay `https://asset-react-cane.vercel.app`. Kung gagamit ng custom domain o Vercel preview, idagdag ang mga origin na iyon din at paghiwalayin ng comma. Huwag ilagay ang `http://localhost:5173` sa Vercel.
 2. **I-redeploy ang backend.** Sa bagong deployment lang gumagana ang binagong environment variable. Ganoon din sa frontend kapag binago ang `VITE_API_BASE_URL`.
 
 ## 7. I-test
@@ -162,6 +162,7 @@ Kapag wala o mali ang format nito, sadyang hihinto ang build na may malinaw na e
 | --- | --- |
 | Build error tungkol sa `VITE_API_BASE_URL` | I-set ito sa frontend project gaya ng nasa step 5, tapos mag-redeploy. |
 | CORS error sa browser console | Eksaktong address ba ang `FRONTEND_ORIGIN`, at na-redeploy ba ang backend? |
+| `Access-Control-Allow-Origin` is `http://localhost:5173` on the deployed API | The backend still has a local CORS origin. Set `FRONTEND_ORIGIN=https://asset-react-cane.vercel.app` in the backend Vercel project and redeploy it. |
 | HTML login page ng Vercel ang sagot ng API | Gamitin ang maikling production address, hindi ang mahabang address ng isang deployment. |
 | Mali nang 8 oras ang oras | Dapat `Asia/Manila` ang `SHOW timezone;`. Kung bago lang ito na-set, i-restart ang compute sa Neon. |
 | `This database already has tables but no migration ledger` | May laman na ang database. Gamitin ang `--baseline`, gaya ng Option B. Walang nabago sa database. |

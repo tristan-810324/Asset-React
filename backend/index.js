@@ -22,6 +22,9 @@ async function startServer() {
     void returnsService.expirePendingReturns().catch(() => {
       console.error('Could not run the expired return cleanup.');
     });
+    void returnsService.sendOverdueReminders().catch(() => {
+      console.error('Could not send the overdue borrowing reminders.');
+    });
   }, 60 * 1000);
   issuanceExpirySweep.unref();
   app.listen(env.port, () => {

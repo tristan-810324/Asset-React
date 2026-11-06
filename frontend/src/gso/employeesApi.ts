@@ -11,6 +11,8 @@ export type EmployeeProfile = {
   email: string
   status: 'Active' | 'Inactive'
   assignedCount: number
+  // True while the employee has items out, a pending issuance or return, or an unsettled lost item.
+  emailLocked: boolean
   changeHistory: Array<{
     changedAt: string
     changedBy: string | null
@@ -18,7 +20,7 @@ export type EmployeeProfile = {
   }>
 }
 
-export type EmployeeProfileInput = Omit<EmployeeProfile, 'id' | 'assignedCount' | 'changeHistory'> & {
+export type EmployeeProfileInput = Omit<EmployeeProfile, 'id' | 'assignedCount' | 'emailLocked' | 'changeHistory'> & {
   employeeCode: string
   pictureData?: string | null
   reason?: string

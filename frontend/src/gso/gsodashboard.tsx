@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import GsoNavbar, { GsoPageHeader, type GsoNavigationItem } from '../components/navbars/gsonavbar'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
+import HoldingsClearance from './holdingsclearance'
 
 type IconName =
   | 'archive'
@@ -558,6 +559,8 @@ export default function GsoDashboard() {
 
             </article>
           </section>
+
+          <HoldingsClearance />
         </div>
       </section>
 

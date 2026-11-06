@@ -6,24 +6,23 @@ import GsoNotif from '../notifbell/gsonotif'
 export type GsoNavigationItem =
   | 'Overview'
   | 'Item Master Data'
-  | 'Employee Master Data'
-  | 'Issuance and Borrowing'
+  | 'Employees & Requesters'
+  | 'Issuance & Borrowing'
   | 'Main Issuance'
-  | 'Request and Borrowing'
-  | 'Returns and Records'
+  | 'Request & Borrowing'
+  | 'Returns & Records'
   | 'Issuances Records'
   | 'Return Items'
-  | 'Repair and Maintenance'
+  | 'Repair & Maintenance'
   | 'Notifications'
-  | 'Requester Verifications'
 
-type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Issuance and Borrowing' | 'Returns and Records'>
+type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Issuance & Borrowing' | 'Returns & Records'>
 type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
 
 type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string }
 type NavigationGroup = {
   kind: 'group'
-  name: 'Issuance and Borrowing' | 'Returns and Records'
+  name: 'Issuance & Borrowing' | 'Returns & Records'
   icon: NavigationIconName
   href: string
   activePages: GsoNavigationItem[]
@@ -143,23 +142,22 @@ function NavigationIcon({ name, className = 'h-5 w-5' }: { name: NavigationIconN
 const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Overview', icon: 'grid', href: '/gso' },
   { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
-  { kind: 'link', name: 'Employee Master Data', icon: 'users', href: '/gso/employees' },
+  { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
   {
     kind: 'group',
-    name: 'Issuance and Borrowing',
+    name: 'Issuance & Borrowing',
     icon: 'clipboard-plus',
     href: '/gso/main-issuance',
-    activePages: ['Main Issuance', 'Request and Borrowing'],
+    activePages: ['Main Issuance', 'Request & Borrowing'],
   },
   {
     kind: 'group',
-    name: 'Returns and Records',
+    name: 'Returns & Records',
     icon: 'history',
     href: '/gso/return-items',
     activePages: ['Issuances Records', 'Return Items'],
   },
-  { kind: 'link', name: 'Repair and Maintenance', icon: 'wrench', href: '/gso/to-be-repaired' },
-  { kind: 'link', name: 'Requester Verifications', icon: 'users', href: '/gso/requester-verification' },
+  { kind: 'link', name: 'Repair & Maintenance', icon: 'wrench', href: '/gso/to-be-repaired' },
   { kind: 'link', name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
 ]
 

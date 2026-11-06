@@ -3,7 +3,7 @@ import RequesterRequestInbox from './requesterinbox'
 
 export default function BorrowingPage() {
   return (
-    <GsoPageFrame activePage="Request and Borrowing" searchPlaceholder="Search requests and borrowings...">
+    <GsoPageFrame activePage="Request & Borrowing" searchPlaceholder="Search requests and borrowings...">
       <div className="space-y-6">
         <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
           <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
@@ -21,7 +21,7 @@ export default function BorrowingPage() {
               + Main Issuance
             </a>
             <a href="/gso/requests-borrowing" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
-              + Request and Borrowing
+              + Request &amp; Borrowing
             </a>
           </nav>
         </section>

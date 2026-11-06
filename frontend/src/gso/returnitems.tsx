@@ -1,42 +1,27 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { getCurrentUser } from '../auth/authApi'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import { listDepartments, listEmployees } from './employeesApi'
 import {
   confirmTaggedAssetReturn,
   createEmployeeReturn,
   getAssetTagForInspection,
-  listEmployeeIssuances,
+  listHoldings,
+  sendBulkReturnOtp,
+  sendTaggedReturnOtp,
   type AssetTagInspectionRecord,
+  type TaggedReturnOtpChallenge,
 } from './issuancesApi'
-import { listInventoryItems } from './inventoryApi'
-
-const initialDepartments = [
-  'Registrar Office',
-  'IT Services',
-  'Science Department',
-  'Finance Office',
-  'Property & Supply',
-  'Academic Affairs',
-  'Human Resources',
-]
 
 const assetTagCodePattern = /^(?:AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})|[A-Z0-9]{13}|[A-F0-9]{20})$/i
 const barcodeScanQuietPeriodMs = 220
-
-type ReturnedItemRecord = {
-  code: string
-  tagCode: string | null
-  asset: string
-  category: string
-  returnedBy: string
-  department: string
-  returnedDate: string
-  returnCondition: string
-  reason: string
-  issuedTo: string
-  status: string
-  statusTone: string
-}
+// USB scanners type a label in a burst of a few ms per character; people take far longer.
+const scannerMaxMsPerChar = 35
+const returnReasons = ['Tapos na gamitin', 'Sira o may depekto', 'Lilipat ng opisina', 'Resigned o end of contract', 'Hindi na kailangan', 'Iba pa']
+// Best to worst, to spot a return that lowers the condition on record.
+const conditionRank = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable']
+const repairConditionNames = ['Needs Repair', 'Under Maintenance', 'Unserviceable']
+// Only count units physically returned to the GSO counter here.
+const bulkLineConditions = conditionRank
 
 type BulkReturnOption = {
   id: string
@@ -46,19 +31,15 @@ type BulkReturnOption = {
   itemName: string
   quantity: number
   unitOfMeasure: string
+  conditionAtIssue: string
+  isOverdue: boolean
+  dueAt: string | null
 }
 
-function formatReturnedDateTime(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return { date: value || '—', time: '—' }
-  return {
-    date: new Intl.DateTimeFormat('en-US', {
-      month: 'short', day: '2-digit', year: 'numeric', timeZone: 'Asia/Manila',
-    }).format(date),
-    time: new Intl.DateTimeFormat('en-US', {
-      hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila',
-    }).format(date),
-  }
+type ReturnScanNotice = {
+  kind: 'success' | 'alreadyReturned'
+  message: string
+  employeeLinks: Array<{ employeeCode: string; employeeName: string; label: string }>
 }
 
 function formatBorrowerHistoryDate(value: string | null) {
@@ -72,84 +53,536 @@ function formatBorrowerHistoryDate(value: string | null) {
   }).format(date)
 }
 
-function returnedDateKey(value: string) {
-  const date = new Date(value.split(' · ')[0])
-  if (Number.isNaN(date.getTime())) return ''
+type BulkStep = 'employee' | 'item' | 'details' | 'confirm' | 'done'
 
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+const bulkSteps: { key: Exclude<BulkStep, 'done'>; label: string; prompt: string }[] = [
+  { key: 'employee', label: 'Employee', prompt: 'Who is returning the stock?' },
+  { key: 'item', label: 'Item', prompt: 'Which issued item is coming back?' },
+  { key: 'details', label: 'Count', prompt: 'Count the units by the condition they came back in.' },
+  { key: 'confirm', label: 'Confirm', prompt: "Review the return, then confirm it with the employee's code." },
+]
+
+const bulkConditionGroups = [
+  { title: 'Back to stock', hint: 'Usable right away', conditions: ['New', 'Good', 'Fair'], dot: 'bg-emerald-500' },
+  { title: 'For repair', hint: 'Goes to To Be Repaired', conditions: repairConditionNames, dot: 'bg-amber-500' },
+]
+
+const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('')
+
+function StepBadge({ number, done }: { number: number; done: boolean }) {
+  return (
+    <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[0.62rem] font-black ${done ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'}`}>
+      {done ? (
+        <svg aria-label="Done" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="m5 12 5 5 9-10" /></svg>
+      ) : number}
+    </span>
+  )
 }
 
-function returnedConditionTone(condition: string) {
-  const normalizedCondition = condition.toLowerCase()
-  if (normalizedCondition === 'good') return 'bg-emerald-50 text-emerald-700'
-  if (normalizedCondition === 'new') return 'bg-sky-50 text-sky-700'
-  if (normalizedCondition === 'fair' || normalizedCondition === 'under maintenance') return 'bg-amber-50 text-amber-700'
-  return 'bg-rose-50 text-rose-700'
+function ChevronRight() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-blue-500">
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  )
 }
 
-function returnedStatusTone(status: string) {
-  const normalizedStatus = status.toLowerCase()
-  if (normalizedStatus === 'available' || normalizedStatus === 'in storage') return 'bg-blue-50 text-blue-700'
-  if (normalizedStatus === 'to be repaired') return 'bg-rose-50 text-rose-700'
-  if (normalizedStatus === 'issued') return 'bg-amber-50 text-amber-700'
-  return 'bg-slate-100 text-slate-600'
-}
+// Step-by-step return of reusable quantity stock, shown inside the Return Items page: pick the
+// employee, then the item, count the units by condition, and confirm with the emailed code.
+function BulkReturnPanel({ options, onReturned }: { options: BulkReturnOption[]; onReturned: () => void }) {
+  const [step, setStep] = useState<BulkStep>('employee')
+  const [employeeSearch, setEmployeeSearch] = useState('')
+  const [employeeKey, setEmployeeKey] = useState('')
+  const [issuanceId, setIssuanceId] = useState('')
+  // Units per condition, e.g. { Good: '3', 'Needs Repair': '2' }; empty or 0 means none.
+  const [lines, setLines] = useState<Record<string, string>>({})
+  const [reason, setReason] = useState('')
+  const [note, setNote] = useState('')
+  const [broughtBy, setBroughtBy] = useState('')
+  const [otpChallenge, setOtpChallenge] = useState<TaggedReturnOtpChallenge | null>(null)
+  const [otpCode, setOtpCode] = useState('')
+  const [isSendingOtp, setIsSendingOtp] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState('')
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const isFirstRender = useRef(true)
 
-function returnConditionFromNote(note: string, fallback: string) {
-  return note.match(/Condition after return:\s*([^.]*)/i)?.[1].trim() || fallback || '—'
-}
+  // Move focus to the new step's question so keyboard and screen reader users follow along.
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false
+      return
+    }
+    headingRef.current?.focus()
+  }, [step])
 
-function returnReasonFromNote(note: string) {
-  if (!note.trim()) return 'Return confirmed by employee.'
-  const gsoNotes = note.match(/GSO notes:\s*([\s\S]*)$/i)?.[1].trim()
-  if (gsoNotes) return gsoNotes
-  return note.split(/Condition after return:/i)[0].trim() || note.trim()
-}
+  const employeeGroups = [...options.reduce((groups, option) => {
+    const key = option.employeeCode || option.employeeName
+    const group = groups.get(key) ?? { key, name: option.employeeName, code: option.employeeCode, items: [] as BulkReturnOption[] }
+    group.items.push(option)
+    return groups.set(key, group)
+  }, new Map<string, { key: string; name: string; code: string; items: BulkReturnOption[] }>()).values()]
+    .sort((left, right) => left.name.localeCompare(right.name))
+  const search = employeeSearch.trim().toLowerCase()
+  const visibleEmployees = employeeGroups.filter((group) => !search || `${group.name} ${group.code}`.toLowerCase().includes(search))
+  const employee = employeeGroups.find((group) => group.key === employeeKey)
+  const selected = options.find((option) => option.id === issuanceId)
+  const outstanding = selected?.quantity ?? 0
+  const returnLines = bulkLineConditions
+    .map((condition) => ({ condition, quantity: Number(lines[condition] || 0) }))
+    .filter((line) => Number.isInteger(line.quantity) && line.quantity > 0)
+  const total = returnLines.reduce((sum, line) => sum + line.quantity, 0)
+  const isDamaged = returnLines.some((line) => repairConditionNames.includes(line.condition))
+  const isNoteRequired = reason === 'Iba pa' || isDamaged
+  const breakdown = returnLines.map((line) => `${line.quantity} ${line.condition}`).join(', ')
+  const stepIndex = step === 'done' ? bulkSteps.length : bulkSteps.findIndex((entry) => entry.key === step)
 
-function escapeReportHTML(value: string) {
-  return value.replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character] || character)
+  // The code is bound to the item, quantity, and condition, so changing any of them needs a new code.
+  function resetOtp() {
+    setOtpChallenge(null)
+    setOtpCode('')
+  }
+
+  function goTo(next: BulkStep) {
+    setError('')
+    setStep(next)
+  }
+
+  function chooseEmployee(key: string) {
+    if (key !== employeeKey) {
+      setEmployeeKey(key)
+      setIssuanceId('')
+      resetOtp()
+    }
+    goTo('item')
+  }
+
+  function chooseItem(option: BulkReturnOption) {
+    if (option.id !== issuanceId) {
+      setIssuanceId(option.id)
+      // Most returns bring everything back in good shape; staff adjust from there.
+      setLines({ Good: String(option.quantity) })
+      setReason('')
+      setNote('')
+      setBroughtBy('')
+      resetOtp()
+    }
+    goTo('details')
+  }
+
+  function setLine(condition: string, value: string) {
+    setLines((current) => ({ ...current, [condition]: value }))
+    resetOtp()
+  }
+
+  function handleDetailsSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selected) return
+    if (total < 1 || total > outstanding) {
+      setError(`The units must add up to 1–${outstanding} ${selected.unitOfMeasure}.`)
+      return
+    }
+    goTo('confirm')
+  }
+
+  async function sendCode() {
+    if (!selected) return
+    setIsSendingOtp(true)
+    setError('')
+    try {
+      setOtpChallenge(await sendBulkReturnOtp({ issuanceId: selected.id, lines: returnLines }))
+      setOtpCode('')
+    } catch (reasonError) {
+      setError(reasonError instanceof Error ? reasonError.message : 'Could not send the code to the employee.')
+    } finally {
+      setIsSendingOtp(false)
+    }
+  }
+
+  async function handleConfirmSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selected || !otpChallenge) return
+    setIsSubmitting(true)
+    setError('')
+    try {
+      const trimmedNote = note.trim()
+      const request = await createEmployeeReturn({
+        employeeCode: selected.employeeCode,
+        itemCode: selected.itemCode,
+        issuanceId: selected.id,
+        lines: returnLines,
+        reason: trimmedNote ? `${reason} — ${trimmedNote}` : reason,
+        returnedByName: broughtBy.trim(),
+        otp: { challengeId: otpChallenge.challengeId, code: otpCode },
+      })
+      const summary = request.lines.map((line) => `${line.quantity} ${line.condition}`).join(', ')
+      setResult(`${summary} ${request.unitOfMeasure} of ${request.itemName} recorded for ${request.employeeName}. ${request.emailQueued
+        ? `A receipt is being emailed to ${request.employeeName}.`
+        : 'No receipt email could be sent; inform the employee directly.'}`)
+      resetOtp()
+      goTo('done')
+      onReturned()
+    } catch (reasonError) {
+      setError(reasonError instanceof Error ? reasonError.message : 'Unable to record this return.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  function startOver() {
+    setEmployeeSearch('')
+    setEmployeeKey('')
+    setIssuanceId('')
+    setLines({})
+    setResult('')
+    resetOtp()
+    goTo('employee')
+  }
+
+  const fieldClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none transition placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50'
+  const labelClass = 'mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500'
+  const choiceClass = 'group flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-left transition hover:border-blue-300 hover:bg-blue-50/40 focus-visible:border-blue-400 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100'
+  const secondaryButton = 'rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50'
+  const primaryButton = 'rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50'
+
+  if (!options.length && step !== 'done') {
+    return (
+      <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-xs font-semibold text-slate-500">
+        No reusable bulk stock is out with employees right now.
+      </p>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ol className="flex min-w-0 flex-1 items-center gap-2" aria-label="Bulk return steps">
+          {bulkSteps.map((entry, index) => {
+            const isDone = index < stepIndex
+            const isCurrent = index === stepIndex
+            return (
+              <li key={entry.key} className="flex flex-1 items-center gap-2 last:flex-none" aria-current={isCurrent ? 'step' : undefined}>
+                <button
+                  type="button"
+                  disabled={!isDone || step === 'done' || isSubmitting}
+                  onClick={() => goTo(entry.key)}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg disabled:cursor-default"
+                >
+                  <span className={`grid h-6 w-6 place-items-center rounded-full text-[0.62rem] font-black ${isDone ? 'bg-emerald-500 text-white' : isCurrent ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                    {isDone ? (
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="m5 12 5 5 9-10" /></svg>
+                    ) : index + 1}
+                  </span>
+                  <span className={`hidden text-[0.68rem] font-extrabold sm:inline ${isCurrent ? 'text-slate-900' : isDone ? 'text-slate-600' : 'text-slate-400'}`}>{entry.label}</span>
+                </button>
+                {index < bulkSteps.length - 1 && <span aria-hidden="true" className={`h-px flex-1 ${isDone ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
+              </li>
+            )
+          })}
+        </ol>
+        {step !== 'employee' && step !== 'done' && (
+          <button type="button" onClick={startOver} disabled={isSubmitting} className="text-[0.68rem] font-bold text-slate-500 transition hover:text-blue-700 disabled:opacity-50">
+            Start over
+          </button>
+        )}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <h3 ref={headingRef} tabIndex={-1} className="mr-auto text-xs font-black text-slate-900 outline-none">
+          {step === 'done' ? 'Return recorded' : bulkSteps[stepIndex].prompt}
+        </h3>
+        {employee && step !== 'employee' && step !== 'done' && (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[0.65rem] font-bold text-slate-700">
+            <span className="grid h-4 w-4 place-items-center rounded-full bg-blue-600 text-[0.45rem] font-black text-white">{initialsOf(employee.name)}</span>
+            {employee.name}
+          </span>
+        )}
+        {selected && (step === 'details' || step === 'confirm') && (
+          <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[0.65rem] font-bold text-blue-700">
+            {selected.itemName} · {selected.quantity} {selected.unitOfMeasure} out · issued {selected.conditionAtIssue}
+          </span>
+        )}
+      </div>
+
+      {error && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
+
+      {step === 'employee' && (
+        <div className="mt-3">
+          <label className="relative block">
+            <span className="sr-only">Search employees</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+            <input
+              type="search"
+              value={employeeSearch}
+              onChange={(event) => setEmployeeSearch(event.target.value)}
+              placeholder={`Search ${employeeGroups.length} employee${employeeGroups.length === 1 ? '' : 's'} by name or code`}
+              className={`${fieldClass} h-11 pl-10`}
+            />
+          </label>
+          <ul className="mt-3 grid max-h-80 gap-2 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
+            {visibleEmployees.map((group) => {
+              const unitsOut = group.items.reduce((sum, item) => sum + item.quantity, 0)
+              return (
+                <li key={group.key}>
+                  <button type="button" onClick={() => chooseEmployee(group.key)} className={choiceClass}>
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-50 text-[0.65rem] font-black text-blue-700">{initialsOf(group.name)}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-bold text-slate-900">{group.name}</span>
+                      <span className="block truncate text-[0.65rem] text-slate-500">
+                        {group.code || 'No employee code'} · {group.items.length} item{group.items.length === 1 ? '' : 's'} · {unitsOut} out
+                      </span>
+                    </span>
+                    {group.items.some((item) => item.isOverdue) && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[0.58rem] font-extrabold text-rose-700">Overdue</span>}
+                    <ChevronRight />
+                  </button>
+                </li>
+              )
+            })}
+            {!visibleEmployees.length && (
+              <li className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-xs font-semibold text-slate-400 sm:col-span-2 xl:col-span-3">
+                No employee matches “{employeeSearch.trim()}”.
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {step === 'item' && employee && (
+        <>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {employee.items.map((option) => (
+              <li key={option.id}>
+                <button type="button" onClick={() => chooseItem(option)} className={choiceClass}>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-xs font-bold text-slate-900">{option.itemName}</span>
+                      {option.isOverdue && <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[0.58rem] font-extrabold text-rose-700">Overdue</span>}
+                    </span>
+                    <span className="block truncate text-[0.65rem] text-slate-500">
+                      {option.itemCode} · issued {option.conditionAtIssue}{option.dueAt ? ` · due ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date(option.dueAt))}` : ''}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="block text-sm font-black text-slate-900">{option.quantity}</span>
+                    <span className="block text-[0.55rem] font-extrabold uppercase text-slate-400">{option.unitOfMeasure} out</span>
+                  </span>
+                  <ChevronRight />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4">
+            <button type="button" onClick={() => goTo('employee')} className={secondaryButton}>Back</button>
+          </div>
+        </>
+      )}
+
+      {step === 'details' && selected && (
+        <form onSubmit={handleDetailsSubmit} className="mt-3">
+          <div className="grid gap-3 lg:grid-cols-2">
+            {bulkConditionGroups.map((group) => (
+              <fieldset key={group.title} className="rounded-xl border border-slate-200 p-3">
+                <legend className="sr-only">{group.title}</legend>
+                <p className="flex items-center gap-2 text-[0.68rem] font-extrabold text-slate-800">
+                  <span aria-hidden="true" className={`h-2 w-2 rounded-full ${group.dot}`} />
+                  {group.title}
+                  <span className="truncate font-medium text-slate-400">{group.hint}</span>
+                </p>
+                <div className="mt-2 space-y-1.5">
+                  {group.conditions.map((condition) => {
+                    const value = Number(lines[condition] || 0)
+                    return (
+                      <div key={condition} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 py-1.5 pl-3 pr-1.5">
+                        <span className="text-xs font-semibold text-slate-700">{condition}</span>
+                        <span className="flex shrink-0 items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                          <button type="button" onClick={() => setLine(condition, value > 1 ? String(value - 1) : '')} disabled={value <= 0} aria-label={`One less ${condition}`} className="grid h-8 w-8 place-items-center text-sm font-black text-slate-500 hover:bg-slate-50 disabled:text-slate-200">−</button>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min="0"
+                            max={outstanding}
+                            step="1"
+                            value={lines[condition] || ''}
+                            onChange={(event) => setLine(condition, event.target.value)}
+                            placeholder="0"
+                            aria-label={`Units returned in ${condition} condition`}
+                            className="h-8 w-10 border-x border-slate-200 text-center text-xs font-black text-slate-900 outline-none [appearance:textfield] focus:bg-blue-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          />
+                          <button type="button" onClick={() => setLine(condition, String(value + 1))} disabled={total >= outstanding} aria-label={`One more ${condition}`} className="grid h-8 w-8 place-items-center text-sm font-black text-slate-500 hover:bg-slate-50 disabled:text-slate-200">+</button>
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </fieldset>
+            ))}
+          </div>
+
+          <div className="mt-3 rounded-xl border border-slate-200 px-3.5 py-3" aria-live="polite">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="font-bold text-slate-700">Accounted for</span>
+              <span className={`font-black ${total > outstanding ? 'text-rose-700' : 'text-slate-900'}`}>{total} of {outstanding} {selected.unitOfMeasure}</span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+              <div className={`h-full rounded-full transition-all ${total > outstanding ? 'bg-rose-500' : total === outstanding ? 'bg-emerald-500' : 'bg-blue-600'}`} style={{ width: `${Math.min(100, outstanding ? (total / outstanding) * 100 : 0)}%` }} />
+            </div>
+            <p className={`mt-1.5 text-[0.65rem] font-semibold ${total > outstanding || total < 1 ? 'text-rose-700' : 'text-slate-500'}`}>
+              {total > outstanding
+                ? `That is ${total - outstanding} more than the employee has.`
+                : total < 1
+                  ? 'Enter at least one unit.'
+                  : total < outstanding
+                    ? `${outstanding - total} ${selected.unitOfMeasure} will stay with the employee.`
+                    : 'Every unit is accounted for.'}
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className={labelClass}>Reason for return</span>
+              <select value={reason} onChange={(event) => setReason(event.target.value)} required className={`${fieldClass} h-11`}>
+                <option value="" disabled>Select a reason</option>
+                {returnReasons.map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className={labelClass}>Brought in by <span className="normal-case tracking-normal text-slate-400">(if not the borrower)</span></span>
+              <input type="text" maxLength={200} value={broughtBy} onChange={(event) => setBroughtBy(event.target.value)} placeholder="Name of the person at the counter" className={`${fieldClass} h-11`} />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className={labelClass}>Notes {isNoteRequired ? <span className="text-rose-600">(required)</span> : <span className="normal-case tracking-normal text-slate-400">(optional)</span>}</span>
+              {/* 900 leaves room for the reason prefix within the backend's 1000-character limit. */}
+              <textarea
+                maxLength={900}
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                required={isNoteRequired}
+                placeholder={isDamaged ? 'Describe the damage' : 'Anything worth noting about this return'}
+                className={`${fieldClass} min-h-16 py-2.5 font-medium`}
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex justify-between gap-2">
+            <button type="button" onClick={() => goTo('item')} className={secondaryButton}>Back</button>
+            <button type="submit" className={primaryButton}>Continue</button>
+          </div>
+        </form>
+      )}
+
+      {step === 'confirm' && selected && (
+        <form onSubmit={(event) => void handleConfirmSubmit(event)} className="mt-3">
+          <dl className="grid gap-2 sm:grid-cols-2">
+            {([
+              ['Employee', `${selected.employeeName}${selected.employeeCode ? ` (${selected.employeeCode})` : ''}`],
+              ['Item', `${selected.itemName} · ${selected.itemCode}`],
+              ['Returning', `${breakdown} ${selected.unitOfMeasure}${total < outstanding ? ` · ${outstanding - total} stay with the employee` : ''}`],
+              ['Reason', note.trim() ? `${reason} — ${note.trim()}` : reason],
+              ...(broughtBy.trim() ? [['Brought in by', broughtBy.trim()]] : []),
+            ] as [string, string][]).map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                <dt className="text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt>
+                <dd className="mt-1 text-xs font-bold text-slate-800">{value}</dd>
+              </div>
+            ))}
+          </dl>
+          {isDamaged && (
+            <p role="note" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[0.68rem] font-semibold leading-relaxed text-amber-900">
+              Damaged units go to To Be Repaired and are not issued again until fixed.
+            </p>
+          )}
+
+          <section aria-labelledby="bulk-otp-title" className="mt-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4">
+            <h4 id="bulk-otp-title" className="text-xs font-extrabold text-blue-900">Employee confirmation code</h4>
+            {otpChallenge ? (
+              <>
+                <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-600">
+                  Sent to <strong>{otpChallenge.sentTo}</strong>. Ask the employee to read it out; it expires at {new Intl.DateTimeFormat('en-PH', { timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(otpChallenge.expiresAt))}.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoFocus
+                    pattern="\d{6}"
+                    maxLength={6}
+                    required
+                    value={otpCode}
+                    onChange={(event) => setOtpCode(event.target.value.replace(/\D/g, ''))}
+                    disabled={isSubmitting}
+                    placeholder="6-digit code"
+                    aria-label="Employee confirmation code"
+                    className="h-11 w-44 rounded-xl border border-blue-200 bg-white px-3 text-center font-mono text-base font-black tracking-[0.35em] text-slate-900 outline-none placeholder:font-sans placeholder:text-xs placeholder:font-semibold placeholder:tracking-normal placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                  />
+                  <button type="button" onClick={() => void sendCode()} disabled={isSendingOtp || isSubmitting} className="text-[0.68rem] font-extrabold text-blue-700 hover:underline disabled:opacity-50">
+                    {isSendingOtp ? 'Sending…' : 'Send a new code'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-600">
+                  These exact details and a 6-digit code are emailed to the employee. They give you the code only if everything above is correct.
+                </p>
+                <button type="button" onClick={() => void sendCode()} disabled={isSendingOtp} className={`${primaryButton} mt-3`}>
+                  {isSendingOtp ? 'Sending code…' : 'Send code to employee'}
+                </button>
+              </>
+            )}
+          </section>
+
+          <div className="mt-4 flex justify-between gap-2">
+            <button type="button" onClick={() => goTo('details')} disabled={isSubmitting} className={secondaryButton}>Back</button>
+            <button type="submit" disabled={!otpChallenge || otpCode.length !== 6 || isSubmitting} className={primaryButton}>
+              {isSubmitting ? 'Recording…' : 'Record return'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {step === 'done' && (
+        <div role="status" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <p className="flex items-start gap-2 text-xs font-semibold leading-relaxed text-emerald-900">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600"><path d="m5 12 5 5 9-10" /></svg>
+            {result}
+          </p>
+          <button type="button" onClick={startOver} className={primaryButton}>Return another item</button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function ReturnItems() {
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedDeptFilter, setSelectedDeptFilter] = useState('all')
-  const [selectedReportDate, setSelectedReportDate] = useState('')
-  const [departmentOptions, setDepartmentOptions] = useState(initialDepartments)
-  const [returnedItems, setReturnedItems] = useState<ReturnedItemRecord[]>([])
-  const [mainIssuancesCount, setMainIssuancesCount] = useState(0)
-  const [isLoadingReturns, setIsLoadingReturns] = useState(true)
   const [returnLoadError, setReturnLoadError] = useState('')
-  const [selectedItem, setSelectedItem] = useState<ReturnedItemRecord | null>(null)
   const [returnsRefreshToken, setReturnsRefreshToken] = useState(0)
   const [scannerCode, setScannerCode] = useState('')
   const scannerInputRef = useRef<HTMLInputElement>(null)
   const scannerLookupTimerRef = useRef<number | null>(null)
   const barcodeLookupInFlightRef = useRef(false)
+  const entryTimingRef = useRef({ startedAt: 0, lastAt: 0, multiCharInsert: false })
+  const [entryMethod, setEntryMethod] = useState<'scan' | 'typed'>('scan')
+  const [staffName, setStaffName] = useState('')
+  const [hasPhysicalCheck, setHasPhysicalCheck] = useState(false)
+  const [otpChallenge, setOtpChallenge] = useState<TaggedReturnOtpChallenge | null>(null)
+  const [otpCode, setOtpCode] = useState('')
+  const otpInputRef = useRef<HTMLInputElement>(null)
+  const [isSendingOtp, setIsSendingOtp] = useState(false)
   const [hasScannerFocus, setHasScannerFocus] = useState(false)
   const [scannedTag, setScannedTag] = useState<AssetTagInspectionRecord | null>(null)
   const [isLookingUpBarcode, setIsLookingUpBarcode] = useState(false)
   const [isConfirmingReturn, setIsConfirmingReturn] = useState(false)
   const [barcodeError, setBarcodeError] = useState('')
-  const [returnMessage, setReturnMessage] = useState('')
+  const [returnMessage, setReturnMessage] = useState<ReturnScanNotice | null>(null)
   const [returnCondition, setReturnCondition] = useState('Good')
+  const [returnReason, setReturnReason] = useState('')
   const [returnNote, setReturnNote] = useState('')
+  const [returnMode, setReturnMode] = useState<'scan' | 'bulk'>('scan')
   const [bulkReturnOptions, setBulkReturnOptions] = useState<BulkReturnOption[]>([])
-  const [selectedBulkReturnId, setSelectedBulkReturnId] = useState('')
-  const [bulkReturnQuantity, setBulkReturnQuantity] = useState('1')
-  const [bulkReturnCondition, setBulkReturnCondition] = useState('Good')
-  const [bulkReturnReason, setBulkReturnReason] = useState('Bulk stock return processed by GSO.')
-  const [isSubmittingBulkReturn, setIsSubmittingBulkReturn] = useState(false)
-  const [bulkReturnError, setBulkReturnError] = useState('')
-  const [bulkReturnMessage, setBulkReturnMessage] = useState('')
+  const [returnedByName, setReturnedByName] = useState('')
+  const [serialLast4, setSerialLast4] = useState('')
 
   useEffect(() => () => {
     if (scannerLookupTimerRef.current !== null) {
@@ -158,133 +591,39 @@ export default function ReturnItems() {
   }, [])
 
   useEffect(() => {
+    let active = true
+    getCurrentUser()
+      .then((user) => { if (active) setStaffName(user.name || user.email) })
+      .catch(() => { /* The popup falls back to a generic label. */ })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
     let isMounted = true
 
     const loadReturnedItems = async () => {
-      setIsLoadingReturns(true)
       setReturnLoadError('')
 
       try {
-        const [{ employees }, inventoryItems, departmentResponse] = await Promise.all([
-          listEmployees(),
-          listInventoryItems(),
-          listDepartments().catch(() => null),
-        ])
-        const employeeHistories = await Promise.allSettled(
-          employees.map((employee) => listEmployeeIssuances(employee.id)),
-        )
+        const holdingsResponse = await listHoldings()
         if (!isMounted) return
-        const inventoryItemsByCode = new Map(inventoryItems.map((item) => [item.itemCode.toLowerCase(), item]))
-        const quantityReturnOptions: BulkReturnOption[] = employeeHistories.flatMap((history, index) => {
-          if (history.status !== 'fulfilled') return []
-          const employee = employees[index]
-          if (!employee) return []
-          const pendingReturnCodes = new Set(history.value.history
-            .filter((entry) => entry.event === 'Return Pending Approval')
-            .map((entry) => entry.code.toLowerCase()))
-          return history.value.assignedItems.flatMap((assignedItem) => {
-            if (pendingReturnCodes.has(assignedItem.code.toLowerCase())) return []
-            const inventoryItem = inventoryItemsByCode.get(assignedItem.code.toLowerCase())
-            if (!inventoryItem || inventoryItem.trackingMode !== 'quantity' || inventoryItem.issueBehavior !== 'returnable') return []
-            return [{
-              id: assignedItem.id,
-              employeeCode: employee.id,
-              employeeName: `${employee.firstName} ${employee.lastName}`,
-              itemCode: assignedItem.code,
-              itemName: assignedItem.name,
-              quantity: assignedItem.quantity,
-              unitOfMeasure: assignedItem.unitOfMeasure,
-            }]
-          })
-        })
+        const quantityReturnOptions: BulkReturnOption[] = holdingsResponse.items
+          .filter((entry) => entry.source === 'GSO issuance' && entry.trackingMode === 'quantity')
+          .map((entry) => ({
+            id: entry.issuanceId,
+            employeeCode: entry.employeeCode || '',
+            employeeName: entry.employeeName,
+            itemCode: entry.itemCode,
+            itemName: entry.itemName,
+            quantity: entry.quantity,
+            unitOfMeasure: entry.unitOfMeasure,
+            conditionAtIssue: entry.conditionAtIssue || '—',
+            isOverdue: entry.isOverdue,
+            dueAt: entry.dueAt,
+          }))
         setBulkReturnOptions(quantityReturnOptions)
-        setSelectedBulkReturnId((current) => quantityReturnOptions.some((option) => option.id === current)
-          ? current
-          : quantityReturnOptions[0]?.id || '')
-        const confirmedIssuancesCount = inventoryItems.reduce(
-          (count, item) => count + (item.changeHistory || []).filter((change) => change.action === 'issued').length,
-          0,
-        )
-        const pendingOrRejectedCount = employeeHistories.reduce((count, result) => count + (
-          result.status === 'fulfilled'
-            ? result.value.history.filter((entry) => entry.event === 'Pending Approval' || entry.event === 'Rejected').length
-            : 0
-        ), 0)
-        setMainIssuancesCount(confirmedIssuancesCount + pendingOrRejectedCount)
-
-        if (departmentResponse?.departments.length) {
-          setDepartmentOptions(departmentResponse.departments.map((department) => department.name))
-        }
-
-        const employeesByCode = new Map(employees.map((employee) => [employee.id.toLowerCase(), employee]))
-        const employeeIndexesByCode = new Map(employees.map((employee, index) => [employee.id.toLowerCase(), index]))
-        const returnedRecords = inventoryItems.flatMap((item) =>
-          (item.changeHistory || [])
-            .filter((change) => change.action === 'returned')
-            .map((change) => {
-              const employeeIdentity = change.reason.match(/Returned by\s+(.+?)\s+\(([^)]+)\)/i)
-              const employeeCode = employeeIdentity?.[2] || ''
-              const employee = employeesByCode.get(employeeCode.toLowerCase())
-              const employeeIndex = employeeIndexesByCode.get(employeeCode.toLowerCase())
-              const historyResult = employeeIndex === undefined ? undefined : employeeHistories[employeeIndex]
-              const returnedAt = formatReturnedDateTime(change.changedAt)
-              const employeeHistory = historyResult?.status === 'fulfilled'
-                ? historyResult.value.history
-                : []
-              const tagCode = typeof change.newValues.tagCode === 'string' ? change.newValues.tagCode : null
-              const matchingReturn = (tagCode
-                ? employeeHistory.find((entry) => entry.event === 'Returned' && entry.assetTagCode === tagCode)
-                : undefined) || employeeHistory.find((entry) =>
-                  entry.event === 'Returned'
-                  && entry.code.toLowerCase() === item.itemCode.toLowerCase()
-                  && entry.date === returnedAt.date,
-                ) || employeeHistory.find((entry) =>
-                  entry.event === 'Returned' && entry.code.toLowerCase() === item.itemCode.toLowerCase(),
-                )
-              const condition = typeof change.newValues.condition === 'string'
-                ? change.newValues.condition
-                : item.condition
-              const inventoryStatus = item.status || 'Returned'
-              const repairConditions = ['needs repair', 'under maintenance', 'unserviceable']
-              const status = tagCode
-                ? repairConditions.includes(condition.toLowerCase()) ? 'To Be Repaired' : 'In Storage'
-                : inventoryStatus.toLowerCase() === 'available' ? 'In Storage' : inventoryStatus
-
-              return {
-                timestamp: new Date(change.changedAt).getTime() || 0,
-                record: {
-                  code: item.itemCode,
-                  tagCode,
-                  asset: item.description,
-                  category: item.category,
-                  returnedBy: employee
-                    ? `${employee.firstName} ${employee.lastName}`
-                    : employeeIdentity?.[1] || 'Employee',
-                  department: employee?.department || '—',
-                  returnedDate: `${returnedAt.date} · ${returnedAt.time}`,
-                  returnCondition: returnConditionFromNote(matchingReturn?.note || '', condition),
-                  reason: returnReasonFromNote(matchingReturn?.note || ''),
-                  issuedTo: inventoryStatus.toLowerCase() === 'issued' ? item.assignedTo || '—' : '—',
-                  status,
-                  statusTone: returnedStatusTone(status),
-                },
-              }
-            }),
-        )
-          .sort((left, right) => right.timestamp - left.timestamp)
-
-        setReturnedItems(returnedRecords.map(({ record }) => record))
-        if (employeeHistories.some((result) => result.status === 'rejected')) {
-          setReturnLoadError('Some employee return records could not be loaded. Refresh the page to try again.')
-        }
       } catch (error) {
-        if (isMounted) {
-          setReturnedItems([])
-          setMainIssuancesCount(0)
-          setReturnLoadError(error instanceof Error ? error.message : 'Unable to load returned item records.')
-        }
-      } finally {
-        if (isMounted) setIsLoadingReturns(false)
+        if (isMounted) setReturnLoadError(error instanceof Error ? error.message : 'Unable to load the items still with employees.')
       }
     }
 
@@ -309,24 +648,54 @@ export default function ReturnItems() {
       scannerLookupTimerRef.current = null
     }
 
+    const code = value.trim()
+    const { startedAt, lastAt, multiCharInsert } = entryTimingRef.current
+    const msPerChar = (lastAt - startedAt) / Math.max(code.length - 1, 1)
+    const method = !multiCharInsert && startedAt > 0 && code.length > 1 && msPerChar < scannerMaxMsPerChar ? 'scan' : 'typed'
+
     barcodeLookupInFlightRef.current = true
-    setScannerCode('')
     setIsLookingUpBarcode(true)
     setBarcodeError('')
-    setReturnMessage('')
+    setReturnMessage(null)
     let foundTag = false
     try {
       const tag = await getAssetTagForInspection(tagCode)
       if (tag.custodyStatus !== 'Issued' || !tag.employeeCode) {
-        throw new Error(`${tag.tagCode} is not currently assigned to an employee.`)
+        setScannerCode('')
+        setScannedTag(null)
+        const latestReturn = tag.borrowerHistory?.find((borrower) => borrower.status === 'Returned' && borrower.returnedAt)
+        if (latestReturn || tag.lifecycleStatus === 'Disposed') {
+          setReturnMessage({
+            kind: 'alreadyReturned',
+            message: latestReturn
+              ? `${tag.tagCode} was already returned on ${formatBorrowerHistoryDate(latestReturn.returnedAt)}${latestReturn.returnCondition ? ` in ${latestReturn.returnCondition} condition` : ''}.`
+              : `${tag.tagCode} was already recorded as lost or written off and is not available to return again.`,
+            employeeLinks: latestReturn
+              ? [{ employeeCode: latestReturn.employeeCode, employeeName: latestReturn.employeeName, label: 'View return history' }]
+              : [],
+          })
+          setBarcodeError('')
+        } else {
+          setBarcodeError(`${tag.tagCode} is not currently assigned to an employee.`)
+        }
+        return
       }
       setScannedTag(tag)
       foundTag = true
+      setEntryMethod(method)
       setReturnCondition(['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(tag.condition) ? tag.condition : 'Good')
+      setReturnReason('')
       setReturnNote('')
+      setHasPhysicalCheck(false)
+      setOtpChallenge(null)
+      setOtpCode('')
+      setReturnedByName('')
+      setSerialLast4('')
     } catch (error) {
       setScannedTag(null)
-      setBarcodeError(error instanceof Error ? error.message : 'Could not find that item barcode.')
+      // Clear the box so the next scan starts fresh; the error keeps the code that failed.
+      setScannerCode('')
+      setBarcodeError(`${tagCode}: ${error instanceof Error ? error.message : 'Could not find that item barcode.'}`)
     } finally {
       barcodeLookupInFlightRef.current = false
       setIsLookingUpBarcode(false)
@@ -335,6 +704,14 @@ export default function ReturnItems() {
   }
 
   function handleScannerInputChange(value: string) {
+    const now = performance.now()
+    if (value.length <= 1) {
+      entryTimingRef.current = { startedAt: now, lastAt: now, multiCharInsert: false }
+    } else {
+      // A paste, autofill, or edit changes more than one character at a time; a scanner adds exactly one.
+      if (value.length - scannerCode.length !== 1) entryTimingRef.current.multiCharInsert = true
+      entryTimingRef.current.lastAt = now
+    }
     setScannerCode(value)
     if (scannerLookupTimerRef.current !== null) {
       window.clearTimeout(scannerLookupTimerRef.current)
@@ -357,68 +734,66 @@ export default function ReturnItems() {
     if (isConfirmingReturn) return
     setScannedTag(null)
     setScannerCode('')
+    setReturnReason('')
     setReturnNote('')
+    setHasPhysicalCheck(false)
+    setOtpChallenge(null)
+    setOtpCode('')
+    setReturnedByName('')
+    setSerialLast4('')
     setBarcodeError('')
     focusScannerInput()
   }
 
-  async function handleBulkReturnSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const selectedReturn = bulkReturnOptions.find((option) => option.id === selectedBulkReturnId)
-    const quantity = Number(bulkReturnQuantity)
-    if (!selectedReturn) {
-      setBulkReturnError('Select an active bulk-stock issuance first.')
-      return
-    }
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > selectedReturn.quantity) {
-      setBulkReturnError(`Enter a whole quantity from 1 to ${selectedReturn.quantity} ${selectedReturn.unitOfMeasure}.`)
-      return
-    }
-    if (!bulkReturnReason.trim()) {
-      setBulkReturnError('Enter the return reason or inspection notes.')
-      return
-    }
-
-    setIsSubmittingBulkReturn(true)
-    setBulkReturnError('')
-    setBulkReturnMessage('')
+  async function handleSendReturnOtp() {
+    if (!scannedTag) return
+    setIsSendingOtp(true)
+    setBarcodeError('')
     try {
-      const request = await createEmployeeReturn(
-        selectedReturn.employeeCode,
-        selectedReturn.itemCode,
-        bulkReturnCondition,
-        bulkReturnReason.trim(),
-        selectedReturn.id,
-        quantity,
-      )
-      setBulkReturnMessage(request.emailSent
-        ? `GSO recorded the return of ${quantity} ${selectedReturn.unitOfMeasure} of ${selectedReturn.itemName}. A confirmation email was sent to ${selectedReturn.employeeName}.`
-        : `GSO recorded the return of ${quantity} ${selectedReturn.unitOfMeasure} of ${selectedReturn.itemName}, but the confirmation email could not be sent.`)
-      setBulkReturnQuantity('1')
-      setBulkReturnReason('')
-      setReturnsRefreshToken((current) => current + 1)
+      setOtpChallenge(await sendTaggedReturnOtp(scannedTag.tagCode))
+      setOtpCode('')
+      window.setTimeout(() => otpInputRef.current?.focus(), 50)
     } catch (error) {
-      setBulkReturnError(error instanceof Error ? error.message : 'Unable to create this quantity return request.')
+      setBarcodeError(error instanceof Error ? error.message : 'Could not send the code to the employee.')
     } finally {
-      setIsSubmittingBulkReturn(false)
+      setIsSendingOtp(false)
     }
   }
 
   async function handleReturnConfirmation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!scannedTag) return
+    if (!scannedTag || !otpChallenge) return
 
     setIsConfirmingReturn(true)
     setBarcodeError('')
     try {
+      const note = returnNote.trim()
       const result = await confirmTaggedAssetReturn(scannedTag.tagCode, {
         condition: returnCondition,
-        reason: returnNote,
+        reason: note ? `${returnReason} — ${note}` : returnReason,
+        entryMethod,
+        returnedByName: returnedByName.trim(),
+        ...(needsSerialCheck ? { serialLast4 } : {}),
+        otpChallengeId: otpChallenge.challengeId,
+        otp: otpCode,
       })
       setScannedTag(null)
       setScannerCode('')
+      setReturnReason('')
       setReturnNote('')
-      setReturnMessage(`${result.tagCode} was returned for ${result.employeeName} and routed to ${result.destination}.`)
+      setHasPhysicalCheck(false)
+      setOtpChallenge(null)
+      setOtpCode('')
+      setReturnedByName('')
+      setSerialLast4('')
+      const completedMessage = `${result.tagCode} was returned for ${result.employeeName} and routed to ${result.destination}. This label no longer works; peel it off the unit. A new label prints when the unit is issued again.`
+      setReturnMessage({
+        kind: 'success',
+        message: `${completedMessage} ${result.emailQueued ? `A receipt is being emailed to ${result.employeeName}.` : 'No receipt email could be sent; inform the employee directly.'}`,
+        employeeLinks: [
+          { employeeCode: result.employeeCode, employeeName: result.employeeName, label: 'View return history' },
+        ],
+      })
       setReturnsRefreshToken((current) => current + 1)
       focusScannerInput(50)
     } catch (error) {
@@ -428,259 +803,31 @@ export default function ReturnItems() {
     }
   }
 
-  const filteredItems = returnedItems.filter((item) => {
-    const query = searchQuery.toLowerCase()
-    const matchesSearch = item.asset.toLowerCase().includes(query)
-      || item.code.toLowerCase().includes(query)
-      || (item.tagCode?.toLowerCase().includes(query) ?? false)
-      || item.returnedBy.toLowerCase().includes(query)
-      || item.issuedTo.toLowerCase().includes(query)
-    const matchesDepartment = selectedDeptFilter === 'all' || item.department === selectedDeptFilter
-    const matchesDate = !selectedReportDate || returnedDateKey(item.returnedDate) === selectedReportDate
-    return matchesSearch && matchesDepartment && matchesDate
-  })
-
-  const reportFilterDescription = [
-    selectedReportDate ? `Date: ${selectedReportDate}` : '',
-    selectedDeptFilter !== 'all' ? `Department: ${selectedDeptFilter}` : '',
-    searchQuery.trim() ? `Search: ${searchQuery.trim()}` : '',
-  ].filter(Boolean).join(' · ') || 'All returned items'
-  const reportFilterFilename = selectedReportDate ? `Date_${selectedReportDate}_` : ''
-
-  const handleGenerateCSV = () => {
-    if (filteredItems.length === 0) {
-      alert('There is no data to export to CSV.')
-      return
-    }
-    const headers = Object.keys(filteredItems[0]).join(',')
-    const rows = filteredItems.map((item) =>
-      Object.values(item).map((value) => `"${value}"`).join(','),
-    )
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers, ...rows].join('\n')
-    const link = document.createElement('a')
-    link.href = encodeURI(csvContent)
-    link.download = `Returned_Items_Report_${reportFilterFilename}${new Date().toISOString().slice(0, 10)}.csv`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  const handleGenerateExcel = () => {
-    if (filteredItems.length === 0) {
-      alert('There is no data to export to Excel.')
-      return
-    }
-
-    const inStorageCount = filteredItems.filter((item) => ['available', 'in storage'].includes(item.status.toLowerCase())).length
-    const issuedCount = filteredItems.filter((item) => item.status.toLowerCase() === 'issued').length
-    const otherStatusCount = filteredItems.length - inStorageCount - issuedCount
-    const generatedAt = new Intl.DateTimeFormat('en-PH', {
-      dateStyle: 'long',
-      timeStyle: 'short',
-      timeZone: 'Asia/Manila',
-    }).format(new Date())
-
-    const reportRows = filteredItems.map((item, index) => {
-      const condition = item.returnCondition.toLowerCase()
-      const conditionColor = condition === 'good'
-        ? '#047857'
-        : condition === 'new'
-          ? '#0369a1'
-          : condition === 'fair' || condition === 'under maintenance'
-            ? '#b45309'
-            : '#be123c'
-      const statusStyle = ['available', 'in storage'].includes(item.status.toLowerCase())
-        ? 'background:#eff6ff;color:#1d4ed8;'
-        : item.status.toLowerCase() === 'issued'
-          ? 'background:#fffbeb;color:#b45309;'
-          : 'background:#f1f5f9;color:#475569;'
-      const rowBackground = index % 2 === 0 ? '#ffffff' : '#f1f5f9'
-
-      return `<tr style="background:${rowBackground};">
-        <td style="width:250px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
-          <strong style="color:#0f172a;">${escapeReportHTML(item.asset)}</strong><br>
-          <span style="font-size:10pt;color:#475569;">${escapeReportHTML(item.code)}</span><br>
-          <span style="font-size:9pt;color:#64748b;">${escapeReportHTML(item.category)}</span>
-        </td>
-        <td style="width:210px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
-          <strong style="color:#0f172a;">${escapeReportHTML(item.returnedBy)}</strong><br>
-          <span style="font-size:10pt;color:#475569;">${escapeReportHTML(item.department)}</span>
-        </td>
-        <td style="width:150px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.returnedDate)}</td>
-        <td style="width:150px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;color:${conditionColor};font-weight:bold;">${escapeReportHTML(item.returnCondition)}</td>
-        <td style="width:360px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;white-space:normal;">${escapeReportHTML(item.reason || '—').replace(/\r?\n/g, '<br>')}</td>
-        <td style="width:190px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.issuedTo)}</td>
-        <td style="width:150px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
-          <span style="${statusStyle}font-weight:bold;padding:4px 7px;">${escapeReportHTML(item.status)}</span>
-        </td>
-      </tr>`
-    }).join('')
-
-    const workbookHTML = `<!DOCTYPE html>
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-        <head>
-          <meta charset="utf-8">
-          <meta name="ProgId" content="Excel.Sheet">
-          <title>Returned Items Report</title>
-          <style>
-            body { font-family: Calibri, Arial, sans-serif; color: #1e293b; }
-            table { border-collapse: collapse; }
-            .report-table { table-layout: fixed; width: 1460px; }
-            .report-table th { padding: 10px; background: #09244a; color: #ffffff; border: 1px solid #09244a; text-align: left; }
-            .summary td { padding: 10px 14px; border: 1px solid #dbe3ef; }
-            .report-table td { mso-number-format: "\\@"; }
-          </style>
-        </head>
-        <body>
-          <table style="width:1460px;margin-bottom:14px;border-collapse:collapse;">
-            <tr><td colspan="7" style="padding:18px 20px;background:#09244a;color:#ffffff;">
-              <div style="font-size:10pt;font-weight:bold;letter-spacing:1px;color:#bfdbfe;">ASSET CUSTODY &amp; TRACKING</div>
-              <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">Returned Items Report</h1>
-              <div style="font-size:10pt;color:#dbeafe;">Generated ${escapeReportHTML(generatedAt)} · ${escapeReportHTML(reportFilterDescription)}</div>
-            </td></tr>
-          </table>
-          <table class="summary" style="width:1460px;margin-bottom:16px;border-collapse:collapse;">
-            <tr>
-              <td style="width:25%;background:#f8fafc;"><div style="font-size:9pt;color:#64748b;">TOTAL RECORDS</div><strong style="font-size:16pt;color:#09244a;">${filteredItems.length}</strong></td>
-              <td style="width:25%;background:#eff6ff;"><div style="font-size:9pt;color:#1d4ed8;">IN STORAGE</div><strong style="font-size:16pt;color:#1d4ed8;">${inStorageCount}</strong></td>
-              <td style="width:25%;background:#fffbeb;"><div style="font-size:9pt;color:#b45309;">ISSUED</div><strong style="font-size:16pt;color:#b45309;">${issuedCount}</strong></td>
-              <td style="width:25%;background:#f1f5f9;"><div style="font-size:9pt;color:#475569;">OTHER STATUS</div><strong style="font-size:16pt;color:#475569;">${otherStatusCount}</strong></td>
-            </tr>
-          </table>
-          <table class="report-table">
-            <colgroup>
-              <col style="width:250px;"><col style="width:210px;"><col style="width:150px;">
-              <col style="width:150px;"><col style="width:360px;"><col style="width:190px;"><col style="width:150px;">
-            </colgroup>
-            <thead><tr>
-              <th>Asset / Item</th><th>Returned By</th><th>Returned On</th>
-              <th>Condition Upon Return</th><th>Reason / Note</th><th>Currently Issued To</th><th>Current Status</th>
-            </tr></thead>
-            <tbody>${reportRows}</tbody>
-          </table>
-        </body>
-      </html>`
-
-    const workbookBlob = new Blob(['\uFEFF', workbookHTML], { type: 'application/vnd.ms-excel;charset=utf-8' })
-    const workbookUrl = URL.createObjectURL(workbookBlob)
-    const link = document.createElement('a')
-    link.href = workbookUrl
-    link.download = `Returned_Items_Styled_Report_${reportFilterFilename}${new Date().toISOString().slice(0, 10)}.xls`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.setTimeout(() => URL.revokeObjectURL(workbookUrl), 0)
-  }
-
-  const handleGenerateWord = () => {
-    if (filteredItems.length === 0) {
-      alert('There is no data to export to Word.')
-      return
-    }
-    const inStorageCount = filteredItems.filter((item) => ['available', 'in storage'].includes(item.status.toLowerCase())).length
-    const issuedCount = filteredItems.filter((item) => item.status.toLowerCase() === 'issued').length
-    const otherStatusCount = filteredItems.length - inStorageCount - issuedCount
-    const generatedAt = new Intl.DateTimeFormat('en-PH', {
-      dateStyle: 'long',
-      timeStyle: 'short',
-      timeZone: 'Asia/Manila',
-    }).format(new Date())
-    const rows = filteredItems.map((item, index) => {
-      const condition = item.returnCondition.toLowerCase()
-      const conditionColor = condition === 'good'
-        ? '#047857'
-        : condition === 'new'
-          ? '#0369a1'
-          : condition === 'fair' || condition === 'under maintenance'
-            ? '#b45309'
-            : '#be123c'
-      const statusColor = ['available', 'in storage'].includes(item.status.toLowerCase())
-        ? '#1d4ed8'
-        : item.status.toLowerCase() === 'issued'
-          ? '#b45309'
-          : '#475569'
-
-      return `<tr style="background:${index % 2 === 0 ? '#ffffff' : '#f8fafc'};page-break-inside:avoid;">
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
-          <strong style="color:#0f172a;">${escapeReportHTML(item.asset)}</strong><br>
-          <span style="font-size:9pt;color:#475569;">Code: ${escapeReportHTML(item.code)}</span><br>
-          <span style="font-size:9pt;color:#64748b;">${escapeReportHTML(item.category)}</span>
-        </td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
-          <strong style="color:#0f172a;">${escapeReportHTML(item.returnedBy)}</strong><br>
-          <span style="font-size:9pt;color:#475569;">${escapeReportHTML(item.department)}</span>
-        </td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.returnedDate)}</td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;white-space:nowrap;">
-          <span style="font-weight:bold;color:${conditionColor};">${escapeReportHTML(item.returnCondition)}</span>
-        </td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.reason || '—').replace(/\r?\n/g, '<br>')}</td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.issuedTo)}</td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;white-space:nowrap;">
-          <span style="font-weight:bold;color:${statusColor};">${escapeReportHTML(item.status)}</span>
-        </td>
-      </tr>`
-    }).join('')
-    const html = `<!DOCTYPE html>
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-        <head>
-          <meta charset="utf-8">
-          <title>Returned Items Report</title>
-          <style>
-            @page Section1 { size: 11in 8.5in; mso-page-orientation: landscape; margin: 0.45in; }
-            div.Section1 { page: Section1; }
-            body { font-family: Arial, sans-serif; color: #1e293b; font-size: 10pt; }
-            table { border-collapse: collapse; width: 100%; }
-            thead { display: table-header-group; }
-            tr { page-break-inside: avoid; }
-          </style>
-        </head>
-        <body>
-          <div class="Section1">
-            <table style="margin-bottom:18px;border-collapse:collapse;">
-              <tr><td style="padding:18px 20px;background:#09244a;color:#ffffff;">
-                <div style="font-size:9pt;font-weight:bold;letter-spacing:1.2px;color:#bfdbfe;">ASSET CUSTODY &amp; TRACKING</div>
-                <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">Returned Items Report</h1>
-                <div style="font-size:9pt;color:#dbeafe;">Generated ${escapeReportHTML(generatedAt)} · ${escapeReportHTML(reportFilterDescription)}</div>
-              </td></tr>
-            </table>
-            <table style="margin-bottom:16px;border-collapse:separate;border-spacing:8px 0;">
-              <tr>
-                <td style="width:25%;padding:10px 12px;border:1px solid #dbe3ef;background:#f8fafc;"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;">Records in this report</div><strong style="font-size:16pt;color:#09244a;">${filteredItems.length}</strong></td>
-                <td style="width:25%;padding:10px 12px;border:1px solid #bfdbfe;background:#eff6ff;"><div style="font-size:8pt;color:#1d4ed8;text-transform:uppercase;">In Storage</div><strong style="font-size:16pt;color:#1d4ed8;">${inStorageCount}</strong></td>
-                <td style="width:25%;padding:10px 12px;border:1px solid #fde68a;background:#fffbeb;"><div style="font-size:8pt;color:#b45309;text-transform:uppercase;">Issued</div><strong style="font-size:16pt;color:#b45309;">${issuedCount}</strong></td>
-                <td style="width:25%;padding:10px 12px;border:1px solid #dbe3ef;background:#f1f5f9;"><div style="font-size:8pt;color:#475569;text-transform:uppercase;">Other status</div><strong style="font-size:16pt;color:#475569;">${otherStatusCount}</strong></td>
-              </tr>
-            </table>
-            <table style="width:100%;border-collapse:collapse;font-size:9pt;">
-              <thead><tr style="background:#09244a;color:#ffffff;">
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Asset / Item</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Returned By</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Returned On</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Condition Upon Return</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Reason / Note</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Currently Issued To</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Current Status</th>
-              </tr></thead>
-              <tbody>${rows}</tbody>
-            </table>
-            <p style="margin-top:14px;font-size:8pt;color:#64748b;">This report contains the returned item records matching the filters selected in the Returned Items page.</p>
-          </div>
-        </body>
-      </html>`
-    const link = document.createElement('a')
-    link.href = `data:application/vnd.ms-word;charset=utf-8,${encodeURIComponent(html)}`
-    link.download = `Returned_Items_Report_${reportFilterFilename}${new Date().toISOString().slice(0, 10)}.doc`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  const exportHandlers = {
-    csv: handleGenerateCSV,
-    excel: handleGenerateExcel,
-    word: handleGenerateWord,
-  }
+  const currentAssignment = scannedTag?.borrowerHistory?.find((entry) => entry.status === 'Issued')
+  const previousBorrowers = scannedTag?.borrowerHistory?.filter((entry) => entry.status !== 'Issued') ?? []
+  const recordedConditionRank = conditionRank.indexOf(scannedTag?.condition ?? '')
+  const isConditionDowngrade = recordedConditionRank >= 0 && conditionRank.indexOf(returnCondition) > recordedConditionRank
+  const isRepairTag = repairConditionNames.includes(returnCondition)
+  // A unit with a serial on file is matched by the last characters read off the unit, not the screen.
+  const serialTailLength = Math.min(4, (scannedTag?.serialNumber ?? '').replace(/[^A-Za-z0-9]/g, '').length)
+  const needsSerialCheck = serialTailLength > 0
+  const isSerialEntered = !needsSerialCheck || serialLast4.length === serialTailLength
+  // A typed code or a condition downgrade needs a written explanation for the audit log.
+  const isNoteRequired = returnReason === 'Iba pa' || isConditionDowngrade || entryMethod === 'typed'
+  const missingForReturn = !returnReason
+    ? 'Select the reason for return.'
+    : isNoteRequired && !returnNote.trim()
+      ? 'Add the return notes.'
+      : !isSerialEntered
+        ? 'Enter the last characters of the serial number on the unit.'
+      : !hasPhysicalCheck
+        ? 'Confirm the physical check.'
+        : !otpChallenge
+          ? "Send the code to the employee."
+          : otpCode.length !== 6
+            ? "Enter the employee's 6-digit code."
+            : ''
+  const isInspectionDone = Boolean(returnReason) && (!isNoteRequired || Boolean(returnNote.trim())) && isSerialEntered && hasPhysicalCheck
 
   return (
     <GsoPageFrame activePage="Return Items" searchPlaceholder="Search returned asset, code, or employee...">
@@ -700,399 +847,352 @@ export default function ReturnItems() {
         </div>
         <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Returns and records pages">
           <a href="/gso/return-items" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
-            + Return Items ({returnedItems.length})
+            + Return Items
           </a>
           <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-            + Issuances Records ({mainIssuancesCount})
+            + Issuances Records
           </a>
         </nav>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6" aria-labelledby="return-scan-title">
+      {returnLoadError && <p role="alert" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">{returnLoadError}</p>}
+
+      <section className="mt-6 rounded-2xl border border-blue-100 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6" aria-labelledby="return-process-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 id="return-scan-title" className="text-sm font-black text-slate-900">Process an item return</h2>
-            <p className="mt-1 text-xs text-slate-500">This scanner handles individually tagged assets. Bulk stock is returned by quantity through the employee return approval.</p>
-          </div>
-          <span className="rounded-full bg-blue-50 px-3 py-1.5 text-[0.62rem] font-extrabold text-blue-700">GSO confirmation</span>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
-          <div>
-            <p className="flex items-center gap-2 text-xs font-extrabold text-blue-900" role="status" aria-live="polite">
-              <span className={`h-2.5 w-2.5 rounded-full ${isLookingUpBarcode ? 'animate-pulse bg-amber-500' : hasScannerFocus ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-              {isLookingUpBarcode ? 'Reading barcode...' : scannedTag ? 'Inspection in progress' : hasScannerFocus ? 'Scanner ready' : 'Scanner waiting for focus'}
+            <h2 id="return-process-title" className="text-sm font-black text-slate-900">Process an item return</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              {returnMode === 'scan'
+                ? 'Scan the barcode on an individually tagged unit, like a laptop.'
+                : 'Return reusable stock tracked by quantity, like chairs or tools. The employee confirms with an emailed code.'}
             </p>
-            <p className="mt-1 text-[0.68rem] text-slate-600">Scan the label on one unit. Item and borrower details will pop up automatically; no typing or scan button is needed.</p>
           </div>
-          <button type="button" onClick={() => focusScannerInput()} disabled={isLookingUpBarcode || Boolean(scannedTag)} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">
-            Focus scanner
-          </button>
-        </div>
-        <form onSubmit={handleBarcodeLookup} aria-label="USB barcode scanner input" className="sr-only">
-          <input
-            ref={scannerInputRef}
-            type="text"
-            value={scannerCode}
-            onChange={(event) => handleScannerInputChange(event.target.value)}
-            onFocus={() => setHasScannerFocus(true)}
-            onBlur={() => setHasScannerFocus(false)}
-            autoComplete="off"
-            autoFocus
-            aria-label="Scan an individual asset barcode"
-            disabled={isLookingUpBarcode || Boolean(scannedTag) || isConfirmingReturn}
-          />
-          <button type="submit" tabIndex={-1} aria-hidden="true" />
-        </form>
-        {barcodeError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{barcodeError}</p>}
-        {returnMessage && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">{returnMessage}</p>}
-      </section>
-
-      <section className="mt-5 rounded-2xl border border-amber-100 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6" aria-labelledby="bulk-return-title">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 id="bulk-return-title" className="text-sm font-black text-slate-900">Return reusable quantity stock</h2>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">Use this flow for reusable quantity-tracked items. GSO records the returned quantity and condition, then sends the employee a confirmation email. Bulk stock shares one inventory condition; use per-unit tracking when units can differ. Consumable stock is not returned through this form.</p>
-          </div>
-          <span className="rounded-full bg-amber-50 px-3 py-1.5 text-[0.62rem] font-extrabold text-amber-700">No unit barcode required</span>
-        </div>
-        {bulkReturnOptions.length > 0 ? (
-          <form onSubmit={(event) => void handleBulkReturnSubmit(event)} className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="block sm:col-span-2">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Issued bulk item</span>
-              <select
-                value={selectedBulkReturnId}
-                onChange={(event) => {
-                  setSelectedBulkReturnId(event.target.value)
-                  setBulkReturnQuantity('1')
-                  setBulkReturnError('')
-                }}
-                disabled={isSubmittingBulkReturn}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
-              >
-                {bulkReturnOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.employeeName} · {option.itemName} ({option.itemCode}) · {option.quantity} {option.unitOfMeasure} outstanding
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Quantity to return</span>
-              <input
-                type="number"
-                min="1"
-                max={bulkReturnOptions.find((option) => option.id === selectedBulkReturnId)?.quantity || 1}
-                step="1"
-                value={bulkReturnQuantity}
-                onChange={(event) => setBulkReturnQuantity(event.target.value)}
-                disabled={isSubmittingBulkReturn}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition after return</span>
-              <select
-                value={bulkReturnCondition}
-                onChange={(event) => setBulkReturnCondition(event.target.value)}
-                disabled={isSubmittingBulkReturn}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
-              >
-                {['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].map((condition) => (
-                  <option key={condition} value={condition}>{condition}</option>
-                ))}
-              </select>
-            </label>
-            <label className="block sm:col-span-2">
-              <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Return reason / inspection notes</span>
-              <input
-                type="text"
-                value={bulkReturnReason}
-                onChange={(event) => setBulkReturnReason(event.target.value)}
-                maxLength={1000}
-                disabled={isSubmittingBulkReturn}
-                placeholder="Enter the return reason or inspection notes"
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50"
-              />
-            </label>
-            {bulkReturnError && <p role="alert" className="sm:col-span-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{bulkReturnError}</p>}
-            {bulkReturnMessage && <p role="status" className="sm:col-span-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">{bulkReturnMessage}</p>}
-            <div className="sm:col-span-2 flex justify-end">
-              <button type="submit" disabled={isSubmittingBulkReturn} className="rounded-xl bg-amber-600 px-5 py-3 text-xs font-extrabold text-white transition hover:bg-amber-700 disabled:cursor-wait disabled:opacity-60">
-                {isSubmittingBulkReturn ? 'Recording return…' : 'Record quantity return'}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <p className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-xs font-semibold text-slate-500">
-            No active reusable quantity-stock issuances are available to return.
-          </p>
-        )}
-      </section>
-
-      <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Search Bar</span>
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search asset, code, or recipient..."
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Filter by Department</span>
-            <select
-              value={selectedDeptFilter}
-              onChange={(event) => setSelectedDeptFilter(event.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-            >
-              <option value="all">All Departments</option>
-              {departmentOptions.map((department) => <option key={department} value={department}>{department}</option>)}
-            </select>
-          </label>
-        </div>
-      </section>
-
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
-          <div>
-            <h2 className="text-base font-black tracking-tight text-slate-900">Returned Item Records</h2>
-            <p className="mt-1 text-xs font-medium text-slate-500">Click any row to inspect complete details. Export report using CSV or Word buttons.</p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="block w-40">
-              <span className="mb-1 block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-500">Filter by date</span>
-              <input
-                type="date"
-                value={selectedReportDate}
-                onChange={(event) => setSelectedReportDate(event.target.value)}
-                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
-            </label>
-            {selectedReportDate && (
+          <div role="tablist" aria-label="Return type" className="inline-flex rounded-xl bg-slate-100 p-1">
+            {([['scan', 'Tagged unit'], ['bulk', `Bulk stock (${bulkReturnOptions.length})`]] as const).map(([mode, label]) => (
               <button
+                key={mode}
                 type="button"
-                aria-label="Clear date filter"
-                onClick={() => setSelectedReportDate('')}
-                className="mb-0.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[0.65rem] font-bold text-slate-600 transition hover:bg-slate-100"
+                role="tab"
+                id={`return-tab-${mode}`}
+                aria-selected={returnMode === mode}
+                aria-controls={`return-panel-${mode}`}
+                onClick={() => {
+                  setReturnMode(mode)
+                  if (mode === 'scan') focusScannerInput(50)
+                }}
+                className={`rounded-lg px-3.5 py-2 text-xs font-extrabold transition ${returnMode === mode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
-                Clear date
+                {label}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={exportHandlers.excel}
-              className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#138548] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#0f7440] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2"
-            >
-              <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6M8 13h2M8 17h2M14 13h2M14 17h2" />
-              </svg>
-              Generate CSV
-            </button>
-            <button
-              type="button"
-              onClick={exportHandlers.word}
-              className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#2d5aa3] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#264e8e] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2"
-            >
-              <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6M8 13h8M8 17h8" />
-              </svg>
-              Generate Word
-            </button>
-            <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700">
-              {isLoadingReturns ? 'Loading…' : `${filteredItems.length} return record(s)`}
-            </span>
+            ))}
           </div>
         </div>
 
-        <div className="max-h-[42vh] overflow-auto overscroll-contain border-t border-slate-100">
-          <table className="min-w-220 w-full text-left">
-            <thead className="sticky top-0 z-10 bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
-              <tr>
-                <th className="px-5 py-3.5 sm:px-6">Asset Code &amp; Name</th>
-                <th className="px-5 py-3.5">Returned By</th>
-                <th className="px-5 py-3.5">Returned Date &amp; Time</th>
-                <th className="px-5 py-3.5">Condition Upon Return</th>
-                <th className="px-5 py-3.5">Reason / Note</th>
-                <th className="px-5 py-3.5">Currently Issued To</th>
-                <th className="px-5 py-3.5 sm:px-6">Current Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoadingReturns && (
-                <tr>
-                  <td colSpan={7} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">
-                    Loading saved return records...
-                  </td>
-                </tr>
+        <div role="tabpanel" id="return-panel-bulk" aria-labelledby="return-tab-bulk" hidden={returnMode !== 'bulk'} className="mt-4 border-t border-slate-100 pt-4">
+          <BulkReturnPanel options={bulkReturnOptions} onReturned={() => setReturnsRefreshToken((current) => current + 1)} />
+        </div>
+
+        <div role="tabpanel" id="return-panel-scan" aria-labelledby="return-tab-scan" hidden={returnMode !== 'scan'}>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
+            <div>
+              <p className="flex items-center gap-2 text-xs font-extrabold text-blue-900" role="status" aria-live="polite">
+                <span className={`h-2.5 w-2.5 rounded-full ${isLookingUpBarcode ? 'animate-pulse bg-amber-500' : hasScannerFocus ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                {isLookingUpBarcode ? 'Reading barcode...' : scannedTag ? 'Inspection in progress' : hasScannerFocus ? 'Scanner ready' : 'Scanner waiting for focus'}
+              </p>
+              <p className="mt-1 text-[0.68rem] text-slate-600">Scan the label on one unit. The code appears in the box below and the item details pop up automatically. If the label is damaged, type the code and press Enter.</p>
+            </div>
+            <button type="button" onClick={() => focusScannerInput()} disabled={isLookingUpBarcode || Boolean(scannedTag)} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">
+              Focus scanner
+            </button>
+          </div>
+          <form onSubmit={handleBarcodeLookup} aria-label="USB barcode scanner input" className="mt-3 flex gap-2">
+            <input
+              ref={scannerInputRef}
+              type="text"
+              value={scannerCode}
+              onChange={(event) => handleScannerInputChange(event.target.value)}
+              onFocus={(event) => {
+                setHasScannerFocus(true)
+                // Select any leftover code so the next scan replaces it instead of appending.
+                event.currentTarget.select()
+              }}
+              onBlur={() => setHasScannerFocus(false)}
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              placeholder="Scan the barcode here…"
+              aria-label="Scan an individual asset barcode"
+              disabled={isLookingUpBarcode || Boolean(scannedTag) || isConfirmingReturn}
+              className="h-12 min-w-0 flex-1 rounded-xl border-2 border-dashed border-blue-200 bg-white px-4 font-mono text-sm font-bold uppercase tracking-wider text-slate-800 outline-none transition placeholder:font-sans placeholder:font-semibold placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400 focus:border-solid focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
+            />
+            <button type="submit" disabled={isLookingUpBarcode || Boolean(scannedTag) || isConfirmingReturn || !scannerCode.trim()} className="h-12 shrink-0 rounded-xl bg-blue-600 px-4 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+              {isLookingUpBarcode ? 'Reading…' : 'Find'}
+            </button>
+          </form>
+          {barcodeError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{barcodeError}</p>}
+          {returnMessage && (
+            <div role="status" className={`mt-3 rounded-xl border px-3.5 py-3 text-xs font-semibold ${returnMessage.kind === 'alreadyReturned' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+              <p>{returnMessage.message}</p>
+              {returnMessage.employeeLinks.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                  {returnMessage.employeeLinks.map((employee) => (
+                    <a
+                      key={`${employee.employeeCode}-${employee.label}`}
+                      href={`/gso/employees?employeeCode=${encodeURIComponent(employee.employeeCode)}&view=history`}
+                      className="font-extrabold underline underline-offset-2 hover:no-underline"
+                    >
+                      {employee.label}: {employee.employeeName}
+                    </a>
+                  ))}
+                </div>
               )}
-              {!isLoadingReturns && filteredItems.map((item, index) => (
-                <tr key={`${item.code}-${item.returnedDate}-${index}`} onClick={() => setSelectedItem(item)} className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50/40">
-                  <td className="px-5 py-4 sm:px-6">
-                    <span className="block text-xs font-extrabold text-slate-800">{item.asset}</span>
-                    <span className="mt-1 block text-[0.62rem] font-bold text-slate-500">{item.tagCode || item.code} · {item.category}</span>
-                    {item.tagCode && <span className="mt-0.5 block text-[0.58rem] text-slate-400">Item code: {item.code}</span>}
-                  </td>
-                  <td className="px-5 py-4">
-                    <span className="block text-xs font-bold text-slate-700">{item.returnedBy}</span>
-                    <span className="mt-1 block text-[0.62rem] text-slate-400">{item.department}</span>
-                  </td>
-                  <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-700">{item.returnedDate}</td>
-                  <td className="px-5 py-4">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${returnedConditionTone(item.returnCondition)}`}>{item.returnCondition}</span>
-                  </td>
-                  <td className="max-w-xs px-5 py-4 text-xs text-slate-600">{item.reason}</td>
-                  <td className="px-5 py-4 text-xs font-semibold text-slate-700">{item.issuedTo}</td>
-                  <td className="px-5 py-4 sm:px-6">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${item.statusTone}`}>{item.status}</span>
-                  </td>
-                </tr>
-              ))}
-              {!isLoadingReturns && returnLoadError && (
-                <tr>
-                  <td colSpan={7} className="px-5 py-4 text-center text-xs font-semibold text-amber-700">
-                    {returnLoadError}
-                  </td>
-                </tr>
-              )}
-              {!isLoadingReturns && !returnLoadError && filteredItems.length === 0 && (
-                <tr><td colSpan={7} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">No returned items match the selected filters.</td></tr>
-              )}
-            </tbody>
-          </table>
+            </div>
+          )}
         </div>
       </section>
 
       {scannedTag && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
-          <section role="dialog" aria-modal="true" aria-labelledby="return-confirm-title" className="my-auto w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
-              <div>
-                <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-600">{scannedTag.tagCode}</p>
-                <h2 id="return-confirm-title" className="mt-1 text-lg font-black text-slate-900">Confirm item return</h2>
-                <p className="mt-1 text-xs text-slate-500">Check the item and condition before saving.</p>
-              </div>
-              <button type="button" disabled={isConfirmingReturn} onClick={closeScannedTagDialog} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Close</button>
-            </div>
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="return-confirm-title"
+            onKeyDown={(event) => { if (event.key === 'Escape') closeScannedTagDialog() }}
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
+          >
+            <form onSubmit={(event) => void handleReturnConfirmation(event)} className="flex min-h-0 flex-1 flex-col">
+              <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200/80 px-5 py-4 sm:px-7">
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">
+                    Item return · <span className="font-mono tracking-normal">{scannedTag.tagCode}</span>
+                  </p>
+                  <h2 id="return-confirm-title" className="mt-1 truncate text-lg font-black text-slate-950 sm:text-xl">{scannedTag.itemName}</h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    From <span className="font-bold text-slate-700">{scannedTag.employeeName}</span> · processed by <span className="font-bold text-slate-700">{staffName || 'your account'}</span>
+                  </p>
+                </div>
+                <button type="button" disabled={isConfirmingReturn} onClick={closeScannedTagDialog} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">Close</button>
+              </header>
 
-            <div className="mt-4 grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 sm:grid-cols-2">
-              <div>
-                <span className="block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">Item</span>
-                <p className="mt-1 text-xs font-extrabold text-slate-800">{scannedTag.itemName}</p>
-                <p className="mt-0.5 text-[0.68rem] text-slate-500">{scannedTag.itemCode} · Unit {scannedTag.unitNumber}</p>
-              </div>
-              <div>
-                <span className="block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">Assigned to</span>
-                <p className="mt-1 text-xs font-extrabold text-slate-800">{scannedTag.employeeName}</p>
-                <p className="mt-0.5 text-[0.68rem] text-slate-500">{scannedTag.employeeCode}</p>
-              </div>
-              <div className="sm:col-span-2">
-                <span className="block text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">Current condition</span>
-                <p className="mt-1 text-xs font-bold text-slate-800">{scannedTag.condition}</p>
-              </div>
-            </div>
-
-            <section className="mt-3 rounded-xl border border-blue-100 bg-white p-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="text-xs font-extrabold text-slate-800">Borrower history for this unit</h3>
-                <span className="text-[0.62rem] font-semibold text-slate-400">Latest first</span>
-              </div>
-              {(scannedTag.borrowerHistory || []).length > 0 ? (
-                <ol className="mt-3 max-h-48 space-y-2 overflow-y-auto pr-1">
-                  {(scannedTag.borrowerHistory ?? []).map((borrower, index) => (
-                    <li key={`${borrower.employeeCode}-${borrower.issuedAt}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-extrabold text-slate-800">{borrower.employeeName}</p>
-                          <p className="mt-0.5 text-[0.65rem] font-semibold text-slate-500">{borrower.employeeCode} | {borrower.department} | {borrower.position}</p>
-                          <p className="mt-0.5 break-all text-[0.62rem] text-slate-500">{borrower.email}</p>
-                        </div>
-                        <span className={`rounded-full px-2 py-1 text-[0.58rem] font-extrabold ${borrower.status === 'Issued' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'}`}>
-                          {borrower.status === 'Issued' ? 'Currently assigned' : 'Previous borrower'}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-[0.62rem] text-slate-600">
-                        Issued {formatBorrowerHistoryDate(borrower.issuedAt)}
-                        {borrower.returnedAt ? ` | Returned ${formatBorrowerHistoryDate(borrower.returnedAt)}` : ''}
-                        {borrower.returnCondition ? ` | Return condition: ${borrower.returnCondition}` : ''}
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/80">
+                <div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+                  <aside className="space-y-4">
+                    {entryMethod === 'typed' && (
+                      <p role="note" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-relaxed text-amber-900">
+                        This code was typed, not scanned. Explain why in the notes, for example a damaged label. The return is flagged in the audit log.
                       </p>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="mt-2 text-[0.68rem] text-slate-500">No borrower history has been recorded for this tag.</p>
-              )}
-            </section>
+                    )}
 
-            <form onSubmit={(event) => void handleReturnConfirmation(event)} className="mt-4 space-y-3">
-              <label className="block">
-                <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition after inspection</span>
-                <select value={returnCondition} onChange={(event) => setReturnCondition(event.target.value)} disabled={isConfirmingReturn} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
-                  <option>New</option><option>Good</option><option>Fair</option><option>Needs Repair</option><option>Under Maintenance</option><option>Unserviceable</option>
-                </select>
-              </label>
-              <div className={`rounded-xl border px-3 py-2.5 text-xs font-semibold ${['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(returnCondition) ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
-                {['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(returnCondition)
-                  ? 'This item will be routed to To Be Repaired.'
-                  : 'This item will be returned to GSO Storage.'}
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+                      {([
+                        ['Item code', `${scannedTag.itemCode} · Unit ${scannedTag.unitNumber}`],
+                        ['Serial no.', scannedTag.serialNumber ? 'On file · check it on the unit' : 'Not recorded'],
+                        ['Borrowed by', scannedTag.employeeName],
+                        ['Employee', [scannedTag.employeeCode, currentAssignment?.department].filter(Boolean).join(' · ')],
+                        ['Issued on', formatBorrowerHistoryDate(currentAssignment?.issuedAt ?? null)],
+                        ['Condition on record', scannedTag.condition],
+                      ] as const).map(([label, value]) => (
+                        <div key={label} className="min-w-0">
+                          <dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt>
+                          <dd className="mt-0.5 wrap-break-word text-xs font-bold text-slate-800">{value || '—'}</dd>
+                        </div>
+                      ))}
+                    </dl>
+
+                    <details className="group rounded-2xl border border-slate-200 bg-white">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 py-3 text-xs font-extrabold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
+                        Previous borrowers ({previousBorrowers.length})
+                        <span className="transition group-open:rotate-90"><ChevronRight /></span>
+                      </summary>
+                      <div className="border-t border-slate-100 px-4 py-3">
+                        {previousBorrowers.length > 0 ? (
+                          <ol className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                            {previousBorrowers.map((borrower, index) => (
+                              <li key={`${borrower.employeeCode}-${borrower.issuedAt}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2">
+                                <p className="text-xs font-extrabold text-slate-800">{borrower.employeeName} <span className="font-semibold text-slate-500">· {borrower.employeeCode}</span></p>
+                                <p className="mt-0.5 text-[0.62rem] text-slate-500">
+                                  Issued {formatBorrowerHistoryDate(borrower.issuedAt)}
+                                  {borrower.returnedAt ? ` · Returned ${formatBorrowerHistoryDate(borrower.returnedAt)}` : ''}
+                                  {borrower.returnCondition ? ` · ${borrower.returnCondition}` : ''}
+                                </p>
+                              </li>
+                            ))}
+                          </ol>
+                        ) : (
+                          <p className="text-[0.68rem] text-slate-500">No one else has borrowed this unit yet.</p>
+                        )}
+                      </div>
+                    </details>
+
+                    <p className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[0.68rem] leading-relaxed text-slate-500">
+                      <span className="font-extrabold text-slate-700">Giving it to another employee?</span> Record this return first, then issue the unit from{' '}
+                      <a href="/gso/main-issuance" className="font-extrabold text-blue-700 underline underline-offset-2 hover:no-underline">Main Issuance</a>
+                      {' '}so the new employee confirms receipt.
+                    </p>
+                  </aside>
+
+                  <div className="space-y-4">
+                    <section aria-labelledby="return-inspect-title" className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+                      <div className="flex items-center gap-2.5">
+                        <StepBadge number={1} done={isInspectionDone} />
+                        <h3 id="return-inspect-title" className="text-sm font-black text-slate-900">Inspect the unit</h3>
+                      </div>
+
+                      <fieldset className="mt-4" disabled={isConfirmingReturn}>
+                        <legend className="mb-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition after inspection</legend>
+                        <div className="space-y-2">
+                          {bulkConditionGroups.map((group) => (
+                            <div key={group.title} className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+                              <span className="flex w-28 shrink-0 items-center gap-1.5 text-[0.65rem] font-bold text-slate-500">
+                                <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${group.dot}`} />
+                                {group.title}
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {group.conditions.map((condition) => (
+                                  <label key={condition} className="cursor-pointer">
+                                    <input
+                                      type="radio"
+                                      name="return-condition"
+                                      value={condition}
+                                      checked={returnCondition === condition}
+                                      onChange={() => setReturnCondition(condition)}
+                                      className="peer sr-only"
+                                    />
+                                    <span className="inline-flex rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 peer-checked:border-blue-600 peer-checked:bg-blue-600 peer-checked:text-white peer-focus-visible:ring-4 peer-focus-visible:ring-blue-100">
+                                      {condition}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </fieldset>
+
+                      <p className={`mt-3 rounded-xl border px-3 py-2.5 text-xs font-semibold ${isRepairTag ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
+                        {isRepairTag ? 'Goes to To Be Repaired.' : 'Goes back to GSO Storage.'}
+                      </p>
+                      {isConditionDowngrade && (
+                        <p role="note" className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-900">
+                          Condition dropped from <strong>{scannedTag.condition}</strong> to <strong>{returnCondition}</strong>. Describe the damage in the notes.
+                        </p>
+                      )}
+
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Reason for return</span>
+                          <select value={returnReason} onChange={(event) => setReturnReason(event.target.value)} required disabled={isConfirmingReturn} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
+                            <option value="" disabled>Select a reason</option>
+                            {returnReasons.map((reason) => <option key={reason}>{reason}</option>)}
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Brought in by <span className="normal-case text-slate-400">(if not the borrower)</span></span>
+                          <input type="text" maxLength={200} value={returnedByName} onChange={(event) => setReturnedByName(event.target.value)} disabled={isConfirmingReturn} placeholder="Name of the person at the counter" className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+                        </label>
+                      </div>
+                      <label className="mt-3 block">
+                        <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Notes <span className="normal-case text-slate-400">{isNoteRequired ? '(required)' : '(optional)'}</span></span>
+                        {/* 900 leaves room for the reason prefix within the backend's 1000-character limit. */}
+                        <textarea
+                          maxLength={900}
+                          value={returnNote}
+                          onChange={(event) => setReturnNote(event.target.value)}
+                          required={isNoteRequired}
+                          disabled={isConfirmingReturn}
+                          placeholder={entryMethod === 'typed'
+                            ? 'Explain why the code was typed (for example, a damaged label)'
+                            : isConditionDowngrade
+                              ? 'Describe the damage or what changed'
+                              : returnReason === 'Iba pa'
+                                ? 'Explain why the item is being returned'
+                                : "Anything worth noting about the unit's condition"}
+                          className="min-h-20 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                        />
+                      </label>
+                      {needsSerialCheck && (
+                        <label className="mt-3 block rounded-xl border border-blue-100 bg-blue-50/50 p-3">
+                          <span className="block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Serial number check</span>
+                          <span className="mt-1 block text-xs leading-relaxed text-slate-600">
+                            Type the last {serialTailLength} characters of the serial printed on the unit itself (its sticker or engraving), not on the barcode label.
+                          </span>
+                          <input
+                            type="text"
+                            value={serialLast4}
+                            onChange={(event) => setSerialLast4(event.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, serialTailLength))}
+                            maxLength={serialTailLength}
+                            required
+                            disabled={isConfirmingReturn}
+                            autoComplete="off"
+                            spellCheck={false}
+                            placeholder={'•'.repeat(serialTailLength)}
+                            aria-label="Last characters of the unit's serial number"
+                            className="mt-2 h-10 w-32 rounded-xl border border-slate-200 bg-white px-3 text-center font-mono text-sm font-bold uppercase tracking-[0.3em] outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                          />
+                        </label>
+                      )}
+                      <label className="mt-3 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-xs font-semibold leading-relaxed text-slate-700">
+                        <input type="checkbox" checked={hasPhysicalCheck} onChange={(event) => setHasPhysicalCheck(event.target.checked)} required disabled={isConfirmingReturn} className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600" />
+                        <span>The physical item is in front of me, and its barcode label matches this record.</span>
+                      </label>
+                    </section>
+
+                    <section aria-labelledby="return-otp-title" className="rounded-2xl border border-blue-200 bg-white p-4 sm:p-5">
+                      <div className="flex items-center gap-2.5">
+                        <StepBadge number={2} done={otpCode.length === 6} />
+                        <h3 id="return-otp-title" className="text-sm font-black text-slate-900">Employee confirmation</h3>
+                      </div>
+                      <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                        Every return is confirmed by the borrower. A 6-digit code is emailed to {scannedTag.employeeName}, who reads it out to you only if they are returning this unit now.
+                      </p>
+                      {otpChallenge ? (
+                        <div className="mt-3">
+                          <p className="text-xs text-slate-600">
+                            Sent to <strong>{otpChallenge.sentTo}</strong> · expires {new Intl.DateTimeFormat('en-PH', { timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(otpChallenge.expiresAt))}
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <input
+                              ref={otpInputRef}
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="one-time-code"
+                              pattern="\d{6}"
+                              maxLength={6}
+                              required
+                              value={otpCode}
+                              onChange={(event) => setOtpCode(event.target.value.replace(/\D/g, ''))}
+                              disabled={isConfirmingReturn}
+                              placeholder="••••••"
+                              aria-label="Employee confirmation code"
+                              className="h-11 w-40 rounded-xl border border-slate-200 bg-white px-3 text-center font-mono text-base font-bold tracking-[0.35em] outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                            />
+                            <button type="button" onClick={() => void handleSendReturnOtp()} disabled={isSendingOtp || isConfirmingReturn} className="rounded-xl px-3 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50">
+                              {isSendingOtp ? 'Sending…' : 'Resend code'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => void handleSendReturnOtp()} disabled={isSendingOtp || isConfirmingReturn} className="mt-3 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:opacity-50">
+                          {isSendingOtp ? 'Sending code…' : 'Send code to employee'}
+                        </button>
+                      )}
+                    </section>
+
+                    {barcodeError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-semibold text-rose-700">{barcodeError}</p>}
+                  </div>
+                </div>
               </div>
-              <label className="block">
-                <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Return notes (optional)</span>
-                <textarea maxLength={1000} value={returnNote} onChange={(event) => setReturnNote(event.target.value)} disabled={isConfirmingReturn} placeholder="Add a note about the item's condition" className="min-h-20 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
-              </label>
-              {barcodeError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{barcodeError}</p>}
-              <div className="flex justify-end gap-2 pt-1">
-                <button type="button" disabled={isConfirmingReturn} onClick={closeScannedTagDialog} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
-                <button type="submit" disabled={isConfirmingReturn} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white hover:bg-blue-700 disabled:opacity-50">{isConfirmingReturn ? 'Saving return…' : 'Confirm return'}</button>
-              </div>
+
+              <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:px-7">
+                <p className="text-xs font-semibold text-slate-500" aria-live="polite">{missingForReturn || 'Ready to save.'}</p>
+                <div className="flex gap-2">
+                  <button type="button" disabled={isConfirmingReturn} onClick={closeScannedTagDialog} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50">Cancel</button>
+                  <button type="submit" disabled={isConfirmingReturn || Boolean(missingForReturn)} className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {isConfirmingReturn ? 'Saving return…' : 'Confirm return'}
+                  </button>
+                </div>
+              </footer>
             </form>
-          </section>
-        </div>
-      )}
-
-      {selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-          <section role="dialog" aria-modal="true" aria-labelledby="returned-item-dialog-title" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 id="returned-item-dialog-title" className="text-sm font-black text-slate-900">Returned Item Details</h3>
-              <button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl border border-slate-200 px-2.5 py-1 text-xs font-bold text-slate-500 hover:bg-slate-50">Close</button>
-            </div>
-            <div className="mt-4 space-y-3">
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Returned Asset</span>
-                <p className="mt-1 text-xs font-black text-slate-900">{selectedItem.asset}</p>
-                <p className="text-[0.65rem] font-bold text-slate-500">{selectedItem.code} · {selectedItem.category}</p>
-                {selectedItem.tagCode && <p className="mt-1 text-[0.65rem] font-bold text-blue-700">Barcode: {selectedItem.tagCode}</p>}
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Returned By</span>
-                <p className="mt-1 text-xs font-bold text-slate-800">{selectedItem.returnedBy}</p>
-                <p className="text-[0.65rem] font-medium text-slate-500">{selectedItem.department}</p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Condition &amp; Return Date</span>
-                <p className="mt-1 text-xs font-bold text-slate-800">{selectedItem.returnCondition} · {selectedItem.returnedDate}</p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Reason for Return</span>
-                <p className="mt-1 text-xs text-slate-700">{selectedItem.reason}</p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Currently Issued To</span>
-                <p className="mt-1 text-xs font-bold text-slate-800">{selectedItem.issuedTo === '—' ? 'Not currently issued' : selectedItem.issuedTo}</p>
-              </div>
-              <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3.5">
-                <span className="block text-[0.6rem] font-extrabold uppercase text-slate-400">Current Status</span>
-                <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${selectedItem.statusTone}`}>{selectedItem.status}</span>
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end">
-              <button type="button" onClick={() => setSelectedItem(null)} className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-extrabold text-white hover:bg-blue-700">Done</button>
-            </div>
           </section>
         </div>
       )}

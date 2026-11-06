@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { ApiError } from '../auth/authApi'
 import { createDepartment, createEmployee, listDepartments, listEmployees, updateEmployee, type EmployeeProfile, type EmployeeProfileInput } from './employeesApi'
-import { listEmployeeIssuances } from './issuancesApi'
+import { listEmployeeIssuances, type EmployeeIssuanceRecord } from './issuancesApi'
 
 interface DepartmentItem {
   id: string
@@ -24,9 +24,14 @@ interface EmployeeHistoryLog {
   event: string
   item: string
   code: string
+  assetTagCode?: string | null
   quantity: number
   unitOfMeasure: string
   note: string
+  returnId?: string | null
+  returnCondition?: string | null
+  returnedByName?: string | null
+  confirmationMethod?: string | null
 }
 
 interface ChangeHistoryRecord {
@@ -46,6 +51,7 @@ interface EmployeeRecord {
   position: string
   email: string
   assigned: number
+  emailLocked?: boolean
   status: string
   statusTone: string
   assignedItems: Array<{
@@ -57,6 +63,7 @@ interface EmployeeRecord {
     quantity: number
     unitOfMeasure: string
     assignedOn: string
+    assetTagCodes: string[]
   }>
   history: EmployeeHistoryLog[]
   changeHistory?: ChangeHistoryRecord[]
@@ -76,6 +83,7 @@ function employeeRecordFromProfile(profile: EmployeeProfile, existing?: Employee
     position: profile.position,
     email: profile.email,
     assigned: profile.assignedCount,
+    emailLocked: profile.emailLocked,
     status: profile.status,
     statusTone: profile.status === 'Active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600',
     assignedItems: existing?.assignedItems ?? [],
@@ -85,6 +93,26 @@ function employeeRecordFromProfile(profile: EmployeeProfile, existing?: Employee
       changedBy: change.changedBy,
       reason: change.reason,
     })),
+  }
+}
+
+function employeeRecordWithIssuance(
+  employee: EmployeeRecord,
+  issuance: EmployeeIssuanceRecord,
+): EmployeeRecord {
+  return {
+    ...employee,
+    assigned: issuance.assignedItems.reduce((total, item) => total + item.quantity, 0),
+    assignedItems: issuance.assignedItems.map((item) => ({
+      ...item,
+      assetTagCodes: item.assetTagCodes ?? [],
+      tone: item.condition === 'Good' || item.condition === 'New'
+        ? 'bg-emerald-50 text-emerald-700'
+        : item.condition === 'Fair'
+          ? 'bg-amber-50 text-amber-700'
+          : 'bg-rose-50 text-rose-700',
+    })),
+    history: issuance.history,
   }
 }
 
@@ -103,6 +131,10 @@ function employeeProfileInput(employee: EmployeeRecord): EmployeeProfileInput {
 }
 
 export default function EmployeeMasterData() {
+  const [employeeDeepLink] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    return { employeeCode: params.get('employeeCode'), showHistory: params.get('view') === 'history' }
+  })
   // Dynamic departments state
   const [departments, setDepartments] = useState<DepartmentItem[]>(initialDepartments)
   const [showDepartmentModal, setShowDepartmentModal] = useState(false)
@@ -167,6 +199,23 @@ export default function EmployeeMasterData() {
         setEmployees(mappedEmployees)
         setPersistedEmployeeIds(new Set(profiles.map((profile) => profile.id)))
         setEmployeeDataError('')
+        const linkedEmployee = employeeDeepLink.employeeCode
+          ? mappedEmployees.find((employee) => employee.id.toLowerCase() === employeeDeepLink.employeeCode?.toLowerCase())
+          : undefined
+        if (linkedEmployee) {
+          setSelectedEmployee(linkedEmployee)
+          setShowEmployeeHistoryModal(employeeDeepLink.showHistory)
+          void listEmployeeIssuances(linkedEmployee.id)
+            .then((issuance) => {
+              if (!active) return
+              const updatedEmployee = employeeRecordWithIssuance(linkedEmployee, issuance)
+              setEmployees((current) => current.map((employee) => employee.id === linkedEmployee.id ? updatedEmployee : employee))
+              setSelectedEmployee((current) => current?.id === linkedEmployee.id ? updatedEmployee : current)
+            })
+            .catch((error: unknown) => {
+              if (active) setEmployeeIssuanceLoadError(error instanceof Error ? error.message : 'Unable to load issuance history for this employee.')
+            })
+        }
       })
       .catch((error: unknown) => {
         if (active) setEmployeeDataError(error instanceof Error ? error.message : 'Unable to load employee profiles.')
@@ -176,7 +225,7 @@ export default function EmployeeMasterData() {
       })
 
     return () => { active = false }
-  }, [])
+  }, [employeeDeepLink])
 
   const handleAddDepartment = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -361,20 +410,8 @@ export default function EmployeeMasterData() {
     if (!persistedEmployeeIds.has(employee.id)) return
 
     void listEmployeeIssuances(employee.id)
-      .then(({ assignedItems, history }) => {
-        const updatedEmployee: EmployeeRecord = {
-          ...employee,
-          assigned: assignedItems.reduce((total, item) => total + item.quantity, 0),
-          assignedItems: assignedItems.map((item) => ({
-            ...item,
-            tone: item.condition === 'Good' || item.condition === 'New'
-              ? 'bg-emerald-50 text-emerald-700'
-              : item.condition === 'Fair'
-                ? 'bg-amber-50 text-amber-700'
-                : 'bg-rose-50 text-rose-700',
-          })),
-          history,
-        }
+      .then((issuance) => {
+        const updatedEmployee = employeeRecordWithIssuance(employee, issuance)
         setEmployees((current) => current.map((item) => item.id === employee.id ? updatedEmployee : item))
         setSelectedEmployee((current) => current?.id === employee.id ? updatedEmployee : current)
       })
@@ -398,23 +435,31 @@ export default function EmployeeMasterData() {
   })
 
   return (
-    <GsoPageFrame activePage="Employee Master Data" searchPlaceholder="Search employees...">
+    <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search employees...">
       {/* HEADER SECTION */}
-      <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
-        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
-              People Directory Workspace
-            </span>
-            <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Employee Master Data</h1>
-            <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-              Manage profiles, assignments, and custody history. GSO-approved requesters appear here.
-            </p>
-          </div>
-         
-        </div>
-
+      <section className="rounded-3xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-6 text-white shadow-xl shadow-blue-950/15 sm:p-8">
+        <span className="inline-flex rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
+          People Directory Workspace
+        </span>
+        <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Employees &amp; Requesters</h1>
+        <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
+          Manage profiles, assignments, and custody history. GSO-approved requesters appear here.
+        </p>
+        <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Employees and requester pages">
+            <a
+              href="#employee-directory"
+              aria-current="page"
+              className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#123c70]"
+            >
+              View Employees
+            </a>
+            <a
+              href="/gso/requester-verification"
+              className="rounded-xl border border-white/20 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Requestors Verification
+            </a>
+        </nav>
       </section>
 
       {employeeDataError && (
@@ -608,7 +653,7 @@ export default function EmployeeMasterData() {
       )}
 
       {/* EMPLOYEE CARD DIRECTORY */}
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+      <section id="employee-directory" className="mt-6 scroll-mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
         <div className="flex flex-col items-start gap-2 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Employee Directory</h2>
@@ -1030,7 +1075,14 @@ export default function EmployeeMasterData() {
                     <tbody className="divide-y divide-slate-200">
                       {selectedEmployee.assignedItems.map((item) => (
                         <tr key={item.id} className="divide-x divide-slate-200 bg-white transition-colors hover:bg-blue-50/50">
-                          <td className="whitespace-nowrap px-5 py-4 font-bold text-slate-800">{item.code}</td>
+                          <td className="whitespace-nowrap px-5 py-4 font-bold text-slate-800">
+                            {item.code}
+                            {item.assetTagCodes.length > 0 && (
+                              <span className="mt-1 block whitespace-normal text-[0.65rem] font-semibold leading-relaxed text-blue-700">
+                                {item.assetTagCodes.join(' · ')}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-5 py-4 font-extrabold text-slate-950">{item.name}</td>
                           <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-800">{item.quantity} {item.unitOfMeasure}</td>
                           <td className="whitespace-nowrap px-5 py-4 align-middle">
@@ -1048,6 +1100,34 @@ export default function EmployeeMasterData() {
                 <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
                   No items currently issued to this employee.
                 </p>
+              )}
+              {selectedEmployee.history.some((log) => log.event === 'Returned' || log.event === 'Reported Lost') && (
+                <section className="mt-5 rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5" aria-labelledby="issued-item-return-history-title">
+                  <div className="border-b border-slate-200 pb-3">
+                    <h3 id="issued-item-return-history-title" className="text-base font-black text-slate-900">Returned Item History</h3>
+                    <p className="mt-1 text-sm text-slate-600">Returned or lost units are no longer listed as active assignments.</p>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {selectedEmployee.history.filter((log) => log.event === 'Returned' || log.event === 'Reported Lost').map((log, index) => (
+                      <article key={log.returnId || `${log.code}-${log.date}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold ${log.event === 'Reported Lost' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>{log.event}</span>
+                            <h4 className="mt-2 text-sm font-extrabold text-slate-900">{log.item} <span className="font-semibold text-slate-600">({log.code})</span></h4>
+                            {log.assetTagCode && <p className="mt-1 font-mono text-xs font-bold text-blue-700">Unit barcode: {log.assetTagCode}</p>}
+                          </div>
+                          <span className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-700">{log.date}</span>
+                        </div>
+                        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                          {log.returnCondition && <p><span className="font-bold text-slate-500">Condition:</span> <span className="font-extrabold text-slate-800">{log.returnCondition}</span></p>}
+                          {log.returnedByName && <p><span className="font-bold text-slate-500">Brought in by:</span> <span className="font-semibold text-slate-800">{log.returnedByName}</span></p>}
+                          {log.confirmationMethod && <p><span className="font-bold text-slate-500">Verified by:</span> <span className="font-semibold text-slate-800">{log.confirmationMethod.replaceAll('_', ' ')}</span></p>}
+                        </div>
+                        <p className="mt-3 wrap-break-word text-sm leading-relaxed text-slate-700">{log.note}</p>
+                      </article>
+                    ))}
+                  </div>
+                </section>
               )}
             </div>
           </section>
@@ -1123,6 +1203,14 @@ export default function EmployeeMasterData() {
                             <span className="text-sm font-semibold text-slate-700">({log.code})</span>
                             <span className="rounded-full bg-slate-200 px-3 py-1.5 text-sm font-bold text-slate-800">{log.quantity} {log.unitOfMeasure}</span>
                           </div>
+                          {log.assetTagCode && <p className="mt-2 font-mono text-sm font-extrabold text-blue-700">Unit barcode: {log.assetTagCode}</p>}
+                          {(log.returnCondition || log.returnedByName || log.confirmationMethod) && (
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-700">
+                              {log.returnCondition && <span><strong>Return condition:</strong> {log.returnCondition}</span>}
+                              {log.returnedByName && <span><strong>Brought in by:</strong> {log.returnedByName}</span>}
+                              {log.confirmationMethod && <span><strong>Verified by:</strong> {log.confirmationMethod.replaceAll('_', ' ')}</span>}
+                            </div>
+                          )}
                           <p className="mt-3 text-base leading-relaxed text-slate-800">{log.note}</p>
                         </div>
                         <span className="shrink-0 rounded-full bg-slate-200 px-3 py-1.5 text-sm font-bold text-slate-800">{log.date}</span>
@@ -1291,14 +1379,29 @@ export default function EmployeeMasterData() {
                     </label>
 
                     <label className="block">
-                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Email</span>
+                      <span className="mb-2 flex items-center gap-2 text-sm font-extrabold text-slate-800">
+                        Email
+                        {selectedEmployee?.emailLocked && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-600">
+                            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                            Locked
+                          </span>
+                        )}
+                      </span>
                       <input
                         type="email"
                         name="email"
                         value={editEmployeeData.email}
                         onChange={handleEditEmployeeInputChange}
-                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                        readOnly={selectedEmployee?.emailLocked}
+                        aria-describedby="employee-email-help"
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 read-only:cursor-not-allowed read-only:border-slate-200 read-only:bg-slate-50 read-only:text-slate-500 read-only:hover:border-slate-200"
                       />
+                      <span id="employee-email-help" className="mt-1.5 block text-xs leading-relaxed text-slate-500">
+                        {selectedEmployee?.emailLocked
+                          ? 'Return codes and receipts go to this address, so it cannot change while the employee has items out, a pending issuance or return, or an unsettled lost item.'
+                          : 'Return codes and receipts go to this address. If you change it, the old address gets a notice.'}
+                      </span>
                     </label>
 
                     <label className="block sm:col-span-2">

@@ -227,7 +227,7 @@ export function listGsoRequests(filters: GsoRequestFilters = {}) {
 
 export function updateGsoRequestStatus(
   id: string,
-  payload: { status: string; note?: string; dueDate?: string; conditionOut?: string; conditionIn?: string },
+  payload: { status: string; note?: string; dueDate?: string; conditionOut?: string; conditionIn?: string; conditionsIn?: Record<string, string> },
 ) {
   return apiRequest<{ request: ServiceRequest }>(`/requests/${encodeURIComponent(id)}/status`, {
     method: 'PATCH',

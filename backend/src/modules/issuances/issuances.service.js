@@ -190,6 +190,14 @@ async function createIssuance(input, user) {
 }
 async function createIssuanceBatch(input, user) {
   const { employeeCode, items, notes, borrowDetails } = validateCreateIssuanceBatch(input);
+  const blockers = await issuancesRepository.getEmployeeReturnBlockers(employeeCode);
+  if (blockers.overdue || blockers.unsettled) {
+    const problems = [
+      blockers.overdue ? `${blockers.overdue} overdue na hiniram na hindi pa naisasauli` : '',
+      blockers.unsettled ? `${blockers.unsettled} nawalang item na hindi pa naaayos ang settlement` : '',
+    ].filter(Boolean).join(' at ');
+    throw httpError(409, `Hindi muna ma-issue-han si ${employeeCode}: may ${problems}. Ayusin muna ito sa Return Items.`);
+  }
   const token = crypto.randomBytes(32).toString('base64url');
   const batch = await issuancesRepository.createPendingIssuanceBatch({
     employeeCode,
@@ -348,6 +356,12 @@ async function getAssetTag(tagCodeValue) {
   const tagCode = normalizeAssetScanCode(tagCodeValue);
   const tag = await issuancesRepository.getAssetTagByCode(tagCode);
   if (!tag) throw httpError(404, 'Walang item o barcode na tumutugma sa code na ito.');
+  if (tag.retiredLabel) {
+    const retiredOn = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date(tag.replacedAt));
+    throw httpError(409, tag.kind === 'return'
+      ? `Hindi na gumagana ang label na ito. Naibalik na ang ${tag.itemName} (${tag.itemCode}, unit ${tag.unitNumber}) noong ${retiredOn}. Tanggalin ang lumang label; bagong label ang ipi-print kapag na-issue ulit ang unit.`
+      : `Luma na ang label na ito. Pinalitan ito noong ${retiredOn} ng label #${tag.labelVersion} para sa ${tag.itemName} (${tag.itemCode}, unit ${tag.unitNumber}). I-scan ang bagong label na nasa unit, at itapon ang lumang label.`);
+  }
   if (tag.barcodeNotGenerated) {
     throw httpError(409, `Wala pang unit barcode ang ${tag.itemCode}. Hintayin munang maaprubahan ang issuance.`);
   }

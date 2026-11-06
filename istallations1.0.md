@@ -80,20 +80,20 @@ Kung mayroon nang database na `dyci_gso`, huwag itong likhain ulit.
 Patakbuhin ang mga sumusunod mula sa **project root**, isa-isa at sa ganitong pagkakasunod-sunod. Ilagay ang password ng PostgreSQL kapag hiningi:
 
 ```powershell
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\001_initial_schema.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\002_email_verification_otp.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\003_inventory_items.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\004_inventory_categories_and_change_history.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\005_inventory_created_audit_action.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\006_employees_and_audit_logs.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\007_employee_issuance_returns.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\008_employee_issuance_batches.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\009_employee_issuance_quantities.sql
-psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\010_partial_issuance_returns.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\001_auth_and_roles.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\002_departments_and_employees.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\003_inventory.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\004_audit_log.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\005_issuances.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\006_asset_tags_and_labels.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\007_returns.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\008_request_center.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\009_requester_identity.sql
+psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\migrations\010_database_time_settings.sql
 psql -U postgres -d dyci_gso -v ON_ERROR_STOP=1 -f .\backend\database\seeds\001_initial_seed.sql
 ```
 
-Mahalaga ang pagkakasunod-sunod: kailangang mauna ang migrations `001` hanggang `009` bago ang `010_partial_issuance_returns.sql`. Patakbuhin ang seed pagkatapos ng lahat ng migrations.
+Mahalaga ang pagkakasunod-sunod: gumagamit ang bawat migration ng tables na ginawa ng mga nauna rito. Patakbuhin ang seed pagkatapos ng lahat ng migrations. Para lang ito sa bagong, walang lamang `dyci_gso`; huwag gamitin ang mga file sa `backend\database\migrations_archive`.
 
 Kung lumabas ang error na `psql is not recognized`, buksan ang pgAdmin **Query Tool** para sa `dyci_gso` at patakbuhin ang laman ng bawat SQL file nang paisa-isa, ayon sa parehong pagkakasunod-sunod sa itaas. Karaniwang nasa `C:\Program Files\PostgreSQL\<version>\bin\` ang `psql.exe`; maaari ring idagdag ang folder na iyon sa Windows PATH.
 
@@ -173,6 +173,6 @@ Buksan ang address na ibinigay ng Vite terminal; karaniwan ay [http://localhost:
 - **`node` o `npm` is not recognized:** i-install ang Node.js 22 LTS, isara at buksan muli ang VS Code, at subukan ulit ang version commands.
 - **`psql` is not recognized:** gamitin ang pgAdmin Query Tool o idagdag ang PostgreSQL `bin` folder sa PATH.
 - **Database connection error:** tiyaking nakaandar ang PostgreSQL service, umiiral ang `dyci_gso`, at tama ang username, password, host, at port sa `DATABASE_URL`.
-- **Missing table o column:** tiyaking matagumpay na naipatupad ang migrations `001` hanggang `010` sa tamang order at pagkatapos ay ang seed.
+- **Missing table o column:** tiyaking matagumpay na naipatupad ang migrations `001` hanggang `010` sa `backend\database\migrations` sa tamang order at pagkatapos ay ang seed.
 - **Hindi makapagpadala ng OTP email:** tiyaking tama ang lahat ng apat na SMTP setting at Gmail App Password. Hindi gagana ang email OTP habang blangko ang SMTP settings.
 - **CORS error sa browser:** tiyaking `FRONTEND_ORIGIN=http://localhost:5173` ang nasa `backend/.env`, at i-restart ang backend matapos itong baguhin.

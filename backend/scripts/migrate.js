@@ -6,7 +6,11 @@
 // A database that already has tables but no ledger, such as a restored copy of the local
 // database, is refused. Say which migration it already includes, then run the rest:
 //
-//   npm run db:migrate -- --baseline=028
+//   npm run db:migrate -- --baseline=010
+//
+// A ledger written before the migrations were consolidated lists the files now kept in
+// database/migrations_archive. Such a database is finished with the archived files it is
+// missing, and the current files are then recorded as already included.
 //
 // This script never reads backend/.env, so it cannot touch the local database by accident.
 const fs = require('node:fs');
@@ -14,16 +18,23 @@ const path = require('node:path');
 const { Client } = require('pg');
 
 const migrationsDir = path.resolve(__dirname, '../database/migrations');
+const archiveDir = path.resolve(__dirname, '../database/migrations_archive');
 
 function migrationVersion(fileName) {
   return Number(fileName.match(/^(\d+)_/)[1]);
+}
+
+function listMigrations(directory) {
+  return fs.readdirSync(directory)
+    .filter((fileName) => /^\d+_.+\.sql$/.test(fileName))
+    .sort((left, right) => migrationVersion(left) - migrationVersion(right));
 }
 
 function readBaselineVersion() {
   const argument = process.argv.slice(2).find((value) => value.startsWith('--baseline='));
   if (!argument) return null;
   const value = argument.slice('--baseline='.length);
-  if (!/^\d+$/.test(value)) throw new Error('--baseline needs a migration number, such as --baseline=028.');
+  if (!/^\d+$/.test(value)) throw new Error('--baseline needs a migration number, such as --baseline=010.');
   return Number(value);
 }
 
@@ -39,12 +50,18 @@ function readTarget() {
   return { connectionString, label: `${url.hostname}${url.pathname}` };
 }
 
+async function applyFile(client, directory, fileName) {
+  console.log(`Applying ${fileName}`);
+  // One simple-protocol query: a file with no BEGIN of its own still runs as one transaction.
+  const sql = fs.readFileSync(path.join(directory, fileName), 'utf8').replace(/^﻿/, '');
+  await client.query(sql);
+  await client.query('INSERT INTO schema_migrations (file_name) VALUES ($1)', [fileName]);
+}
+
 async function migrate() {
   const baselineVersion = readBaselineVersion();
   const target = readTarget();
-  const files = fs.readdirSync(migrationsDir)
-    .filter((fileName) => /^\d+_.+\.sql$/.test(fileName))
-    .sort((left, right) => migrationVersion(left) - migrationVersion(right));
+  const files = listMigrations(migrationsDir);
 
   if (baselineVersion !== null && !files.some((fileName) => migrationVersion(fileName) === baselineVersion)) {
     throw new Error(`No migration has the number ${baselineVersion}.`);
@@ -93,14 +110,21 @@ async function migrate() {
 
     const { rows } = await client.query('SELECT file_name FROM schema_migrations');
     const applied = new Set(rows.map((row) => row.file_name));
-    const pending = files.filter((fileName) => !applied.has(fileName));
 
+    if (applied.size > 0 && !files.some((fileName) => applied.has(fileName))) {
+      // The full archive builds exactly the schema the current files build.
+      const archived = listMigrations(archiveDir).filter((fileName) => !applied.has(fileName));
+      for (const fileName of archived) {
+        await applyFile(client, archiveDir, fileName);
+      }
+      await client.query('INSERT INTO schema_migrations (file_name, baselined) SELECT unnest($1::TEXT[]), TRUE', [files]);
+      files.forEach((fileName) => applied.add(fileName));
+      console.log(`Applied ${archived.length} archived migrations and recorded ${files.length} current migrations as already included.`);
+    }
+
+    const pending = files.filter((fileName) => !applied.has(fileName));
     for (const fileName of pending) {
-      console.log(`Applying ${fileName}`);
-      // One simple-protocol query: a file with no BEGIN of its own still runs as one transaction.
-      const sql = fs.readFileSync(path.join(migrationsDir, fileName), 'utf8').replace(/^﻿/, '');
-      await client.query(sql);
-      await client.query('INSERT INTO schema_migrations (file_name) VALUES ($1)', [fileName]);
+      await applyFile(client, migrationsDir, fileName);
     }
 
     console.log(pending.length ? `Applied ${pending.length} migrations.` : 'The database is already up to date.');

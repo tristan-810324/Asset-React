@@ -186,6 +186,8 @@ function stockUsageJoin(includeRequesterInventory) {
              WHEN NOT EXISTS (SELECT 1 FROM asset_unit_tags AS existing_tag WHERE existing_tag.item_id = i.id)
                   AND i.condition IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
                THEN i.quantity
+             WHEN NOT EXISTS (SELECT 1 FROM asset_unit_tags AS existing_tag WHERE existing_tag.item_id = i.id)
+               THEN i.repair_quantity
              ELSE COALESCE((
                SELECT COUNT(*)::INTEGER
                  FROM asset_unit_tags AS repair_tag

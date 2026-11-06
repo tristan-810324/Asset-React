@@ -49,10 +49,17 @@ const isGmailSmtp = /(^|\.)gmail\.com$/i.test(smtpValues.SMTP_HOST || '');
 const smtpPassword = isGmailSmtp ? smtpValues.SMTP_PASS?.replace(/\s+/g, '') : smtpValues.SMTP_PASS;
 
 // One origin, or several separated by commas. A browser Origin header never ends in a slash.
-const frontendOrigins = (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173')
-  .split(',')
+// Never silently use localhost as the production origin: the current production frontend is
+// hosted at asset-react-cane.vercel.app. Additional previews/custom domains remain configurable.
+const defaultFrontendOrigins = isVercel
+  ? ['https://asset-react-cane.vercel.app']
+  : ['http://localhost:5173'];
+const frontendOrigins = [...new Set([
+  ...defaultFrontendOrigins,
+  ...(process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || '').split(','),
+])]
   .map((origin) => origin.trim().replace(/\/+$/, ''))
-  .filter(Boolean);
+  .filter((origin) => origin && (!isVercel || /^https:\/\//i.test(origin)));
 
 module.exports = Object.freeze({
   nodeEnv: process.env.NODE_ENV || 'development',

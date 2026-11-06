@@ -109,16 +109,33 @@ export default function RequesterVerification() {
     }
   }
 
-  return <GsoPageFrame activePage="Requester Verifications" searchPlaceholder="Search requester identity">
-    <div className="space-y-5">
-      <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
-        <div className="relative max-w-3xl">
-          <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">GSO identity checks</span>
+  return (
+    <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search requester identity">
+      <div className="mx-auto max-w-7xl space-y-5 pb-8">
+        <section className="rounded-3xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-6 text-white shadow-xl shadow-blue-950/15 sm:p-8">
+          <span className="inline-flex rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
+            GSO identity checks
+          </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Requester Verification</h1>
-          <p className="mt-2 text-sm font-medium leading-relaxed text-blue-100">Review employee codes and staff details. Newly approved requesters without an existing Employee Master Data record are added automatically and can then submit service requests.</p>
-        </div>
-      </section>
+          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
+            Review employee codes and staff details. Newly approved requesters without an existing Employee Master Data record are added automatically and can then submit service requests.
+          </p>
+          <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Employees and requester pages">
+            <a
+              href="/gso/employees"
+              className="rounded-xl border border-white/20 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              View Employees
+            </a>
+            <a
+              href="/gso/requester-verification"
+              aria-current="page"
+              className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#123c70]"
+            >
+              Requestors Verification
+            </a>
+          </nav>
+        </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Verification summary">
         {[
@@ -216,6 +233,7 @@ export default function RequesterVerification() {
           </article>
         })}</div>}
       </section>
-    </div>
-  </GsoPageFrame>
+      </div>
+    </GsoPageFrame>
+  )
 }

@@ -1,5 +1,25 @@
 const pool = require('../../config/db');
 
+// Return codes and receipts go to the employee's email, so it stays fixed while anything is open:
+// items still out, an issuance or return awaiting a decision, or a lost item not yet settled.
+const emailLockedSql = `(
+  EXISTS (
+    SELECT 1
+      FROM employee_issuances AS open_issue
+      JOIN item_catalog AS open_item ON open_item.id = open_issue.item_id
+     WHERE open_issue.employee_id = employee.id
+       AND (open_issue.status = 'Pending'
+         OR (open_issue.status = 'Issued' AND open_issue.quantity > open_issue.returned_quantity
+             AND open_item.issue_behavior = 'returnable'))
+  ) OR EXISTS (
+    SELECT 1
+      FROM employee_issuance_returns AS open_return
+      JOIN employee_issuances AS returned_issue ON returned_issue.id = open_return.issuance_id
+     WHERE returned_issue.employee_id = employee.id
+       AND (open_return.status = 'Pending' OR (open_return.status = 'Lost' AND open_return.settlement_status = 'Pending'))
+  )
+)`;
+
 const employeeColumns = `
   employee.employee_code AS id,
   employee.first_name AS "firstName",
@@ -16,6 +36,7 @@ const employeeColumns = `
      WHERE issuance.employee_id = employee.id
        AND issuance.status = 'Issued'
   ), 0) AS "assignedCount",
+  ${emailLockedSql} AS "emailLocked",
   COALESCE((
     SELECT json_agg(json_build_object(
       'changedAt', change.changed_at,
@@ -125,6 +146,13 @@ async function updateEmployee(previousCode, employee, { changedByUserId }) {
     );
     const previous = previousResult.rows[0];
     if (!previous) throw Object.assign(new Error('Hindi na makita ang employee profile na ie-edit.'), { status: 404 });
+    const emailChanged = String(previous.email || '').toLowerCase() !== String(employee.email || '').toLowerCase();
+    if (emailChanged) {
+      const lock = await client.query(`SELECT ${emailLockedSql} AS locked FROM employees AS employee WHERE employee.id = $1`, [previous.id]);
+      if (lock.rows[0].locked) {
+        throw Object.assign(new Error('Hindi mapapalitan ang email habang may hawak pang item, nakabinbing issuance o return, o hindi pa nase-settle na nawalang item ang employee. Tapusin muna ang mga iyon.'), { status: 409 });
+      }
+    }
 
     await client.query(
       `UPDATE employees
@@ -173,7 +201,7 @@ async function updateEmployee(previousCode, employee, { changedByUserId }) {
 
     const employeeWithHistory = await getEmployee(client, updated.employee_code);
     await client.query('COMMIT');
-    return employeeWithHistory;
+    return { employee: employeeWithHistory, previousEmail: emailChanged ? previous.email : null };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

@@ -230,7 +230,7 @@ async function createRequest({ requestType, formData, userId }) {
   }
 }
 
-async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate, conditionOut, conditionIn }) {
+async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate, conditionOut, conditionIn, conditionsIn = null }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -301,7 +301,16 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
         [id, effectiveDueDate, conditionOut || 'Good'],
       );
     }
-    if (current.request_type === 'BORROWING' && ['Returned', 'For Repair'].includes(status)) {
+    if (current.request_type === 'BORROWING' && conditionsIn) {
+      for (const [assetId, assetCondition] of Object.entries(conditionsIn)) {
+        await client.query(
+          `UPDATE service_request_assets
+              SET returned_at = COALESCE(returned_at, NOW()), condition_in = $3
+            WHERE request_id = $1 AND id = $2`,
+          [id, assetId, assetCondition],
+        );
+      }
+    } else if (current.request_type === 'BORROWING' && ['Returned', 'For Repair'].includes(status)) {
       await client.query(
         `UPDATE service_request_assets
             SET returned_at = COALESCE(returned_at, NOW()), condition_in = $2

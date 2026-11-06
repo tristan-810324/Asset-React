@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { listEmployees } from './employeesApi'
-import { completeTaggedAssetRepair, listEmployeeIssuances } from './issuancesApi'
+import { completeTaggedAssetRepair, listEmployeeIssuances, markReturnRepaired, requestReturnApproval } from './issuancesApi'
 import { listInventoryItems, updateInventoryItem, type InventoryItemRecord } from './inventoryApi'
 
 type RepairQueueItem = {
@@ -18,7 +18,15 @@ type RepairQueueItem = {
   repairStatus: string
   repairStatusTone: string
   dateCompleted?: string
+  // The return record this repair belongs to; it closes the repair for exactly these units.
+  returnId?: string | null
+  // Why IT Admin turned down the last write-off request, if they did.
+  declinedNote?: string | null
 }
+
+const completedRepairStatuses = ['Repaired / Complete', 'Written Off']
+const writeOffRequestedStatus = 'Write-off requested'
+const writeOffRequestedTone = 'bg-rose-50 text-rose-700'
 
 const repairCompletionReason = 'Repair completed from the To Be Repaired module; item condition updated to Good.'
 
@@ -92,6 +100,8 @@ export default function ToRepaired() {
   const [selectedRepairItem, setSelectedRepairItem] = useState<RepairQueueItem | null>(null)
   const [repairCompletionItem, setRepairCompletionItem] = useState<RepairQueueItem | null>(null)
   const [isCompletingRepair, setIsCompletingRepair] = useState(false)
+  const [writeOffNote, setWriteOffNote] = useState('')
+  const [completionChoice, setCompletionChoice] = useState<'repaired' | 'writeOff'>('repaired')
   const [repairActionError, setRepairActionError] = useState('')
   const [repairActionMessage, setRepairActionMessage] = useState('')
 
@@ -133,16 +143,23 @@ export default function ToRepaired() {
             )[completionRecords.length - 1]
             const reportTimestamp = repairHistoryTimestamp(entry.date)
             const completionTimestamp = latestCompletionRecord ? repairHistoryTimestamp(latestCompletionRecord.changedAt) : 0
-            const isRepairCompleted = entry.event === 'Returned' && completionTimestamp > 0 && reportTimestamp > 0 && completionTimestamp >= reportTimestamp
+            // Returns closed through their own record say so directly; older ones fall back to the audit trail.
+            const isRepairCompleted = Boolean(entry.repairOutcome)
+              || (entry.event === 'Returned' && completionTimestamp > 0 && reportTimestamp > 0 && completionTimestamp >= reportTimestamp)
 
             if (!isRepairCondition(condition) && !isRepairCompleted) return []
             const isPendingApproval = entry.event === 'Return Pending Approval'
+            const isWriteOffRequested = entry.approvalAction === 'Written Off' && !isRepairCompleted
             const priority = priorityFromReturnNote(entry.note, condition)
             const repairStatus = isPendingApproval
               ? 'Awaiting Return Approval'
-              : isRepairCompleted
-                ? 'Repaired / Complete'
-                : 'Pending Repair'
+              : entry.repairOutcome === 'Written Off'
+                ? 'Written Off'
+                : isRepairCompleted
+                  ? 'Repaired / Complete'
+                  : isWriteOffRequested
+                    ? writeOffRequestedStatus
+                    : 'Pending Repair'
 
             return [{
               code: tagCode || entry.code,
@@ -158,10 +175,18 @@ export default function ToRepaired() {
               repairStatus,
               repairStatusTone: isPendingApproval
                 ? 'bg-slate-100 text-slate-700'
-                : isRepairCompleted
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-amber-50 text-amber-700',
-              dateCompleted: isRepairCompleted ? formatRepairCompletionDate(latestCompletionRecord?.changedAt) : undefined,
+                : entry.repairOutcome === 'Written Off'
+                  ? 'bg-slate-100 text-slate-600'
+                  : isRepairCompleted
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : isWriteOffRequested
+                      ? writeOffRequestedTone
+                      : 'bg-amber-50 text-amber-700',
+              dateCompleted: isRepairCompleted
+                ? formatRepairCompletionDate(entry.repairResolvedAt || latestCompletionRecord?.changedAt)
+                : undefined,
+              returnId: entry.returnId || null,
+              declinedNote: isRepairCompleted ? null : entry.approvalDecisionNote || null,
             }]
           })
         })
@@ -171,8 +196,8 @@ export default function ToRepaired() {
             return rightDate - leftDate
           })
 
-        setRepairItems(returnedForRepair.filter((item) => item.repairStatus !== 'Repaired / Complete'))
-        setRepairHistoryItems(returnedForRepair.filter((item) => item.repairStatus === 'Repaired / Complete'))
+        setRepairItems(returnedForRepair.filter((item) => !completedRepairStatuses.includes(item.repairStatus)))
+        setRepairHistoryItems(returnedForRepair.filter((item) => completedRepairStatuses.includes(item.repairStatus)))
         if (employeeHistories.some((result) => result.status === 'rejected')) {
           setRepairLoadError('Some employee repair records could not be loaded. Refresh the page to try again.')
         }
@@ -223,7 +248,34 @@ export default function ToRepaired() {
     setSelectedRepairItem(null)
     setRepairActionError('')
     setRepairActionMessage('')
+    setWriteOffNote('')
+    setCompletionChoice('repaired')
     setRepairCompletionItem(item)
+  }
+
+  // A write-off only goes to IT Admin as a request; the item stays in the queue until they approve it.
+  const handleRequestWriteOff = async () => {
+    if (!repairCompletionItem?.returnId || isCompletingRepair) return
+    if (!writeOffNote.trim()) {
+      setRepairActionError('Write why the item cannot be repaired.')
+      return
+    }
+    const { returnId, asset, tagCode } = repairCompletionItem
+    setIsCompletingRepair(true)
+    setRepairActionError('')
+    try {
+      await requestReturnApproval(returnId, 'Written Off', writeOffNote.trim())
+      setRepairItems((currentItems) => currentItems.map((item) => (item.returnId === returnId
+        ? { ...item, repairStatus: writeOffRequestedStatus, repairStatusTone: writeOffRequestedTone, declinedNote: null }
+        : item)))
+      setRepairActionMessage(`Write-off request for ${asset}${tagCode ? ` (${tagCode})` : ''} sent to IT Admin. It stays in this queue until they decide.`)
+      setRepairCompletionItem(null)
+      setWriteOffNote('')
+    } catch (error) {
+      setRepairActionError(error instanceof Error ? error.message : 'Unable to send the write-off request. Please try again.')
+    } finally {
+      setIsCompletingRepair(false)
+    }
   }
 
   const handleMarkAsRepaired = async () => {
@@ -239,7 +291,10 @@ export default function ToRepaired() {
     setRepairActionError('')
     try {
       let completionTimestamp = new Date().toISOString()
-      if (repairCompletionItem.tagCode) {
+      if (repairCompletionItem.returnId) {
+        // Puts exactly the units of this return back in stock.
+        await markReturnRepaired(repairCompletionItem.returnId)
+      } else if (repairCompletionItem.tagCode) {
         await completeTaggedAssetRepair(repairCompletionItem.tagCode)
       } else {
         const updatedInventoryItem = await updateInventoryItem(inventoryItem.id, {
@@ -267,24 +322,23 @@ export default function ToRepaired() {
         completionTimestamp = latestCompletionRecord?.changedAt || completionTimestamp
       }
 
-      setRepairItems((currentItems) => currentItems.filter((item) =>
-        item.code.toLowerCase() !== repairCompletionItem.code.toLowerCase()
-        || item.dateReported !== repairCompletionItem.dateReported,
-      ))
+      const isSameRepair = (item: RepairQueueItem) => (repairCompletionItem.returnId
+        ? item.returnId === repairCompletionItem.returnId
+        : item.code.toLowerCase() === repairCompletionItem.code.toLowerCase() && item.dateReported === repairCompletionItem.dateReported)
+      setRepairItems((currentItems) => currentItems.filter((item) => !isSameRepair(item)))
       const completedRepair: RepairQueueItem = {
         ...repairCompletionItem,
         repairStatus: 'Repaired / Complete',
         repairStatusTone: 'bg-emerald-50 text-emerald-700',
         dateCompleted: formatRepairCompletionDate(completionTimestamp),
+        declinedNote: null,
       }
-      setRepairHistoryItems((currentItems) => [
-        completedRepair,
-        ...currentItems.filter((item) => !(item.code.toLowerCase() === completedRepair.code.toLowerCase() && item.dateReported === completedRepair.dateReported)),
-      ])
+      setRepairHistoryItems((currentItems) => [completedRepair, ...currentItems.filter((item) => !isSameRepair(item))])
       setRepairActionMessage(repairCompletionItem.tagCode
         ? `${repairCompletionItem.asset} (${repairCompletionItem.tagCode}) is repaired and returned to GSO Storage.`
-        : `${repairCompletionItem.asset} is marked as repaired and is now listed as Good in Items Master Data.`)
+        : `${repairCompletionItem.asset} is repaired and its units are available again.`)
       setRepairCompletionItem(null)
+      setWriteOffNote('')
     } catch (error) {
       setRepairActionError(error instanceof Error ? error.message : 'Unable to complete this repair. Please try again.')
     } finally {
@@ -505,7 +559,7 @@ export default function ToRepaired() {
   }
 
   return (
-    <GsoPageFrame activePage="Repair and Maintenance" searchPlaceholder="Search asset, code, or reporter...">
+    <GsoPageFrame activePage="Repair & Maintenance" searchPlaceholder="Search asset, code, or reporter...">
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
         <div className="relative">
@@ -757,7 +811,7 @@ export default function ToRepaired() {
                   <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-600">{item.dateCompleted || '—'}</td>
                   <td className="max-w-xs px-5 py-4 text-xs text-slate-600">{item.issue}</td>
                   <td className="px-5 py-4 sm:px-6">
-                    <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-emerald-700">Repaired / Complete</span>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${item.repairStatusTone}`}>{item.repairStatus}</span>
                   </td>
                 </tr>
               ))}
@@ -804,10 +858,16 @@ export default function ToRepaired() {
                 {selectedRepairItem.dateCompleted && (
                   <p className="mt-1 text-[0.65rem] text-slate-500">Completed on: {selectedRepairItem.dateCompleted}</p>
                 )}
+                {selectedRepairItem.repairStatus === writeOffRequestedStatus && (
+                  <p className="mt-2 text-[0.68rem] leading-relaxed text-slate-600">Waiting for IT Admin to approve the write-off. If the item gets fixed first, you can still mark it as repaired.</p>
+                )}
+                {selectedRepairItem.declinedNote && (
+                  <p className="mt-2 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-[0.68rem] font-semibold text-rose-800">IT Admin declined the last write-off request: {selectedRepairItem.declinedNote}</p>
+                )}
               </div>
             </div>
             <div className="mt-5 flex justify-end">
-              {selectedRepairItem.repairStatus === 'Pending Repair' && (
+              {(selectedRepairItem.repairStatus === 'Pending Repair' || selectedRepairItem.repairStatus === writeOffRequestedStatus) && (
                 <button
                   type="button"
                   onClick={() => beginRepairCompletion(selectedRepairItem)}
@@ -817,7 +877,7 @@ export default function ToRepaired() {
                     <path d="m5 12 4 4L19 6" />
                     <path d="M12 22a10 10 0 1 0-10-10" />
                   </svg>
-                  Mark as Repaired
+                  Close repair
                 </button>
               )}
               <button
@@ -834,23 +894,57 @@ export default function ToRepaired() {
 
       {repairCompletionItem && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-          <section role="dialog" aria-modal="true" aria-labelledby="repair-completion-title" className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
-                <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m5 12 4 4L19 6" />
-                  <path d="M12 22a10 10 0 1 0-10-10" />
-                </svg>
-              </span>
-              <div>
-                <h3 id="repair-completion-title" className="text-sm font-black text-slate-900">Complete Repair</h3>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                  {repairCompletionItem.tagCode
-                    ? <>Mark <span className="font-bold text-slate-700">{repairCompletionItem.asset}</span> ({repairCompletionItem.tagCode}) as repaired and return this unit to GSO Storage?</>
-                    : <>Mark <span className="font-bold text-slate-700">{repairCompletionItem.asset}</span> ({repairCompletionItem.code}) as repaired? Its condition in Items Master Data will be updated to Good.</>}
-                </p>
-              </div>
-            </div>
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="repair-completion-title"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !isCompletingRepair) { setRepairCompletionItem(null); setRepairActionError('') }
+            }}
+            className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"
+          >
+            <h3 id="repair-completion-title" className="text-sm font-black text-slate-900">Close this repair</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              <span className="font-bold text-slate-700">{repairCompletionItem.asset}</span> · {repairCompletionItem.tagCode || repairCompletionItem.code}
+            </p>
+
+            <fieldset className="mt-4 space-y-2" disabled={isCompletingRepair}>
+              <legend className="mb-2 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">What happened to the item?</legend>
+              <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition ${completionChoice === 'repaired' ? 'border-emerald-300 bg-emerald-50/60 ring-4 ring-emerald-100' : 'border-slate-200 hover:border-slate-300'}`}>
+                <input type="radio" name="repair-outcome" checked={completionChoice === 'repaired'} onChange={() => { setCompletionChoice('repaired'); setRepairActionError('') }} className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600" />
+                <span>
+                  <span className="block text-xs font-extrabold text-slate-900">It was repaired</span>
+                  <span className="mt-0.5 block text-[0.68rem] leading-relaxed text-slate-500">
+                    {repairCompletionItem.tagCode ? 'The unit goes back to GSO Storage.' : 'The units from this return can be issued again.'}
+                  </span>
+                </span>
+              </label>
+              {repairCompletionItem.returnId && repairCompletionItem.repairStatus !== writeOffRequestedStatus && (
+                <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition ${completionChoice === 'writeOff' ? 'border-rose-300 bg-rose-50/60 ring-4 ring-rose-100' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <input type="radio" name="repair-outcome" checked={completionChoice === 'writeOff'} onChange={() => { setCompletionChoice('writeOff'); setRepairActionError('') }} className="mt-0.5 h-4 w-4 shrink-0 accent-rose-600" />
+                  <span>
+                    <span className="block text-xs font-extrabold text-slate-900">It can't be repaired</span>
+                    <span className="mt-0.5 block text-[0.68rem] leading-relaxed text-slate-500">Ask IT Admin to write it off. It stays in this queue until they approve it.</span>
+                  </span>
+                </label>
+              )}
+            </fieldset>
+
+            {completionChoice === 'writeOff' && (
+              <label className="mt-3 block">
+                <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Why it can't be repaired</span>
+                <textarea
+                  autoFocus
+                  value={writeOffNote}
+                  onChange={(event) => setWriteOffNote(event.target.value)}
+                  maxLength={1000}
+                  disabled={isCompletingRepair}
+                  placeholder="e.g. Frame cracked beyond repair; parts no longer available"
+                  className="min-h-20 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
+                />
+              </label>
+            )}
+
             {repairActionError && (
               <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">
                 {repairActionError}
@@ -867,11 +961,11 @@ export default function ToRepaired() {
               </button>
               <button
                 type="button"
-                disabled={isCompletingRepair}
-                onClick={() => { void handleMarkAsRepaired() }}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-extrabold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isCompletingRepair || (completionChoice === 'writeOff' && !writeOffNote.trim())}
+                onClick={() => { void (completionChoice === 'writeOff' ? handleRequestWriteOff() : handleMarkAsRepaired()) }}
+                className={`rounded-xl px-4 py-2 text-xs font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${completionChoice === 'writeOff' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
               >
-                {isCompletingRepair ? 'Saving...' : 'Confirm Repair'}
+                {isCompletingRepair ? 'Saving...' : completionChoice === 'writeOff' ? 'Send write-off request' : 'Mark as repaired'}
               </button>
             </div>
           </section>

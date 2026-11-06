@@ -3,6 +3,7 @@ const authenticate = require('../../middleware/auth.middleware');
 const requireRole = require('../../middleware/role.middleware');
 const issuancesController = require('./issuances.controller');
 const returnsController = require('./returns.controller');
+const labelsController = require('./labels.controller');
 
 const router = express.Router();
 
@@ -10,8 +11,12 @@ router.post('/', authenticate, requireRole('GSO_STAFF'), issuancesController.cre
 router.post('/batch', authenticate, requireRole('GSO_STAFF'), issuancesController.createIssuanceBatch);
 router.get('/batch/approved', authenticate, requireRole('GSO_STAFF'), issuancesController.listApprovedIssuanceBatches);
 router.get('/batch/:batchId', authenticate, requireRole('GSO_STAFF'), issuancesController.getIssuanceBatch);
+router.get('/labels', authenticate, requireRole('GSO_STAFF'), labelsController.listUnitLabels);
+router.post('/tags/:tagCode/print', authenticate, requireRole('GSO_STAFF'), labelsController.recordLabelPrint);
+router.post('/tags/:tagCode/reprint', authenticate, requireRole('GSO_STAFF'), labelsController.reprintUnitLabel);
 router.get('/tags/:tagCode', authenticate, requireRole('GSO_STAFF'), issuancesController.getAssetTag);
 router.patch('/tags/:tagCode/inspection', authenticate, requireRole('GSO_STAFF'), issuancesController.inspectAssetTag);
+router.post('/tags/:tagCode/return-otp', authenticate, requireRole('GSO_STAFF'), returnsController.sendTaggedReturnOtp);
 router.post('/tags/:tagCode/return', authenticate, requireRole('GSO_STAFF'), returnsController.confirmScannedTagReturn);
 router.patch('/tags/:tagCode/repair-complete', authenticate, requireRole('GSO_STAFF'), returnsController.completeTaggedAssetRepair);
 router.get('/mine/activity', authenticate, requireRole('BORROWER'), issuancesController.listMyIssuanceActivity);
@@ -19,6 +24,14 @@ router.get('/mine/pending', authenticate, requireRole('BORROWER'), issuancesCont
 router.post('/mine/:batchId/decision', authenticate, requireRole('BORROWER'), issuancesController.decideMyIssuanceBatch);
 router.post('/batch/:batchId/handover', authenticate, requireRole('GSO_STAFF'), issuancesController.recordIssuanceHandover);
 router.get('/employee/:employeeCode', authenticate, requireRole('GSO_STAFF'), issuancesController.listEmployeeIssuances);
+router.get('/holdings', authenticate, requireRole('GSO_STAFF', 'IT_ADMIN'), returnsController.listHoldings);
+router.get('/records', authenticate, requireRole('GSO_STAFF', 'IT_ADMIN'), returnsController.listIssuanceRecords);
+router.get('/returns/approval-requests', authenticate, requireRole('GSO_STAFF', 'IT_ADMIN'), returnsController.listApprovalRequests);
+router.post('/returns/:returnId/repair', authenticate, requireRole('GSO_STAFF'), returnsController.resolveReturnRepair);
+router.patch('/returns/:returnId/settlement', authenticate, requireRole('IT_ADMIN'), returnsController.updateReturnSettlement);
+router.post('/returns/:returnId/approval-request', authenticate, requireRole('GSO_STAFF'), returnsController.requestReturnApproval);
+router.post('/returns/:returnId/approval-decision', authenticate, requireRole('IT_ADMIN'), returnsController.decideApprovalRequest);
+router.post('/returns/otp', authenticate, requireRole('GSO_STAFF'), returnsController.sendBulkReturnOtp);
 router.post('/returns', authenticate, requireRole('GSO_STAFF'), returnsController.createEmployeeReturn);
 router.get('/returns/approval', returnsController.lookupReturnApproval);
 router.post('/returns/approval', returnsController.decideReturnApproval);

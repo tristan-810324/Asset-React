@@ -5,6 +5,7 @@ const pool = require('./config/db');
 const authRoutes = require('./modules/auth/auth.routes');
 const usersRoutes = require('./modules/users/users.routes');
 const inventoryRoutes = require('./modules/inventory/inventory.routes');
+const inventoryCountsRoutes = require('./modules/inventory/counts.routes');
 const employeesRoutes = require('./modules/employees/employees.routes');
 const issuancesRoutes = require('./modules/issuances/issuances.routes');
 const departmentsRoutes = require('./modules/departments/departments.routes');
@@ -22,7 +23,14 @@ if (env.isVercel) {
   app.set('trust proxy', true);
 }
 
-app.use(cors({ origin: env.frontendOrigin }));
+const allowedFrontendOrigins = new Set(Array.isArray(env.frontendOrigin) ? env.frontendOrigin : [env.frontendOrigin]);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedFrontendOrigins.has(origin)) return callback(null, true);
+    console.warn('Blocked a browser request from an unconfigured frontend origin.', { origin });
+    return callback(null, false);
+  },
+}));
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/', (req, res) => {
@@ -46,6 +54,7 @@ if (env.isVercel) {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/inventory', inventoryRoutes);
+app.use('/api/v1/inventory-counts', inventoryCountsRoutes);
 app.use('/api/v1/employees', employeesRoutes);
 app.use('/api/v1/issuances', issuancesRoutes);
 app.use('/api/v1/departments', departmentsRoutes);

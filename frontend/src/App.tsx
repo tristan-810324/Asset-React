@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import AdminDashboard from './admin/admindashboard'
 import UserManagement from './admin/usermanagement'
 import AuditLogs from './admin/auditlogs'
+import ReturnsReview from './admin/returnsreview'
 import RequesterDashboard from './requesters/requesterdashboard'
 import RequestCenter from './requesters/requestcenter'
 import RequestForm from './requesters/requestform'
@@ -116,6 +117,9 @@ export default function App() {
   }
   if (path === '/admin/audit-logs') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AuditLogs /></ProtectedDashboard>
+  }
+  if (path === '/admin/returns') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><ReturnsReview /></ProtectedDashboard>
   }
   if (path === '/admin/users') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><UserManagement /></ProtectedDashboard>

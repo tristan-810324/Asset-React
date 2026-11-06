@@ -63,13 +63,12 @@ async function createUnitTags(client, issuance, assignedUserId) {
     await client.query(
       `UPDATE asset_unit_tags
           SET issuance_id = $2,
-              condition = $3,
               custody_status = 'Issued',
-              assigned_employee_id = $4,
-              assigned_user_id = $5,
+              assigned_employee_id = $3,
+              assigned_user_id = $4,
               updated_at = NOW()
         WHERE id = ANY($1::BIGINT[])`,
-      [tags.map((tag) => tag.id), issuance.id, issuance.item_condition, issuance.employee_id, assignedUserId],
+      [tags.map((tag) => tag.id), issuance.id, issuance.employee_id, assignedUserId],
     );
   }
 
@@ -713,14 +712,16 @@ async function getIssuanceBatch(batchId) {
                (
                  SELECT json_agg(json_build_object(
                    'tagCode', tag_set.tag_code,
-                   'unitNumber', tag_set.unit_number
+                   'unitNumber', tag_set.unit_number,
+                   'printedAt', tag_set.label_printed_at,
+                   'returned', tag_set.returned
                  ) ORDER BY tag_set.unit_number)
                    FROM (
-                     SELECT tag.tag_code, tag.unit_number
+                     SELECT tag.tag_code, tag.unit_number, tag.label_printed_at, FALSE AS returned
                        FROM asset_unit_tags AS tag
                       WHERE tag.issuance_id = issue.id
                      UNION
-                     SELECT tag.tag_code, tag.unit_number
+                     SELECT COALESCE(return_record.tag_snapshot->>'tagCode', tag.tag_code), tag.unit_number, NULL::TIMESTAMPTZ, TRUE
                        FROM employee_issuance_returns AS return_record
                        JOIN asset_unit_tags AS tag ON tag.id = return_record.asset_unit_tag_id
                       WHERE return_record.issuance_id = issue.id
@@ -811,7 +812,7 @@ async function getAssetTagByCode(tagCode) {
     `SELECT tag.id::TEXT AS id,
             tag.tag_code AS "tagCode",
             tag.unit_number AS "unitNumber",
-            tag.serial_number AS "serialNumber",
+            COALESCE(NULLIF(btrim(tag.serial_number), ''), NULLIF(btrim(item.serial_number), '')) AS "serialNumber",
             tag.condition,
             tag.lifecycle_status AS "lifecycleStatus",
             tag.custody_status AS "custodyStatus",
@@ -879,6 +880,21 @@ async function getAssetTagByCode(tagCode) {
   );
   if (result.rows[0]) return result.rows[0];
 
+  const retiredResult = await pool.query(
+    `SELECT reprint.created_at AS "replacedAt",
+            reprint.kind,
+            reprint.label_version AS "labelVersion",
+            tag.unit_number AS "unitNumber",
+            item.item_code AS "itemCode",
+            COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName"
+       FROM asset_label_reprints AS reprint
+       JOIN asset_unit_tags AS tag ON tag.id = reprint.asset_unit_tag_id
+       JOIN item_catalog AS item ON item.id = tag.item_id
+      WHERE reprint.old_tag_code = $1`,
+    [tagCode],
+  );
+  if (retiredResult.rows[0]) return { retiredLabel: true, ...retiredResult.rows[0] };
+
   const itemResult = await pool.query(
     `SELECT item.item_code AS "itemCode",
             COUNT(tag.id)::INTEGER AS "unitCount",
@@ -916,6 +932,10 @@ async function updateAssetTagInspection({ tagCode, condition, note, changedByUse
     if (!tag) {
       await client.query('COMMIT');
       return null;
+    }
+    // An issued unit's condition is recorded at return, so it cannot be rewritten while the employee still holds it.
+    if (tag.custody_status === 'Issued') {
+      throw conflict('Naka-issue pa ang item na ito. Itala ang condition kapag ini-return na ito sa Return Items.');
     }
 
     await client.query(
@@ -1031,7 +1051,8 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
       )
       : batchId !== undefined && gsoUserId !== undefined
         ? await client.query(
-          `SELECT batch.id, batch.status, batch.token_expires_at, employee.id AS employee_id,
+          `SELECT batch.id, batch.status, batch.token_expires_at, batch.requester_user_id,
+                  employee.id AS employee_id,
                   employee.employee_code, employee.first_name, employee.last_name
              FROM employee_issuance_batches AS batch
              JOIN employees AS employee ON employee.id = batch.employee_id
@@ -1049,6 +1070,10 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
         [tokenHash],
       );
     const batch = batchResult.rows[0];
+    // An employee with an A.S.SET account confirms receipt there; GSO records it only for those without one.
+    if (batch && gsoUserId !== undefined && batch.requester_user_id && batch.status === 'Pending') {
+      throw conflict('May A.S.SET account ang employee na ito, kaya siya mismo ang magkukumpirma ng receipt sa kanyang Requester account.');
+    }
     if (batch) {
       const itemsResult = await client.query(
         `SELECT issue.id, issue.status, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure,
@@ -1335,7 +1360,14 @@ async function listEmployeeIssuances(employeeCode) {
               issue.item_condition AS condition,
               issue.quantity - issue.returned_quantity AS quantity,
               issue.unit_of_measure AS "unitOfMeasure",
-              to_char(issue.decided_at, 'Mon DD, YYYY · HH12:MI AM') AS "assignedOn"
+              to_char(issue.decided_at, 'Mon DD, YYYY · HH12:MI AM') AS "assignedOn",
+              COALESCE((
+                SELECT json_agg(tag.tag_code ORDER BY tag.unit_number)
+                  FROM asset_unit_tags AS tag
+                 WHERE tag.issuance_id = issue.id
+                   AND tag.custody_status = 'Issued'
+                   AND tag.lifecycle_status = 'Active'
+              ), '[]'::JSON) AS "assetTagCodes"
          FROM employee_issuances AS issue
          JOIN item_catalog AS inventory ON inventory.id = issue.item_id
         WHERE issue.employee_id = $1 AND issue.status = 'Issued'
@@ -1350,6 +1382,14 @@ async function listEmployeeIssuances(employeeCode) {
               history.quantity,
               history."unitOfMeasure",
               history.note,
+              history."returnId",
+              history."repairOutcome",
+              history."repairResolvedAt",
+              history."returnCondition",
+              history."returnedByName",
+              history."confirmationMethod",
+              history."approvalAction",
+              history."approvalDecisionNote",
               to_char(history.event_at, 'Mon DD, YYYY') AS date
          FROM (
            SELECT CASE issue.status
@@ -1363,6 +1403,14 @@ async function listEmployeeIssuances(employeeCode) {
                   issue.quantity,
                   issue.unit_of_measure AS "unitOfMeasure",
                   COALESCE(issue.decision_note, issue.notes, '') AS note,
+                  NULL::TEXT AS "returnId",
+                  NULL::TEXT AS "repairOutcome",
+                  NULL::TIMESTAMPTZ AS "repairResolvedAt",
+                  NULL::TEXT AS "returnCondition",
+                  NULL::TEXT AS "returnedByName",
+                  NULL::TEXT AS "confirmationMethod",
+                  NULL::TEXT AS "approvalAction",
+                  NULL::TEXT AS "approvalDecisionNote",
                   COALESCE(issue.decided_at, issue.requested_at) AS event_at,
                   issue.id AS sort_id
              FROM employee_issuances AS issue
@@ -1376,18 +1424,30 @@ async function listEmployeeIssuances(employeeCode) {
                     WHEN 'Returned' THEN 'Returned'
                     WHEN 'Rejected' THEN 'Return Rejected'
                     WHEN 'Expired' THEN 'Return Expired'
+                    WHEN 'Lost' THEN 'Reported Lost'
+                    WHEN 'Voided' THEN 'Return Voided'
                     ELSE 'Return Email Failed'
                   END AS event,
                   inventory.description AS item,
                   inventory.item_code AS code,
-                  return_tag.tag_code AS "assetTagCode",
+                  COALESCE(return_request.tag_snapshot->>'tagCode', return_tag.tag_code) AS "assetTagCode",
                   return_request.quantity,
                   issue.unit_of_measure AS "unitOfMeasure",
                   CASE return_request.status
                     WHEN 'Pending' THEN 'Awaiting employee email approval. Condition after return: ' || return_request.return_condition || '. GSO notes: ' || return_request.reason
                     WHEN 'Returned' THEN COALESCE(return_request.decision_note, 'Return confirmed by employee.') || ' Condition after return: ' || return_request.return_condition || '. GSO notes: ' || return_request.reason
+                    WHEN 'Lost' THEN COALESCE(return_request.decision_note, '') || ' Settlement: ' || COALESCE(return_request.settlement_status, 'Pending') || '. GSO notes: ' || return_request.reason
+                    WHEN 'Voided' THEN 'Return voided by IT Admin: ' || COALESCE(return_request.void_reason, '')
                     ELSE COALESCE(return_request.decision_note, return_request.reason)
                   END AS note,
+                  return_request.id::TEXT AS "returnId",
+                  return_request.repair_outcome AS "repairOutcome",
+                  return_request.repair_resolved_at AS "repairResolvedAt",
+                  return_request.return_condition AS "returnCondition",
+                  return_request.returned_by_name AS "returnedByName",
+                  return_request.confirmation_method AS "confirmationMethod",
+                  return_request.approval_action AS "approvalAction",
+                  return_request.approval_decision_note AS "approvalDecisionNote",
                   COALESCE(return_request.decided_at, return_request.requested_at) AS event_at,
                   return_request.id AS sort_id
              FROM employee_issuance_returns AS return_request
@@ -1402,6 +1462,35 @@ async function listEmployeeIssuances(employeeCode) {
   ]);
 
   return { assignedItems: itemsResult.rows, history: historyResult.rows };
+}
+
+// Unfinished returns that stop new issuances to an employee until GSO sorts them out.
+async function getEmployeeReturnBlockers(employeeCode) {
+  const result = await pool.query(
+    `SELECT (
+              SELECT COUNT(*)
+                FROM employee_issuances AS issue
+                JOIN employees AS employee ON employee.id = issue.employee_id
+                JOIN item_catalog AS item ON item.id = issue.item_id
+                JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+               WHERE lower(employee.employee_code) = lower($1)
+                 AND issue.status = 'Issued'
+                 AND issue.quantity > issue.returned_quantity
+                 AND item.issue_behavior = 'returnable'
+                 AND COALESCE(batch.expected_return_at < NOW(), batch.expected_return_date < (NOW() AT TIME ZONE 'Asia/Manila')::DATE, FALSE)
+            )::INTEGER AS overdue,
+            (
+              SELECT COUNT(*)
+                FROM employee_issuance_returns AS return_record
+                JOIN employee_issuances AS issue ON issue.id = return_record.issuance_id
+                JOIN employees AS employee ON employee.id = issue.employee_id
+               WHERE lower(employee.employee_code) = lower($1)
+                 AND return_record.status = 'Lost'
+                 AND return_record.settlement_status = 'Pending'
+            )::INTEGER AS unsettled`,
+    [employeeCode],
+  );
+  return result.rows[0];
 }
 
 async function expirePendingIssuances() {
@@ -1451,6 +1540,8 @@ async function expirePendingIssuances() {
 }
 
 module.exports = {
+  createAssetTagCode,
+  getEmployeeReturnBlockers,
   createPendingIssuance,
   createPendingIssuanceBatch,
   listMyPendingIssuanceBatches,

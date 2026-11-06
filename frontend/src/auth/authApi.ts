@@ -66,7 +66,7 @@ export async function apiRequest<T>(path: string, options: RequestInit & { auth?
   } catch {
     throw new ApiError(import.meta.env.DEV
       ? 'Unable to connect to the backend. Make sure the server is running on port 5000.'
-      : 'Unable to connect to the backend. Please try again.');
+      : `Unable to connect to the backend from ${window.location.origin}. Confirm this exact origin is included in the backend Vercel FRONTEND_ORIGIN setting, then redeploy the backend.`);
   }
 
   const envelope = await response.json().catch(() => null) as ApiEnvelope<T> | null;

@@ -4,6 +4,7 @@ async function addRepairHold(queryable, itemId, usage) {
   const result = await queryable.query(
     `SELECT item.quantity,
             item.condition AS item_condition,
+            item.repair_quantity AS bulk_repair_quantity,
             COUNT(tag.id)::INTEGER AS tagged_quantity,
             COUNT(tag.id) FILTER (
               WHERE tag.custody_status = 'Available'
@@ -18,8 +19,10 @@ async function addRepairHold(queryable, itemId, usage) {
   );
   const item = result.rows[0];
   if (!item) return { ...usage, repairQuantity: 0 };
-  const repairQuantity = Number(item.tagged_quantity) === 0 && repairConditions.includes(item.item_condition)
-    ? Number(item.quantity)
+  // Bulk stock: a whole-stock repair condition holds everything; otherwise only the units set
+  // aside by damaged returns. Tagged stock counts its own units in repair.
+  const repairQuantity = Number(item.tagged_quantity) === 0
+    ? repairConditions.includes(item.item_condition) ? Number(item.quantity) : Number(item.bulk_repair_quantity || 0)
     : Number(item.repair_quantity || 0);
   return { ...usage, repairQuantity };
 }

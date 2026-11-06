@@ -46,6 +46,7 @@ const transitions = {
 };
 
 const conditions = new Set(['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']);
+const repairConditions = new Set(['Needs Repair', 'Under Maintenance', 'Unserviceable']);
 
 async function listAssets() {
   return requestsRepository.listAssets();
@@ -143,8 +144,30 @@ async function updateStatus(idValue, input, user) {
     if (dueDate < todayIso) invalid('Pumili ng due date na ngayon o sa hinaharap.');
   }
   const conditionOut = input.conditionOut || 'Good';
-  const conditionIn = input.conditionIn || (status === 'For Repair' ? 'Needs Repair' : 'Good');
+  let conditionIn = input.conditionIn || (status === 'For Repair' ? 'Needs Repair' : 'Good');
   if (!conditions.has(conditionOut) || !conditions.has(conditionIn)) invalid('Pumili ng valid na item condition.');
+
+  // A return from the requester is inspected item by item; nothing defaults to Good, and damaged
+  // items keep the request in For Repair so they are not lent out again.
+  let conditionsIn = null;
+  if (current.requestType === 'BORROWING' && current.status === 'Return Requested' && ['Returned', 'For Repair'].includes(status)) {
+    const provided = input.conditionsIn && typeof input.conditionsIn === 'object' && !Array.isArray(input.conditionsIn)
+      ? input.conditionsIn
+      : {};
+    conditionsIn = {};
+    for (const asset of current.assets.filter((entry) => !entry.returnedAt)) {
+      const condition = provided[String(asset.id)];
+      if (!conditions.has(condition) || condition === 'Retired') {
+        invalid(`Piliin ang condition ng ibinalik na ${asset.itemName || 'item'}.`);
+      }
+      conditionsIn[String(asset.id)] = condition;
+    }
+    const damaged = Object.values(conditionsIn).some((condition) => repairConditions.has(condition));
+    if (damaged && status !== 'For Repair') invalid('May sirang item sa ibinalik, kaya For Repair ang piliin.', 409);
+    if (!damaged && status === 'For Repair') invalid('Walang sirang item sa ibinalik, kaya Returned ang piliin.', 409);
+    if (damaged && !note) invalid('Isulat sa review note kung ano ang sira.');
+    conditionIn = null;
+  }
 
   return requestsRepository.setStatus({
     id,
@@ -155,6 +178,7 @@ async function updateStatus(idValue, input, user) {
     dueDate,
     conditionOut,
     conditionIn,
+    conditionsIn,
   });
 }
 

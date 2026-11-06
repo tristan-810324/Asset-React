@@ -66,6 +66,8 @@ export default function RequesterRequestInbox() {
   const [dueDate, setDueDate] = useState('')
   const [conditionOut, setConditionOut] = useState('Good')
   const [conditionIn, setConditionIn] = useState('Good')
+  // Condition of each returned item, by asset id; empty until GSO inspects it.
+  const [assetConditions, setAssetConditions] = useState<Record<string, string>>({})
   const [busyStatus, setBusyStatus] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -113,6 +115,31 @@ export default function RequesterRequestInbox() {
       return
     }
 
+    // A return from the requester is inspected item by item; nothing is assumed to be Good.
+    const isInspectingReturn = selected.status === 'Return Requested' && (nextStatus === 'Returned' || nextStatus === 'For Repair')
+    let conditionsIn: Record<string, string> | undefined
+    if (isInspectingReturn) {
+      const openAssets = selected.assets.filter((asset) => !asset.returnedAt)
+      if (openAssets.some((asset) => !assetConditions[asset.id])) {
+        setError('Choose the condition of each returned item first.')
+        return
+      }
+      conditionsIn = Object.fromEntries(openAssets.map((asset) => [asset.id, assetConditions[asset.id]]))
+      const damaged = Object.values(conditionsIn).some((condition) => ['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(condition))
+      if (damaged && nextStatus === 'Returned') {
+        setError('An item came back damaged, so choose For Repair.')
+        return
+      }
+      if (!damaged && nextStatus === 'For Repair') {
+        setError('Nothing came back damaged, so choose Returned.')
+        return
+      }
+      if (damaged && !reviewNote.trim()) {
+        setError('Describe the damage in the review note.')
+        return
+      }
+    }
+
     setBusyStatus(nextStatus)
     setError('')
     setMessage('')
@@ -121,9 +148,11 @@ export default function RequesterRequestInbox() {
         status: nextStatus,
         note: reviewNote,
         ...(nextStatus === 'Issued' ? { dueDate: issueDueDate, conditionOut } : {}),
-        ...(nextStatus === 'Returned' || nextStatus === 'For Repair'
-          ? { conditionIn: nextStatus === 'For Repair' && conditionIn === 'Good' ? 'Needs Repair' : conditionIn }
-          : {}),
+        ...(isInspectingReturn
+          ? { conditionsIn }
+          : nextStatus === 'Returned' || nextStatus === 'For Repair'
+            ? { conditionIn: nextStatus === 'For Repair' && conditionIn === 'Good' ? 'Needs Repair' : conditionIn }
+            : {}),
       })
       setRequests((current) => current.map((request) => request.id === updated.id ? updated : request))
       setReviewNote('')
@@ -273,7 +302,30 @@ export default function RequesterRequestInbox() {
                   </div>
                 )}
 
-                {selectedActions.some((action) => ['Returned', 'For Repair'].includes(action)) && (
+                {selected.status === 'Return Requested' && (
+                  <fieldset className="mt-3">
+                    <legend className="mb-1.5 text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Condition of each returned item</legend>
+                    <div className="space-y-2">
+                      {selected.assets.filter((asset) => !asset.returnedAt).map((asset) => (
+                        <label key={asset.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
+                          <span className="text-xs font-bold text-slate-700">{asset.quantity} {asset.unitOfMeasure} {asset.itemName}{asset.conditionOut ? ` (issued ${asset.conditionOut})` : ''}</span>
+                          <select
+                            value={assetConditions[asset.id] || ''}
+                            onChange={(event) => setAssetConditions((current) => ({ ...current, [asset.id]: event.target.value }))}
+                            aria-label={`Condition of ${asset.itemName} on return`}
+                            className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs font-bold outline-none focus:border-blue-400"
+                          >
+                            <option value="" disabled>Choose condition</option>
+                            {['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'].map((item) => <option key={item}>{item}</option>)}
+                          </select>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-1.5 text-[0.62rem] font-semibold text-slate-500">Damaged items go to For Repair and are not lent out again until repaired.</p>
+                  </fieldset>
+                )}
+
+                {selected.status !== 'Return Requested' && selectedActions.some((action) => ['Returned', 'For Repair'].includes(action)) && (
                   <label className="mt-3 block">
                     <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Condition on return</span>
                     <select value={conditionIn} onChange={(event) => setConditionIn(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold outline-none focus:border-blue-400">{['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'].map((item) => <option key={item}>{item}</option>)}</select>
