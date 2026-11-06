@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { clearAuthSession, getCurrentUser, type AuthUser } from '../../auth/authApi'
 import { ITSSUserContext } from '../../ITSS/itssUserContext'
 
-export type ITSSPage = 'Overview' | 'User management'
+export type ITSSPage = 'Overview'
 type ITSSIconName = 'grid' | 'menu' | 'users'
 
 const iconPaths: Record<ITSSIconName, ReactNode> = {
@@ -17,7 +17,6 @@ function Icon({ name }: { name: ITSSIconName }) {
 
 const navigation: Array<{ name: ITSSPage; href: string; icon: ITSSIconName }> = [
   { name: 'Overview', href: '/itss', icon: 'grid' },
-  { name: 'User management', href: '/itss/users', icon: 'users' },
 ]
 
 export default function ITSSNavbar({ currentPage, title, subtitle, children }: {
