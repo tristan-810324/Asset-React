@@ -1,5 +1,7 @@
 ﻿# PERN Deployment Practice Guide
 
+> Render ang gamit ng gabay na ito para sa backend. Para sa Vercel at Neon, sundin ang [deployment-vercel.md](./deployment-vercel.md).
+
 Gabay ito para mag-rehearse ng deployment gamit ang parehong providers:
 
 ```text

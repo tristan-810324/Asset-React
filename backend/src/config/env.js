@@ -1,5 +1,14 @@
-const path = require('node:path');
-require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+// backend/.env is loaded by the local entry points, index.js and scripts/create-admin.js.
+// Keep it out of this file: Vercel's build copies any file referenced here into the function.
+
+// Vercel sets VERCEL=1 at build time and at runtime.
+const isVercel = Boolean(process.env.VERCEL);
+
+// Vercel runs in UTC and reserves the TZ variable, so it cannot be set in its dashboard.
+// The date logic in this app expects Philippine time, the same as a local server here.
+if (isVercel) {
+  process.env.TZ = 'Asia/Manila';
+}
 
 function requiredValue(name, fallback) {
   const value = process.env[name] || fallback;
@@ -39,12 +48,19 @@ if (smtpPort !== null && (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPor
 const isGmailSmtp = /(^|\.)gmail\.com$/i.test(smtpValues.SMTP_HOST || '');
 const smtpPassword = isGmailSmtp ? smtpValues.SMTP_PASS?.replace(/\s+/g, '') : smtpValues.SMTP_PASS;
 
+// One origin, or several separated by commas. A browser Origin header never ends in a slash.
+const frontendOrigins = (process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 module.exports = Object.freeze({
   nodeEnv: process.env.NODE_ENV || 'development',
+  isVercel,
   port,
   databaseUrl,
   jwtSecret,
-  frontendOrigin: process.env.FRONTEND_ORIGIN || process.env.FRONTEND_URL || 'http://localhost:5173',
+  frontendOrigin: frontendOrigins.length === 1 ? frontendOrigins[0] : frontendOrigins,
   smtp: configuredSmtpCount === smtpNames.length
     ? {
         host: smtpValues.SMTP_HOST,

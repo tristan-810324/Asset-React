@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import { listRequesterIdentityReviews, reviewRequesterIdentity, type RequesterIdentity, type RequesterIdentityStatus } from '../requesters/requesterApi'
+import { getRequesterIdentityPicture, listRequesterIdentityReviews, reviewRequesterIdentity, type RequesterIdentity, type RequesterIdentityStatus } from '../requesters/requesterApi'
 
 const statuses: Array<'all' | RequesterIdentityStatus> = ['all', 'Pending', 'Needs Correction', 'Verified']
 const statusStyle: Record<RequesterIdentityStatus, string> = {
@@ -24,12 +24,17 @@ export default function RequesterVerification() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [retryDecision, setRetryDecision] = useState<{ profile: RequesterIdentity; status: 'Verified' | 'Needs Correction' } | null>(null)
+  const [pictures, setPictures] = useState<Record<string, string>>({})
+  const requestedPictures = useRef(new Set<string>())
 
   const loadProfiles = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      setProfiles(await listRequesterIdentityReviews())
+      const nextProfiles = await listRequesterIdentityReviews()
+      requestedPictures.current.clear()
+      setPictures({})
+      setProfiles(nextProfiles)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to load the requester identity queue.')
     } finally {
@@ -49,6 +54,21 @@ export default function RequesterVerification() {
         .some((value) => value.toLowerCase().includes(query))
     })
   }, [filter, profiles, search])
+
+  // The queue arrives without pictures because a Vercel response is limited to 4.5 MB.
+  // A card shows its initials until its picture loads, or if the picture cannot load.
+  useEffect(() => {
+    for (const profile of filteredProfiles) {
+      const key = String(profile.userId)
+      if (!profile.hasPicture || requestedPictures.current.has(key)) continue
+      requestedPictures.current.add(key)
+      void getRequesterIdentityPicture(profile.userId)
+        .then((pictureData) => {
+          if (pictureData) setPictures((current) => ({ ...current, [key]: pictureData }))
+        })
+        .catch(() => requestedPictures.current.delete(key))
+    }
+  }, [filteredProfiles])
 
   const counts = useMemo(() => ({
     pending: profiles.filter((profile) => profile.status === 'Pending').length,
@@ -159,11 +179,12 @@ export default function RequesterVerification() {
         {!loading && <div className="divide-y divide-slate-100">{filteredProfiles.map((profile) => {
           const key = String(profile.userId)
           const isBusy = busyId === profile.userId
+          const picture = profile.pictureData || pictures[key]
           return <article key={key} className="p-5 sm:px-6 sm:py-5">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-3">
-                  {profile.pictureData ? <img src={profile.pictureData} alt={`${profileFullName(profile)} profile`} className="h-14 w-14 shrink-0 rounded-2xl border border-slate-200 object-cover" /> : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-blue-50 text-sm font-black text-blue-700">{profileFullName(profile).split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}</span>}
+                  {picture ? <img src={picture} alt={`${profileFullName(profile)} profile`} className="h-14 w-14 shrink-0 rounded-2xl border border-slate-200 object-cover" /> : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-blue-50 text-sm font-black text-blue-700">{profileFullName(profile).split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}</span>}
                   <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="text-base font-black text-slate-900">{profileFullName(profile)}</h3><span className={`rounded-full border px-2.5 py-1 text-[0.65rem] font-extrabold ${statusStyle[profile.status]}`}>{profile.status}</span></div><p className="mt-1 break-all text-xs font-medium text-slate-500">Account: {profile.accountName} · {profile.accountEmail}</p></div>
                 </div>
                 <dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">

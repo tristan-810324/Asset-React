@@ -172,7 +172,7 @@ type GsoNavbarProps = {
   onOpenNotifications: () => void
 }
 
-export default function GsoNavbar({ currentPage, mobileMenuOpen, notificationsOpen, onClose, onOpenNotifications }: GsoNavbarProps) {
+export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoNavbarProps) {
   return (
     <>
       <aside

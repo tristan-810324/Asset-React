@@ -9,6 +9,7 @@ router.use(authenticate);
 router.get('/me', requireRole('BORROWER'), controller.getMine);
 router.put('/me', requireRole('BORROWER'), controller.submitMine);
 router.get('/reviews', requireRole('GSO_STAFF'), controller.listReviews);
+router.get('/reviews/:userId/picture', requireRole('GSO_STAFF'), controller.getReviewPicture);
 router.patch('/reviews/:userId', requireRole('GSO_STAFF'), controller.review);
 
 module.exports = router;

@@ -64,7 +64,9 @@ export async function apiRequest<T>(path: string, options: RequestInit & { auth?
   try {
     response = await fetch(`${apiBaseUrl}${path}`, { ...requestOptions, headers });
   } catch {
-    throw new ApiError('Unable to connect to the backend. Make sure the server is running on port 5000.');
+    throw new ApiError(import.meta.env.DEV
+      ? 'Unable to connect to the backend. Make sure the server is running on port 5000.'
+      : 'Unable to connect to the backend. Please try again.');
   }
 
   const envelope = await response.json().catch(() => null) as ApiEnvelope<T> | null;

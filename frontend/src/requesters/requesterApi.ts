@@ -70,6 +70,8 @@ export type RequesterIdentity = {
   position: string
   contactNumber: string
   pictureData: string | null
+  /** Set by the GSO review queue, which omits pictureData; load it with getRequesterIdentityPicture. */
+  hasPicture?: boolean
   status: RequesterIdentityStatus
   reviewNote: string
   submittedAt: string | null
@@ -200,6 +202,10 @@ export function listRequesterIdentityReviews(status = 'all') {
   const query = new URLSearchParams()
   if (status !== 'all') query.set('status', status)
   return apiRequest<{ profiles: RequesterIdentity[] }>(`/requester-identity/reviews${query.size ? `?${query.toString()}` : ''}`).then((data) => data.profiles)
+}
+
+export function getRequesterIdentityPicture(userId: string | number) {
+  return apiRequest<{ pictureData: string | null }>(`/requester-identity/reviews/${encodeURIComponent(String(userId))}/picture`).then((data) => data.pictureData)
 }
 
 export function reviewRequesterIdentity(userId: string | number, payload: { status: 'Verified' | 'Needs Correction'; note: string }) {

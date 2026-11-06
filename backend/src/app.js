@@ -12,8 +12,15 @@ const auditRoutes = require('./modules/audit/audit.routes');
 const requestsRoutes = require('./modules/requests/requests.routes');
 const requesterIdentityRoutes = require('./modules/requester-identity/requester-identity.routes');
 const errorMiddleware = require('./middleware/error.middleware');
+const expirySweepMiddleware = require('./middleware/expiry-sweep.middleware');
 
 const app = express();
+
+if (env.isVercel) {
+  // Vercel overwrites X-Forwarded-For with the client address, and the login and OTP
+  // rate limits need that address. Elsewhere this header could be spoofed, so it stays off.
+  app.set('trust proxy', true);
+}
 
 app.use(cors({ origin: env.frontendOrigin }));
 app.use(express.json({ limit: '2mb' }));
@@ -30,6 +37,11 @@ app.get('/api/v1/health', async (req, res, next) => {
     next(error);
   }
 });
+
+if (env.isVercel) {
+  // Vercel imports this file directly, so index.js and its setInterval never run there.
+  app.use(expirySweepMiddleware);
+}
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', usersRoutes);

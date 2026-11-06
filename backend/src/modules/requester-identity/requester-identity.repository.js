@@ -1,6 +1,6 @@
 const pool = require('../../config/db');
 
-const IDENTITY_SELECT = `
+const identitySelect = (pictureColumns) => `
   SELECT requester.id AS "userId",
          requester.name AS "accountName",
          requester.email AS "accountEmail",
@@ -12,7 +12,7 @@ const IDENTITY_SELECT = `
          COALESCE(profile.department, '') AS department,
          COALESCE(profile.position, '') AS position,
          COALESCE(profile.contact_number, '') AS "contactNumber",
-         profile.picture_data AS "pictureData",
+         ${pictureColumns},
          COALESCE(profile.verification_status, 'Incomplete') AS status,
          COALESCE(profile.review_note, '') AS "reviewNote",
          profile.submitted_at AS "submittedAt",
@@ -39,6 +39,12 @@ const IDENTITY_SELECT = `
     LEFT JOIN employees AS employee
       ON lower(trim(employee.employee_code)) = lower(trim(profile.employee_code))
    `;
+
+const IDENTITY_SELECT = identitySelect('profile.picture_data AS "pictureData"');
+
+// The review queue leaves pictures out and the page loads them one at a time: a Vercel
+// response is limited to 4.5 MB, and a single picture can be 1.4 MB.
+const IDENTITY_QUEUE_SELECT = identitySelect('NULL::TEXT AS "pictureData", profile.picture_data IS NOT NULL AS "hasPicture"');
 
 async function getMine(userId) {
   const result = await pool.query(`${IDENTITY_SELECT} WHERE requester.id = $1`, [userId]);
@@ -99,7 +105,7 @@ async function listReviews(status) {
   const values = status && status !== 'all' ? [status] : [];
   const statusFilter = values.length ? 'AND profile.verification_status = $1' : '';
   const result = await pool.query(
-    `${IDENTITY_SELECT}
+    `${IDENTITY_QUEUE_SELECT}
       WHERE profile.user_id IS NOT NULL
       ${statusFilter}
       ORDER BY CASE profile.verification_status WHEN 'Pending' THEN 0 WHEN 'Needs Correction' THEN 1 ELSE 2 END,
@@ -107,6 +113,11 @@ async function listReviews(status) {
     values,
   );
   return result.rows;
+}
+
+async function getPicture(userId) {
+  const result = await pool.query('SELECT picture_data FROM requester_identity_profiles WHERE user_id = $1', [userId]);
+  return result.rows[0]?.picture_data || null;
 }
 
 async function review(userId, { status, note, reviewedByUserId }) {
@@ -280,4 +291,4 @@ async function listReviewByUserId(userId) {
   return result.rows[0] || null;
 }
 
-module.exports = { getMine, isVerified, submitMine, listReviews, listReviewByUserId, review };
+module.exports = { getMine, isVerified, submitMine, listReviews, getPicture, listReviewByUserId, review };

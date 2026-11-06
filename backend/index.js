@@ -1,3 +1,6 @@
+const path = require('node:path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+
 const env = require('./src/config/env');
 const pool = require('./src/config/db');
 const app = require('./src/app');

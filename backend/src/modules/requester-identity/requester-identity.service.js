@@ -71,6 +71,10 @@ async function listReviews(statusValue) {
   return repository.listReviews(status);
 }
 
+async function getReviewPicture(userIdValue) {
+  return repository.getPicture(validateUserId(userIdValue));
+}
+
 async function review(userIdValue, input, reviewer) {
   const userId = validateUserId(userIdValue);
   if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang verification decision.');
@@ -89,4 +93,4 @@ async function review(userIdValue, input, reviewer) {
   return profile;
 }
 
-module.exports = { getMine, submitMine, listReviews, review };
+module.exports = { getMine, submitMine, listReviews, getReviewPicture, review };

@@ -6,7 +6,9 @@ Migration files are kept in one numbered, chronological sequence under `migratio
 
 Treat an applied migration as history. Add a new numbered file for schema changes; do not edit, rename, move, or delete an older migration unless the migration state of every target database has been verified and a replacement plan is prepared.
 
-There is currently no checked-in migration runner or migration ledger. The configured database inspected on 2026-10-29 has no `public.schema_migrations` table. Do not run the full directory against an existing database blindly: first establish which migrations have already been applied and compare the live schema.
+Run migrations with `npm run db:migrate`, which applies the pending files in order and records each one in `schema_migrations`. The script takes its target only from `MIGRATION_DATABASE_URL`, never from `backend/.env`, and refuses Neon pooled connection strings.
+
+The script refuses a database that has tables but no `schema_migrations` table, because replaying old migrations could damage it. The local database inspected on 2026-11-05 is in that state, and its schema matches migrations 001 to 028 exactly. For a restored copy of it, run `npm run db:migrate -- --baseline=028` to record those files as already included and apply the rest.
 
 ## Migration catalog
 
@@ -40,6 +42,8 @@ There is currently no checked-in migration runner or migration ledger. The confi
 | 026 | `026_inventory_issue_behavior.sql` | Distinguishes consumable quantity stock from returnable stock |
 | 027 | `027_reusable_stock_borrow_details.sql` | Stores reusable-stock return dates, use location, and purpose |
 | 028 | `028_reusable_borrowing_times.sql` | Adds the scheduled borrow and return times |
+| 029 | `029_base_roles_and_permissions.sql` | Roles and permissions the application needs, without demo accounts |
+| 030 | `030_database_time_settings.sql` | Database time zone and date style that match the local server |
 
 Migration 005 repeats a constraint shape that is already present in the checked-in 004 file. It may have been needed by databases that had an earlier version of 004, so it is retained until applied history can be verified.
 
@@ -55,7 +59,7 @@ The configured database was inspected read-only on 2026-10-29. No objects were d
 - `item_catalog` columns: `lifecycle_status` and `reorder_level`.
 - `service_requests` columns: `external_forwarded_at`, `external_forwarded_to`, and `external_reference`.
 
-The remaining objects need a schema reconciliation migration before a fresh database can support all current backend features. The definitions should be derived from the full application behavior and verified on a disposable database before being applied anywhere else.
+As of 2026-11-05, only the `dashboard`, `notifications`, `reports`, and `movements` modules need these objects, and `src/app.js` mounts none of those routes. The inventory module checks for `asset_movements` before using it. A fresh database therefore supports every mounted route. Those modules would need a schema reconciliation migration before being mounted, with definitions derived from the full application behavior and verified on a disposable database.
 
 Migration 021 adds a nullable foreign-key column and index for barcode-confirmed returns, so existing return rows remain valid. It was applied only after confirming migrations 019 and 020 were present in the configured local database. Verify the target schema before applying it in another environment.
 

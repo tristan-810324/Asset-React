@@ -19,9 +19,14 @@ const listReviews = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { profiles } });
 });
 
+const getReviewPicture = asyncHandler(async (req, res) => {
+  const pictureData = await service.getReviewPicture(req.params.userId);
+  res.json({ success: true, data: { pictureData } });
+});
+
 const review = asyncHandler(async (req, res) => {
   const identity = await service.review(req.params.userId, req.body, req.user);
   res.json({ success: true, data: { identity } });
 });
 
-module.exports = { getMine, submitMine, listReviews, review };
+module.exports = { getMine, submitMine, listReviews, getReviewPicture, review };
