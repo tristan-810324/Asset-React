@@ -3,10 +3,10 @@ import RequesterLayout from './requesterlayout'
 import { listMyRequests, REQUEST_TYPE_LABELS, type ServiceRequest } from './requesterApi'
 
 const statusTone = (status: string) => {
-  if (['Approved', 'Ready for Pickup', 'Returned', 'Completed', 'Closed'].includes(status)) return 'bg-emerald-50 text-emerald-700'
-  if (['Rejected', 'Cancelled', 'For Repair'].includes(status)) return 'bg-rose-50 text-rose-700'
+  if (['Approved', 'Ready for Pickup', 'Returned', 'Completed', 'Closed', 'GSO Endorsed', 'Finance Response Recorded'].includes(status)) return 'bg-emerald-50 text-emerald-700'
+  if (['Rejected', 'Cancelled', 'For Repair', 'Finance Handoff Failed'].includes(status)) return 'bg-rose-50 text-rose-700'
   if (status === 'Needs Information') return 'bg-amber-50 text-amber-800'
-  if (['Issued', 'In Progress', 'Return Requested'].includes(status)) return 'bg-blue-50 text-blue-700'
+  if (['Issued', 'In Progress', 'Return Requested', 'Sent to Finance', 'Finance Handoff Pending'].includes(status)) return 'bg-blue-50 text-blue-700'
   return 'bg-slate-100 text-slate-700'
 }
 
@@ -24,7 +24,7 @@ export default function MyRequests() {
   }, [])
 
   const filtered = useMemo(() => requests.filter((request) => {
-    const matchesFilter = filter === 'All' || (filter === 'Needs my action' ? request.status === 'Needs Information' : filter === 'In review' ? ['Submitted', 'Under Review'].includes(request.status) : filter === 'Active' ? ['Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'In Progress', 'For Repair'].includes(request.status) : ['Rejected', 'Returned', 'Completed', 'Closed', 'Cancelled'].includes(request.status))
+    const matchesFilter = filter === 'All' || (filter === 'Needs my action' ? request.status === 'Needs Information' : filter === 'In review' ? ['Submitted', 'Under Review', 'GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed', 'Sent to Finance', 'Finance Response Recorded'].includes(request.status) : filter === 'Active' ? ['Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'In Progress', 'For Repair'].includes(request.status) : ['Rejected', 'Returned', 'Completed', 'Closed', 'Cancelled'].includes(request.status))
     const matchesSearch = !search || `${request.referenceNo} ${request.title} ${REQUEST_TYPE_LABELS[request.requestType]}`.toLowerCase().includes(search.toLowerCase())
     return matchesFilter && matchesSearch
   }), [requests, filter, search])

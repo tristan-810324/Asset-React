@@ -1,6 +1,6 @@
 import { apiRequest } from '../auth/authApi'
 
-export type UserAccountRole = 'BORROWER' | 'GSO_STAFF' | 'IT_STAFF'
+export type UserAccountRole = 'BORROWER' | 'GSO_STAFF' | 'GSO_HEAD' | 'IT_STAFF'
 
 export type SystemUserAccount = {
   id: string

@@ -334,6 +334,14 @@ async function listMyIssuanceActivity(user) {
   return issuancesRepository.listMyIssuanceActivity(user.id);
 }
 
+async function listMyDepartmentReturnActivity(user) {
+  return issuancesRepository.listMyDepartmentReturnActivity(user.id);
+}
+
+async function getMyDepartmentIssuanceSummary(user) {
+  return issuancesRepository.getMyDepartmentIssuanceSummary(user.id);
+}
+
 async function getIssuanceBatch(batchIdValue) {
   const batchId = requiredText(String(batchIdValue ?? ''), 'issuance request ID', 20);
   if (!/^\d{1,20}$/.test(batchId) || batchId === '0') {
@@ -478,6 +486,8 @@ module.exports = {
   listEmployeeIssuances,
   listMyPendingIssuanceBatches,
   listMyIssuanceActivity,
+  listMyDepartmentReturnActivity,
+  getMyDepartmentIssuanceSummary,
   getIssuanceBatch,
   listApprovedIssuanceBatches,
   getAssetTag,

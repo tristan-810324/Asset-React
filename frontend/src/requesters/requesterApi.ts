@@ -1,6 +1,6 @@
 import { apiRequest } from '../auth/authApi'
 
-export type RequestType = 'BORROWING' | 'FACILITY_USE' | 'JOB_REQUEST' | 'PURCHASE_REQUISITION' | 'LOSS_DAMAGE_REPORT'
+export type RequestType = 'BORROWING' | 'FACILITY_USE' | 'JOB_REQUEST' | 'PURCHASE_REQUISITION' | 'LOSS_DAMAGE_REPORT' | 'ISSUANCE_REQUEST'
 
 export type RequestAsset = {
   id: string
@@ -30,11 +30,27 @@ export type ServiceRequest = {
   referenceNo: string
   requestType: RequestType
   title: string
-  formData: Record<string, any>
+  formData: Record<string, unknown> & {
+    departmentOrganization?: string
+    requesterEmployeeCode?: string
+    requesterPosition?: string
+    returnDate?: string
+    responseMessages?: Array<{ message: string; createdAt: string }>
+  }
   status: string
   createdAt: string
   updatedAt: string
   completedAt: string | null
+  gsoHeadEndorsedByUserId?: string | null
+  gsoHeadEndorsedAt?: string | null
+  financeEmail?: string | null
+  financeSentAt?: string | null
+  financeMessageId?: string | null
+  financeDecision?: string | null
+  financeReference?: string | null
+  financeResponseNote?: string | null
+  financeResponseAt?: string | null
+  financeResponseByUserId?: string | null
   requesterId: string
   requesterName: string
   requesterEmail: string
@@ -126,6 +142,35 @@ export type RequesterIssuanceDecision = {
   alreadyDecided?: boolean
 }
 
+export type RequesterDepartmentStaff = {
+  employeeCode: string
+  employeeName: string
+  email: string
+  position: string
+}
+
+export type RequesterDepartmentReturn = {
+  id: string
+  status: string
+  condition: string
+  reason: string
+  returnedByName: string | null
+  requestedAt: string
+  decidedAt: string | null
+  quantity: number
+  unitOfMeasure: string
+  employeeCode: string
+  employeeName: string
+  itemCode: string
+  itemName: string
+  tagCode: string | null
+  department: string
+}
+
+export type RequesterDepartmentIssuanceSummary = {
+  totalIssuedUnits: number
+}
+
 export async function listRequesterDepartments() {
   return apiRequest<{ departments: Array<{ id: string; name: string }> }>('/departments')
 }
@@ -136,10 +181,15 @@ export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
   JOB_REQUEST: 'Job / Service Request',
   PURCHASE_REQUISITION: 'Purchase Requisition',
   LOSS_DAMAGE_REPORT: 'Loss / Damage Report',
+  ISSUANCE_REQUEST: 'Item Issuance Request',
 }
 
 export function listCatalogAssets() {
   return apiRequest<{ items: CatalogAsset[] }>('/requests/assets').then((data) => data.items)
+}
+
+export function listRequesterDepartmentStaff() {
+  return apiRequest<{ staff: RequesterDepartmentStaff[] }>('/requests/requester-staff').then((data) => data.staff)
 }
 
 export function listMyRequests() {
@@ -152,6 +202,14 @@ export function listMyPendingIssuanceBatches() {
 
 export function listMyIssuanceActivity() {
   return apiRequest<{ batches: RequesterIssuanceApproval[] }>('/issuances/mine/activity').then((data) => data.batches)
+}
+
+export function listMyDepartmentReturns() {
+  return apiRequest<{ returns: RequesterDepartmentReturn[] }>('/issuances/mine/department-returns').then((data) => data.returns)
+}
+
+export function getMyDepartmentIssuanceSummary() {
+  return apiRequest<{ summary: RequesterDepartmentIssuanceSummary }>('/issuances/mine/department-issuance-summary').then((data) => data.summary)
 }
 
 export function decideMyIssuanceBatch(batchId: string, action: 'acknowledge') {

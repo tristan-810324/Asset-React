@@ -62,6 +62,56 @@ async function isVerified(userId) {
   return Boolean(result.rows[0]?.verified);
 }
 
+async function getVerifiedEmployeeSummary(userId) {
+  const result = await pool.query(
+    `SELECT employee.employee_code AS "employeeCode",
+            trim(concat_ws(' ',
+              NULLIF(trim(employee.first_name), ''),
+              NULLIF(trim(employee.middle_name), ''),
+              NULLIF(trim(employee.last_name), ''),
+              NULLIF(trim(employee.suffix), '')
+            )) AS "employeeName",
+            employee.department,
+            employee.email,
+            employee.position
+       FROM requester_identity_profiles AS profile
+       JOIN employees AS employee
+         ON lower(trim(employee.employee_code)) = lower(trim(profile.employee_code))
+      WHERE profile.user_id = $1
+        AND profile.verification_status = 'Verified'
+        AND employee.status = 'Active'`,
+    [userId],
+  );
+  return result.rows[0] || null;
+}
+
+async function listVerifiedDepartmentEmployees(userId) {
+  const result = await pool.query(
+    `SELECT employee.employee_code AS "employeeCode",
+            trim(concat_ws(' ',
+              NULLIF(trim(employee.first_name), ''),
+              NULLIF(trim(employee.middle_name), ''),
+              NULLIF(trim(employee.last_name), ''),
+              NULLIF(trim(employee.suffix), '')
+             )) AS "employeeName",
+            employee.email,
+            employee.position
+       FROM requester_identity_profiles AS profile
+       JOIN employees AS head
+         ON lower(trim(head.employee_code)) = lower(trim(profile.employee_code))
+       JOIN employees AS employee
+         ON lower(trim(employee.department)) = lower(trim(head.department))
+      WHERE profile.user_id = $1
+        AND profile.verification_status = 'Verified'
+        AND head.status = 'Active'
+        AND employee.status = 'Active'
+        AND employee.id <> head.id
+      ORDER BY lower(employee.last_name), lower(employee.first_name), lower(employee.employee_code)`,
+    [userId],
+  );
+  return result.rows;
+}
+
 async function submitMine(userId, identity) {
   await pool.query(
     `INSERT INTO requester_identity_profiles (
@@ -291,4 +341,4 @@ async function listReviewByUserId(userId) {
   return result.rows[0] || null;
 }
 
-module.exports = { getMine, isVerified, submitMine, listReviews, getPicture, listReviewByUserId, review };
+module.exports = { getMine, isVerified, getVerifiedEmployeeSummary, listVerifiedDepartmentEmployees, submitMine, listReviews, getPicture, listReviewByUserId, review };

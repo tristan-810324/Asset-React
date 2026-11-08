@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start requester demo",
+			"type": "shell",
+			"command": "npm --prefix frontend run dev -- --host 0.0.0.0",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Start requester API",
+			"type": "shell",
+			"command": "npm --prefix backend run dev",
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

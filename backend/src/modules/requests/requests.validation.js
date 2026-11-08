@@ -4,18 +4,19 @@ const REQUEST_TYPES = new Set([
   'JOB_REQUEST',
   'PURCHASE_REQUISITION',
   'LOSS_DAMAGE_REPORT',
+  'ISSUANCE_REQUEST',
 ]);
 
 const PURCHASE_CATEGORIES = new Set([
-  'Office Supplies',
-  'Office Equipment',
-  'Machineries / Parts',
-  'Computer Parts / Peripherals',
-  'Tools / Equipment',
-  'Publications',
-  'Electrical Supplies',
-  'Other Consumables',
-  'Others',
+  'OFFICE_SUPPLIES',
+  'OFFICE_EQUIPMENT',
+  'MACHINERY_PARTS',
+  'COMPUTER_PERIPHERALS',
+  'TOOLS_EQUIPMENT',
+  'ELECTRICAL_SUPPLIES',
+  'OTHER_CONSUMABLES',
+  'OTHER',
+  'PUBLICATIONS',
 ]);
 
 function invalid(message, status = 400) {
@@ -149,6 +150,7 @@ function validateCreateRequest(input) {
   }
 
   if (requestType === 'PURCHASE_REQUISITION') {
+    if (data.requesterCertification !== true) invalid('Kumpirmahin muna na tama ang detalye at kailangan ang request ng iyong department.');
     const requiredDate = date(data.requiredDate, 'required date', { notPast: true });
     const [year, month, day] = requiredDate.split('-').map(Number);
     const minimumDate = new Date();
@@ -156,19 +158,50 @@ function validateCreateRequest(input) {
     minimumDate.setDate(minimumDate.getDate() + 14);
     const requested = new Date(year, month - 1, day);
     if (requested < minimumDate) invalid('Ayon sa form, magsumite ng purchase requisition nang hindi bababa sa dalawang linggo bago ang required date.');
-    const category = text(data.category, 'supplier category', 80);
-    if (!PURCHASE_CATEGORIES.has(category)) invalid('Pumili ng valid na supplier category.');
     return {
       requestType,
       formData: {
-        departmentOrganization: text(data.departmentOrganization, 'department/office/area', 200),
-        category,
         purpose: text(data.purpose, 'purpose of request', 2000),
         requiredDate,
-        items: rows(data.items, 'Purchase items', (row) => ({
+        items: rows(data.items, 'Purchase items', (row) => {
+          const category = text(row.category, 'requisition category', 60).toUpperCase();
+          if (!PURCHASE_CATEGORIES.has(category)) invalid('Pumili ng valid requisition category.');
+          const catalogItemId = integer(row.catalogItemId, 'catalog item id', { optional: true, minimum: 1 });
+          return {
+            quantity: integer(row.quantity, 'item quantity', { minimum: 1 }),
+            category,
+            catalogItemId,
+            itemName: text(row.itemName, 'item name', 250),
+            description: text(row.description, 'item description/specifications', 1000),
+            intendedStaffCodes: (() => {
+              if (row.intendedStaffCodes === undefined || row.intendedStaffCodes === null) return [];
+              if (!Array.isArray(row.intendedStaffCodes) || row.intendedStaffCodes.length > 25) {
+                invalid('Hindi dapat lumampas sa 25 ang planned staff recipients sa bawat item.');
+              }
+              const codes = row.intendedStaffCodes.map((code) => text(code, 'intended staff employee code', 40));
+              if (new Set(codes.map((code) => code.toLowerCase())).size !== codes.length) {
+                invalid('Alisin ang duplicate na intended staff sa purchase item.');
+              }
+              return codes;
+            })(),
+          };
+        }, { max: 30 }),
+        remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
+      },
+    };
+  }
+
+  if (requestType === 'ISSUANCE_REQUEST') {
+    return {
+      requestType,
+      formData: {
+        purpose: text(data.purpose, 'purpose', 2000),
+        neededDate: date(data.neededDate, 'needed date', { notPast: true }),
+        items: rows(data.items, 'Requested items', (row) => ({
           quantity: integer(row.quantity, 'item quantity', { minimum: 1 }),
           description: text(row.description, 'item description/specifications', 1000),
         }), { max: 30 }),
+        remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
       },
     };
   }
@@ -206,4 +239,4 @@ function validateRequestFilters(query) {
   return { requestType, status, search };
 }
 
-module.exports = { REQUEST_TYPES, PURCHASE_CATEGORIES, invalid, text, validateCreateRequest, validateRequestId, validateRequestFilters };
+module.exports = { REQUEST_TYPES, invalid, text, validateCreateRequest, validateRequestId, validateRequestFilters };

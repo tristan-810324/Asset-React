@@ -20,6 +20,8 @@ router.post('/tags/:tagCode/return-otp', authenticate, requireRole('GSO_STAFF'),
 router.post('/tags/:tagCode/return', authenticate, requireRole('GSO_STAFF'), returnsController.confirmScannedTagReturn);
 router.patch('/tags/:tagCode/repair-complete', authenticate, requireRole('GSO_STAFF'), returnsController.completeTaggedAssetRepair);
 router.get('/mine/activity', authenticate, requireRole('BORROWER'), issuancesController.listMyIssuanceActivity);
+router.get('/mine/department-returns', authenticate, requireRole('BORROWER'), issuancesController.listMyDepartmentReturnActivity);
+router.get('/mine/department-issuance-summary', authenticate, requireRole('BORROWER'), issuancesController.getMyDepartmentIssuanceSummary);
 router.get('/mine/pending', authenticate, requireRole('BORROWER'), issuancesController.listMyPendingIssuanceBatches);
 router.post('/mine/:batchId/decision', authenticate, requireRole('BORROWER'), issuancesController.decideMyIssuanceBatch);
 router.post('/batch/:batchId/handover', authenticate, requireRole('GSO_STAFF'), issuancesController.recordIssuanceHandover);

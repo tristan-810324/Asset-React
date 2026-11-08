@@ -11,6 +11,16 @@ const REQUEST_SELECT = `
          request.created_at AS "createdAt",
          request.updated_at AS "updatedAt",
          request.completed_at AS "completedAt",
+         request.gso_head_endorsed_by_user_id AS "gsoHeadEndorsedByUserId",
+         request.gso_head_endorsed_at AS "gsoHeadEndorsedAt",
+         request.finance_email AS "financeEmail",
+         request.finance_sent_at AS "financeSentAt",
+         request.finance_message_id AS "financeMessageId",
+         request.finance_decision AS "financeDecision",
+         request.finance_reference AS "financeReference",
+         request.finance_response_note AS "financeResponseNote",
+         request.finance_response_at AS "financeResponseAt",
+         request.finance_response_by_user_id AS "financeResponseByUserId",
          requester.id AS "requesterId",
          requester.name AS "requesterName",
          requester.email AS "requesterEmail",
@@ -75,12 +85,29 @@ async function listAssets() {
             AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')
        ) AS borrower_usage ON TRUE
       WHERE item.quantity > 0
-        AND item.tracking_mode = 'quantity'
-        AND item.issue_behavior = 'returnable'
         AND item.condition NOT IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
       ORDER BY lower(COALESCE(NULLIF(item.item_name, ''), item.description)), item.id`,
   );
-  return result.rows.filter((item) => Number(item.availableQuantity) > 0);
+  // The requester catalog lists every usable item, out of stock included; only reusable quantity
+  // stock can be borrowed (createRequest enforces that), the rest is requested for issuance.
+  return result.rows;
+}
+
+async function listCatalogItemsByIds(ids) {
+  if (!ids.length) return [];
+  const result = await pool.query(
+    `SELECT item.id,
+            item.item_code AS "itemCode",
+            COALESCE(NULLIF(item.item_name, ''), item.description) AS name,
+            item.category,
+            item.description,
+            item.condition,
+            item.inventory_status AS "inventoryStatus"
+       FROM item_catalog AS item
+      WHERE item.id = ANY($1::BIGINT[])`,
+    [ids],
+  );
+  return result.rows;
 }
 
 async function getById(queryable, id) {
@@ -109,7 +136,7 @@ async function getMineById(id, userId) {
 
 async function listAll({ requestType, status, search }) {
   const values = [];
-  const filters = [];
+  const filters = ["request.request_type <> 'PURCHASE_REQUISITION'"];
   if (requestType) {
     values.push(requestType);
     filters.push(`request.request_type = $${values.length}`);
@@ -133,11 +160,261 @@ async function listAll({ requestType, status, search }) {
   return result.rows;
 }
 
+async function listPurchaseRequisitions({ status, search }) {
+  const values = [];
+  const filters = ["request.request_type = 'PURCHASE_REQUISITION'"];
+  if (status) {
+    values.push(status);
+    filters.push(`request.status = $${values.length}`);
+  }
+  if (search) {
+    values.push(`%${search}%`);
+    const parameter = `$${values.length}`;
+    filters.push(`(request.reference_no ILIKE ${parameter} OR request.title ILIKE ${parameter} OR requester.name ILIKE ${parameter} OR requester.email ILIKE ${parameter} OR request.form_data::TEXT ILIKE ${parameter})`);
+  }
+  const result = await pool.query(
+    `${REQUEST_SELECT}
+      WHERE ${filters.join(' AND ')}
+      ORDER BY CASE request.status
+                 WHEN 'Submitted' THEN 0
+                 WHEN 'Under Review' THEN 1
+                 WHEN 'Finance Handoff Failed' THEN 2
+                 WHEN 'GSO Endorsed' THEN 3
+                 WHEN 'Finance Handoff Pending' THEN 4
+                 WHEN 'Sent to Finance' THEN 5
+                 ELSE 6
+               END,
+               request.created_at DESC, request.id DESC
+      LIMIT 250`,
+    values,
+  );
+  return result.rows;
+}
+
+async function reviewPurchaseRequisition({ id, status, note, changedBy }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      `SELECT id, request_type, status
+         FROM service_requests
+        WHERE id = $1
+        FOR UPDATE`,
+      [id],
+    );
+    const current = currentResult.rows[0];
+    if (!current || current.request_type !== 'PURCHASE_REQUISITION') {
+      throw Object.assign(new Error('Hindi makita ang purchase requisition.'), { status: 404 });
+    }
+
+    const allowed = {
+      Submitted: ['Under Review'],
+      'Under Review': ['Needs Information', 'Rejected', 'GSO Endorsed'],
+    };
+    if (!(allowed[current.status] || []).includes(status)) {
+      throw Object.assign(new Error(`Hindi pinapayagan ang pagbabago mula ${current.status} papuntang ${status}.`), { status: 409 });
+    }
+
+    await client.query(
+      `UPDATE service_requests
+          SET status = $2,
+              updated_at = NOW(),
+              completed_at = CASE WHEN $2 = 'Rejected' THEN NOW() ELSE NULL END,
+              gso_head_endorsed_by_user_id = CASE WHEN $2 = 'GSO Endorsed' THEN $3 ELSE gso_head_endorsed_by_user_id END,
+              gso_head_endorsed_at = CASE WHEN $2 = 'GSO Endorsed' THEN NOW() ELSE gso_head_endorsed_at END
+        WHERE id = $1`,
+      [id, status, changedBy],
+    );
+    const defaultNote = status === 'Under Review' ? 'GSO Head started the requisition review.'
+      : status === 'GSO Endorsed' ? 'Purchase requisition endorsed by GSO Head.' : '';
+    await client.query(
+      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, current.status, status, note || defaultNote, changedBy],
+    );
+    const request = await getById(client, id);
+    await client.query('COMMIT');
+    return request;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function beginFinanceHandoff({ id, financeEmail, changedBy }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      `SELECT id, request_type, status
+         FROM service_requests
+        WHERE id = $1
+        FOR UPDATE`,
+      [id],
+    );
+    const current = currentResult.rows[0];
+    if (!current || current.request_type !== 'PURCHASE_REQUISITION') {
+      throw Object.assign(new Error('Hindi makita ang purchase requisition.'), { status: 404 });
+    }
+    if (!['GSO Endorsed', 'Finance Handoff Failed'].includes(current.status)) {
+      throw Object.assign(new Error('I-endorse muna ang purchase requisition bago ipadala sa Finance.'), { status: 409 });
+    }
+
+    await client.query(
+      `UPDATE service_requests
+          SET status = 'Finance Handoff Pending',
+              finance_email = $2,
+              finance_sent_at = NULL,
+              finance_message_id = NULL,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [id, financeEmail],
+    );
+    await client.query(
+      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+       VALUES ($1, $2, 'Finance Handoff Pending', $3, $4)`,
+      [id, current.status, `GSO Head started email handoff to ${financeEmail}.`, changedBy],
+    );
+    const request = await getById(client, id);
+    await client.query('COMMIT');
+    return request;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function completeFinanceHandoff({ id, messageId, changedBy }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      `SELECT id, status, finance_email
+         FROM service_requests
+        WHERE id = $1
+        FOR UPDATE`,
+      [id],
+    );
+    const current = currentResult.rows[0];
+    if (!current || current.status !== 'Finance Handoff Pending') {
+      throw Object.assign(new Error('Nagbago ang handoff state. I-refresh muna ang queue.'), { status: 409 });
+    }
+    await client.query(
+      `UPDATE service_requests
+          SET status = 'Sent to Finance', finance_sent_at = NOW(),
+              finance_message_id = $2, updated_at = NOW()
+        WHERE id = $1`,
+      [id, messageId || null],
+    );
+    await client.query(
+      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+       VALUES ($1, 'Finance Handoff Pending', 'Sent to Finance', $2, $3)`,
+      [id, `Purchase requisition emailed to Finance (${current.finance_email}).`, changedBy],
+    );
+    const request = await getById(client, id);
+    await client.query('COMMIT');
+    return request;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function failFinanceHandoff({ id, changedBy }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      `SELECT id, status
+         FROM service_requests
+        WHERE id = $1
+        FOR UPDATE`,
+      [id],
+    );
+    const current = currentResult.rows[0];
+    if (!current || current.status !== 'Finance Handoff Pending') {
+      await client.query('COMMIT');
+      return null;
+    }
+    await client.query(
+      `UPDATE service_requests SET status = 'Finance Handoff Failed', updated_at = NOW() WHERE id = $1`,
+      [id],
+    );
+    await client.query(
+      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+       VALUES ($1, 'Finance Handoff Pending', 'Finance Handoff Failed', $2, $3)`,
+      [id, 'Finance email could not be delivered. GSO Head may retry the handoff.', changedBy],
+    );
+    const request = await getById(client, id);
+    await client.query('COMMIT');
+    return request;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function recordFinanceResponse({ id, decision, reference, note, historyNote, changedBy }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      `SELECT id, request_type, status
+         FROM service_requests
+        WHERE id = $1
+        FOR UPDATE`,
+      [id],
+    );
+    const current = currentResult.rows[0];
+    if (!current || current.request_type !== 'PURCHASE_REQUISITION') {
+      throw Object.assign(new Error('Hindi makita ang purchase requisition.'), { status: 404 });
+    }
+    if (current.status !== 'Sent to Finance') {
+      throw Object.assign(new Error('Maaaring itala ang sagot ng Finance pagkatapos maipadala ang requisition.'), { status: 409 });
+    }
+    await client.query(
+      `UPDATE service_requests
+          SET status = 'Finance Response Recorded', finance_decision = $2,
+              finance_reference = $3, finance_response_note = $4,
+              finance_response_at = NOW(), finance_response_by_user_id = $5,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [id, decision, reference || null, note, changedBy],
+    );
+    await client.query(
+      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+       VALUES ($1, 'Sent to Finance', 'Finance Response Recorded', $2, $3)`,
+      [id, historyNote, changedBy],
+    );
+    const request = await getById(client, id);
+    await client.query('COMMIT');
+    return request;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function requestTitle(requestType, formData) {
   if (requestType === 'BORROWING') return `Asset borrowing: ${formData.items.length} item${formData.items.length === 1 ? '' : 's'}`;
   if (requestType === 'FACILITY_USE') return `Facility use: ${formData.activity}`;
   if (requestType === 'JOB_REQUEST') return `Job request: ${formData.departmentOrganization}`;
-  if (requestType === 'PURCHASE_REQUISITION') return `Purchase requisition: ${formData.category}`;
+  if (requestType === 'PURCHASE_REQUISITION') {
+    const firstItem = formData.items?.[0]?.itemName?.trim() || formData.items?.[0]?.description?.trim();
+    const summary = firstItem ? firstItem.slice(0, 90) : `${formData.items?.length || 0} requested items`;
+    return `Item requisition: ${summary}`;
+  }
+  if (requestType === 'ISSUANCE_REQUEST') return `Item issuance: ${formData.items.length} item${formData.items.length === 1 ? '' : 's'}`;
   return `${formData.incidentType === 'LOST' ? 'Lost property' : 'Property damage'} report: ${formData.keyArea}`;
 }
 
@@ -216,8 +493,10 @@ async function createRequest({ requestType, formData, userId }) {
     }
     await client.query(
       `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
-       VALUES ($1, NULL, 'Submitted', 'Request submitted.', $2)`,
-      [requestId, userId],
+       VALUES ($1, NULL, 'Submitted', $2, $3)`,
+      [requestId, requestType === 'PURCHASE_REQUISITION'
+        ? 'Purchase requisition submitted by EmployeeHead for GSO Head review.'
+        : 'Request submitted.', userId],
     );
     const request = await getById(client, requestId);
     await client.query('COMMIT');
@@ -410,4 +689,21 @@ async function changeMineStatus({ id, userId, expectedStatus, status, note }) {
   }
 }
 
-module.exports = { listAssets, getById, listMine, getMineById, listAll, createRequest, setStatus, respondToRequest, changeMineStatus };
+module.exports = {
+  listAssets,
+  listCatalogItemsByIds,
+  getById,
+  listMine,
+  getMineById,
+  listAll,
+  listPurchaseRequisitions,
+  createRequest,
+  setStatus,
+  reviewPurchaseRequisition,
+  beginFinanceHandoff,
+  completeFinanceHandoff,
+  failFinanceHandoff,
+  recordFinanceResponse,
+  respondToRequest,
+  changeMineStatus,
+};

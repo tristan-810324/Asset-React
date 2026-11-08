@@ -5,18 +5,19 @@ import AuditLogs from './admin/auditlogs'
 import ReturnsReview from './admin/returnsreview'
 import RequesterDashboard from './requesters/requesterdashboard'
 import RequestCenter from './requesters/requestcenter'
-import RequestForm from './requesters/requestform'
+import RequestItem from './requesters/requestitem'
 import MyRequests from './requesters/myrequests'
 import RequestDetail from './requesters/requestdetail'
 import RequesterProfile from './requesters/requesterprofile'
 import RequesterNotifications from './requesters/notifications'
 import RequesterReturnItems from './requesters/requesterreturnitems'
 import RequesterIssuedItems from './requesters/requesterissueditems'
-import ITSSDashboard from './ITSS/itssdashboard'
+import ITStaffDashboard from './itstaff/itstaffdashboard'
 
 
 
 import GsoDashboard from './gso/gsodashboard'
+import GsoHeadDashboard from './gsohead/gsoheaddashboard'
 import BorrowingPage from './gso/borrowing'
 import EmployeeMasterData from './gso/employemasterdata'
 import MainIssuance from './gso/mainissuance'
@@ -125,7 +126,10 @@ export default function App() {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><UserManagement /></ProtectedDashboard>
   }
   if (path === '/itss' || path === '/itss/dashboard') {
-    return <ProtectedDashboard requiredRole="IT_STAFF"><ITSSDashboard /></ProtectedDashboard>
+    return <ProtectedDashboard requiredRole="IT_STAFF"><ITStaffDashboard /></ProtectedDashboard>
+  }
+  if (path === '/gso-head' || path === '/gso-head/dashboard') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadDashboard /></ProtectedDashboard>
   }
   if (path === '/gso/items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ItemsMasterData /></ProtectedDashboard>
@@ -161,7 +165,7 @@ export default function App() {
     return <ProtectedDashboard requiredRole="BORROWER"><RequestCenter /></ProtectedDashboard>
   }
   if (path === '/requester/requests/new' || path === '/borrower/requests/new') {
-    return <ProtectedDashboard requiredRole="BORROWER"><RequestForm /></ProtectedDashboard>
+    return <ProtectedDashboard requiredRole="BORROWER"><RequestItem /></ProtectedDashboard>
   }
   if (path === '/requester/my-requests' || path === '/borrower/my-requests') {
     return <ProtectedDashboard requiredRole="BORROWER"><MyRequests /></ProtectedDashboard>

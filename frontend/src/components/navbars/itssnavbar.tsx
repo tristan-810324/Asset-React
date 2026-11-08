@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { clearAuthSession, getCurrentUser, type AuthUser } from '../../auth/authApi'
-import { ITSSUserContext } from '../../ITSS/itssUserContext'
 
 export type ITSSPage = 'Overview'
 type ITSSIconName = 'grid' | 'menu' | 'users'
@@ -48,8 +47,7 @@ export default function ITSSNavbar({ currentPage, title, subtitle, children }: {
   }).format(new Date())
 
   return (
-    <ITSSUserContext.Provider value={user}>
-      <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
+    <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
         <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-y-auto bg-[#071b35] px-6 py-7 text-white shadow-2xl shadow-slate-900/20 transition-transform duration-300 lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`} aria-label="IT Staff navigation">
           <div className="flex items-center justify-between">
             <a href="/itss" className="flex items-center gap-3" aria-label="A.S.SET IT Staff dashboard">
@@ -69,7 +67,7 @@ export default function ITSSNavbar({ currentPage, title, subtitle, children }: {
           </nav>
           <div className="mt-auto rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/80 to-slate-900/70 p-4">
             <div className="flex items-center gap-2 text-blue-200"><span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">IT Staff workspace</span></div>
-            <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">Manage staff accounts and access for the A.S.SET system.</p>
+            <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">A separate workspace for IT Staff modules.</p>
           </div>
         </aside>
 
@@ -94,7 +92,6 @@ export default function ITSSNavbar({ currentPage, title, subtitle, children }: {
             {children}
           </div>
         </section>
-      </main>
-    </ITSSUserContext.Provider>
+    </main>
   )
 }

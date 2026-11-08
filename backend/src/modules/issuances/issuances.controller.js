@@ -29,6 +29,16 @@ const listMyIssuanceActivity = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { batches } });
 });
 
+const listMyDepartmentReturnActivity = asyncHandler(async (req, res) => {
+  const returns = await issuancesService.listMyDepartmentReturnActivity(req.user);
+  res.json({ success: true, data: { returns } });
+});
+
+const getMyDepartmentIssuanceSummary = asyncHandler(async (req, res) => {
+  const summary = await issuancesService.getMyDepartmentIssuanceSummary(req.user);
+  res.json({ success: true, data: { summary } });
+});
+
 const getIssuanceBatch = asyncHandler(async (req, res) => {
   const batch = await issuancesService.getIssuanceBatch(req.params.batchId);
   res.json({ success: true, data: { batch } });
@@ -75,6 +85,8 @@ module.exports = {
   listEmployeeIssuances,
   listMyPendingIssuanceBatches,
   listMyIssuanceActivity,
+  listMyDepartmentReturnActivity,
+  getMyDepartmentIssuanceSummary,
   getIssuanceBatch,
   listApprovedIssuanceBatches,
   getAssetTag,

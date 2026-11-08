@@ -69,6 +69,14 @@ export default function RequesterNotifications() {
   const [issuanceBatches, setIssuanceBatches] = useState<RequesterIssuanceApproval[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [currentTime, setCurrentTime] = useState<number | null>(null)
+
+  useEffect(() => {
+    const updateCurrentTime = () => setCurrentTime(Date.now())
+    updateCurrentTime()
+    const interval = window.setInterval(updateCurrentTime, 60_000)
+    return () => window.clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -84,6 +92,7 @@ export default function RequesterNotifications() {
   }, [])
 
   const events = useMemo(() => {
+    const now = currentTime
     const requestEvents: ActivityEvent[] = requests.flatMap((request) => request.history.map((event) => ({
       key: `request-${request.id}-${event.id}`,
       at: event.changedAt,
@@ -93,11 +102,12 @@ export default function RequesterNotifications() {
       href: `/requester/requests/${request.id}`,
       tone: event.status === 'Rejected' ? 'rose' : event.status === 'Approved' || event.status === 'Returned' ? 'green' : event.status === 'Needs Information' ? 'amber' : 'blue',
     })))
-    const today = new Date()
+    const today = new Date(now ?? 0)
     today.setHours(0, 0, 0, 0)
     const returnReminders: ActivityEvent[] = requests
       .filter((request) => request.requestType === 'BORROWING' && ['Issued', 'Return Requested'].includes(request.status))
       .flatMap((request) => {
+        if (now === null) return []
         const dueDate = request.assets.find((asset) => asset.dueDate)?.dueDate || request.formData.returnDate || null
         if (!dueDate) return []
         const due = new Date(`${dueDate}T00:00:00`)
@@ -105,7 +115,7 @@ export default function RequesterNotifications() {
         if (daysUntilDue > 3) return []
         return [{
           key: `return-reminder-${request.id}`,
-          at: new Date().toISOString(),
+          at: new Date(now).toISOString(),
           title: daysUntilDue < 0 ? 'Reusable stock overdue · return needed' : daysUntilDue === 0 ? 'Reusable stock due today' : `Reusable stock due in ${daysUntilDue} day${daysUntilDue === 1 ? '' : 's'}`,
           details: `${request.title} · return by ${new Date(`${dueDate}T00:00:00`).toLocaleDateString('en-PH')}.`,
           source: `${request.referenceNo} · return reminder`,
@@ -120,16 +130,17 @@ export default function RequesterNotifications() {
           && item.status !== 'Returned'
           && Number(item.quantity) - Number(item.returnedQuantity || 0) > 0))
       .flatMap((batch) => {
+        if (now === null) return []
         const dueValue = batch.expectedReturnAt || batch.expectedReturnDate
         if (!dueValue) return []
         const includesTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dueValue)
         const dueAt = new Date(includesTime ? `${dueValue}:00+08:00` : `${dueValue}T00:00:00+08:00`)
-        const hoursUntilDue = (dueAt.getTime() - Date.now()) / 3_600_000
+        const hoursUntilDue = (dueAt.getTime() - now) / 3_600_000
         if (hoursUntilDue > 72) return []
         const daysUntilDue = Math.ceil(hoursUntilDue / 24)
         return [{
           key: `gso-return-reminder-${batch.id}`,
-          at: new Date().toISOString(),
+          at: new Date(now).toISOString(),
           title: hoursUntilDue < 0 ? 'GSO reusable stock overdue · return needed' : hoursUntilDue <= 24 ? 'GSO reusable stock due soon' : `GSO reusable stock due in ${daysUntilDue} day${daysUntilDue === 1 ? '' : 's'}`,
           details: `${batch.items.filter((item) => item.issueBehavior === 'returnable').map((item) => `${Math.max(Number(item.quantity) - Number(item.returnedQuantity || 0), 0)} ${item.unitOfMeasure} ${item.itemName}`).join(', ')} · return by ${formatBorrowSchedule(dueValue)}${batch.useLocation ? ` · ${batch.useLocation}` : ''}.`,
           source: `Request #${batch.id} · return reminder`,
@@ -139,7 +150,7 @@ export default function RequesterNotifications() {
       })
     return [...requestEvents, ...issuanceBatches.map(issuanceActivity), ...returnReminders, ...gsoBorrowingReminders]
       .sort((first, second) => new Date(second.at).getTime() - new Date(first.at).getTime())
-  }, [requests, issuanceBatches])
+  }, [currentTime, requests, issuanceBatches])
 
   const toneClasses = {
     blue: 'bg-blue-50 text-blue-700',

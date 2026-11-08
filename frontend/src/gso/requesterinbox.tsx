@@ -5,11 +5,12 @@ const typeOptions = [
   ['BORROWING', 'Borrowing'],
   ['FACILITY_USE', 'Facility use'],
   ['JOB_REQUEST', 'Job / service'],
-  ['PURCHASE_REQUISITION', 'Purchase'],
+  ['ISSUANCE_REQUEST', 'Item issuance'],
   ['LOSS_DAMAGE_REPORT', 'Loss / damage'],
 ]
 
 const actionsFor = (request: ServiceRequest) => {
+  if (request.requestType === 'PURCHASE_REQUISITION') return []
   const common = ['Submitted', 'Under Review', 'Needs Information'].includes(request.status)
     ? ['Under Review', 'Needs Information', 'Approved', 'Rejected']
     : []
@@ -101,6 +102,7 @@ export default function RequesterRequestInbox() {
   }, [selectedId])
 
   const selected = useMemo(() => requests.find((request) => request.id === selectedId) || null, [requests, selectedId])
+  const selectedReturnDate = selected?.formData.returnDate ?? ''
   const selectedActions = useMemo(() => selected ? actionsFor(selected) : [], [selected])
   const selectedFormEntries = useMemo(() => selected
     ? Object.entries(selected.formData).filter(([key]) => key !== 'responseMessages')
@@ -180,7 +182,7 @@ export default function RequesterRequestInbox() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live database queue
             </span>
             <h2 className="mt-2 text-lg font-black tracking-tight text-slate-900">Requester Submissions</h2>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">Review submitted forms, update request status, and track borrowing activity.</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">Review school service requests and track borrowing activity. Purchase requisitions are handled separately in the GSO Head workspace.</p>
           </div>
           <button type="button" onClick={() => void loadRequests()} disabled={loading} className="self-start rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700 disabled:cursor-wait disabled:opacity-60 lg:self-auto">
             {loading ? 'Refreshing…' : 'Refresh queue'}
@@ -293,7 +295,7 @@ export default function RequesterRequestInbox() {
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <label>
                       <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Due date</span>
-                      <input type="date" min={dateInputToday()} value={dueDate || (selected.formData.returnDate >= dateInputToday() ? selected.formData.returnDate : '')} onChange={(event) => setDueDate(event.target.value)} required className="h-10 w-full rounded-xl border border-slate-200 px-3 text-xs font-bold outline-none focus:border-blue-400" />
+                      <input type="date" min={dateInputToday()} value={dueDate || (selectedReturnDate >= dateInputToday() ? selectedReturnDate : '')} onChange={(event) => setDueDate(event.target.value)} required className="h-10 w-full rounded-xl border border-slate-200 px-3 text-xs font-bold outline-none focus:border-blue-400" />
                     </label>
                     <label>
                       <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Condition on issue</span>

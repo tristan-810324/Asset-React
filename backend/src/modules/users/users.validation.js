@@ -1,6 +1,6 @@
 const { normalizeEmail } = require('../auth/auth.validation');
 
-const creatableRoles = new Set(['BORROWER', 'GSO_STAFF', 'IT_STAFF']);
+const creatableRoles = new Set(['BORROWER', 'GSO_STAFF', 'GSO_HEAD', 'IT_STAFF']);
 
 function validateCreateSystemUser(body) {
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
@@ -10,7 +10,7 @@ function validateCreateSystemUser(body) {
 
   const roleKey = typeof body?.roleKey === 'string' ? body.roleKey : '';
   if (!creatableRoles.has(roleKey)) {
-    throw Object.assign(new Error('Choose a Requester, GSO Staff, or IT Staff account.'), { status: 400 });
+    throw Object.assign(new Error('Choose a Requester, GSO Staff, GSO Head, or IT Staff account.'), { status: 400 });
   }
 
   const position = typeof body?.position === 'string' ? body.position.trim() : '';

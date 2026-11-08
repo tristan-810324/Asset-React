@@ -221,6 +221,7 @@ export function clearAuthSession() {
 export function dashboardPathForRoles(roles: string[]) {
   if (roles.includes('IT_ADMIN')) return '/admin';
   if (roles.includes('IT_STAFF')) return '/itss';
+  if (roles.includes('GSO_HEAD')) return '/gso-head';
   if (roles.includes('GSO_STAFF')) return '/gso';
   if (roles.includes('BORROWER')) return '/requester';
   return null;

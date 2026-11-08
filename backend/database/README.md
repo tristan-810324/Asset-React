@@ -2,7 +2,7 @@
 
 ## Migrations
 
-`migrations/` builds the whole schema from an empty database in ten files, one per feature. Keep their order: later files reference tables created by earlier files.
+`migrations/` builds the whole schema from an empty database in thirteen files, one per feature. Keep their order: later files reference tables created by earlier files.
 
 | Version | File | Scope |
 | --- | --- | --- |
@@ -16,8 +16,11 @@
 | 008 | `008_request_center.sql` | Service requests, requested assets, and request history |
 | 009 | `009_requester_identity.sql` | Requester identity profiles and their verification status |
 | 010 | `010_database_time_settings.sql` | Database time zone and date style that match the local server |
+| 011 | `011_issuance_request_type.sql` | Allows the `ISSUANCE_REQUEST` service request type |
+| 012 | `012_gso_head_role.sql` | Adds the distinct GSO Head login role |
+| 013 | `013_purchase_requisition_finance_handoff.sql` | Adds GSO Head PR review and Finance handoff tracking |
 
-Treat an applied migration as history. Add a new numbered file, starting at `011`, for every later schema change. Do not edit, rename, move, or delete a file that a database has already applied.
+Treat an applied migration as history. Add a new numbered file, starting at `014`, for every later schema change. Do not edit, rename, move, or delete a file that a database has already applied.
 
 Run migrations with `npm run db:migrate`, which applies the pending files in order and records each one in `schema_migrations`. The script takes its target only from `MIGRATION_DATABASE_URL`, never from `backend/.env`, and refuses Neon pooled connection strings.
 

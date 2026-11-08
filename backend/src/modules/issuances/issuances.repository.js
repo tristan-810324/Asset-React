@@ -671,6 +671,64 @@ async function listMyIssuanceActivity(userId) {
   return result.rows;
 }
 
+async function listMyDepartmentReturnActivity(userId) {
+  const result = await pool.query(
+    `SELECT return_record.id::TEXT AS id,
+            return_record.status,
+            return_record.return_condition AS condition,
+            return_record.reason,
+            NULLIF(BTRIM(return_record.returned_by_name), '') AS "returnedByName",
+            return_record.requested_at AS "requestedAt",
+            return_record.decided_at AS "decidedAt",
+            return_record.quantity,
+            issue.unit_of_measure AS "unitOfMeasure",
+            staff.employee_code AS "employeeCode",
+            trim(concat_ws(' ', staff.first_name, staff.middle_name, staff.last_name, staff.suffix)) AS "employeeName",
+            inventory.item_code AS "itemCode",
+            COALESCE(NULLIF(inventory.item_name, ''), inventory.description) AS "itemName",
+            COALESCE(return_record.tag_snapshot->>'tagCode', tag.tag_code) AS "tagCode",
+            staff.department
+       FROM requester_identity_profiles AS profile
+       JOIN employees AS head
+         ON lower(trim(head.employee_code)) = lower(trim(profile.employee_code))
+       JOIN employees AS staff
+         ON lower(trim(staff.department)) = lower(trim(head.department))
+       JOIN employee_issuances AS issue ON issue.employee_id = staff.id
+       JOIN employee_issuance_returns AS return_record ON return_record.issuance_id = issue.id
+       JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+       LEFT JOIN asset_unit_tags AS tag ON tag.id = return_record.asset_unit_tag_id
+      WHERE profile.user_id = $1
+        AND profile.verification_status = 'Verified'
+        AND head.status = 'Active'
+        AND staff.id <> head.id
+        AND return_record.status NOT IN ('Voided', 'Lost')
+      ORDER BY COALESCE(return_record.decided_at, return_record.requested_at) DESC,
+               return_record.id DESC
+      LIMIT 20`,
+    [userId],
+  );
+  return result.rows;
+}
+
+async function getMyDepartmentIssuanceSummary(userId) {
+  const result = await pool.query(
+    `SELECT COALESCE(SUM(issue.quantity), 0)::INTEGER AS "totalIssuedUnits"
+       FROM requester_identity_profiles AS profile
+       JOIN employees AS head
+         ON lower(trim(head.employee_code)) = lower(trim(profile.employee_code))
+       JOIN employees AS staff
+         ON lower(trim(staff.department)) = lower(trim(head.department))
+       JOIN employee_issuances AS issue ON issue.employee_id = staff.id
+      WHERE profile.user_id = $1
+        AND profile.verification_status = 'Verified'
+        AND head.status = 'Active'
+        AND staff.status = 'Active'
+        AND issue.status IN ('Issued', 'Returned')`,
+    [userId],
+  );
+  return result.rows[0] || { totalIssuedUnits: 0 };
+}
+
 async function getIssuanceBatch(batchId) {
   const batchResult = await pool.query(
     `SELECT batch.id::TEXT AS id,
@@ -1546,6 +1604,8 @@ module.exports = {
   createPendingIssuanceBatch,
   listMyPendingIssuanceBatches,
   listMyIssuanceActivity,
+  listMyDepartmentReturnActivity,
+  getMyDepartmentIssuanceSummary,
   getIssuanceBatch,
   listApprovedIssuanceBatches,
   getAssetTagByCode,
