@@ -281,7 +281,7 @@ async function markEmailFailed(issuanceId) {
   }
 }
 
-async function createPendingIssuanceBatch({ employeeCode, items: requestedItems, notes, borrowDetails, tokenHash, requestedByUserId }) {
+async function createPendingIssuanceBatch({ employeeCode, items: requestedItems, notes, borrowDetails, purchaseRequisitionId, tokenHash, requestedByUserId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -309,6 +309,36 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     if (!employee) throw notFound('Hindi na makita ang employee profile. I-refresh ang page at subukan muli.');
     if (employee.status !== 'Active') throw conflict('Hindi puwedeng mag-request ng issuance para sa inactive na employee.');
 
+    let requisition = null;
+    const requisitionLinesById = new Map();
+    if (purchaseRequisitionId) {
+      const requisitionResult = await client.query(
+        `SELECT id, request_type, status, form_data FROM service_requests WHERE id = $1 FOR UPDATE`,
+        [purchaseRequisitionId],
+      );
+      requisition = requisitionResult.rows[0];
+      if (!requisition || requisition.request_type !== 'PURCHASE_REQUISITION') throw notFound('Hindi makita ang purchase requisition.');
+      if (String(requisition.form_data?.requesterEmployeeCode || '').trim().toLowerCase() !== employee.employee_code.trim().toLowerCase()) {
+        throw conflict('Hindi tugma ang employee sa purchase requisition. Piliin ang tamang recipient.');
+      }
+      const lineIds = requestedItems.map((item) => item.purchaseRequisitionLineId);
+      if (lineIds.some((lineId) => !lineId)) throw conflict('Pumili lamang ng item na nakalaan sa requisition na ito.');
+      const lineResult = await client.query(
+        `SELECT id, request_id, route_status, reserved_quantity, finance_quantity, issued_quantity
+           FROM purchase_requisition_lines
+          WHERE request_id = $1 AND id = ANY($2::BIGINT[])
+          ORDER BY id FOR UPDATE`,
+        [purchaseRequisitionId, lineIds],
+      );
+      if (lineResult.rowCount !== new Set(lineIds.map(String)).size
+        || lineResult.rows.some((line) => !['READY_FOR_STAFF', 'PARTIAL_STOCK', 'PARTIALLY_ISSUED'].includes(line.route_status))) {
+        throw conflict('May item na hindi na ready para sa staff issuance. I-refresh ang queue.');
+      }
+      for (const line of lineResult.rows) requisitionLinesById.set(String(line.id), line);
+    } else if (requestedItems.some((item) => item.purchaseRequisitionLineId)) {
+      throw conflict('May purchase requisition item reference na walang request context. I-refresh ang queue.');
+    }
+
     const itemResult = await client.query(
       `SELECT id, item_code, description, condition, inventory_status, tracking_mode, issue_behavior, quantity, unit_of_measure
          FROM item_catalog
@@ -324,11 +354,17 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     const items = requestedItems.map((requested) => ({
       ...itemsById.get(String(requested.itemId)),
       requestedQuantity: requested.quantity,
+      purchaseRequisitionLine: requested.purchaseRequisitionLineId
+        ? requisitionLinesById.get(String(requested.purchaseRequisitionLineId))
+        : null,
     }));
     const itemFlow = (item) => item.tracking_mode === 'individual'
       ? 'per-unit'
       : item.issue_behavior === 'consumable' ? 'consumable' : 'reusable';
     const selectedFlows = new Set(items.map(itemFlow));
+    if (!purchaseRequisitionId && selectedFlows.has('per-unit')) {
+      throw conflict('Ang per-unit asset ay dapat dumaan muna sa Purchase Requisition bago ma-issue. Consumable at reusable quantity stock lamang ang puwedeng direct issuance.');
+    }
     if (selectedFlows.size > 1) {
       throw conflict('Isang uri lang ng inventory ang iproseso sa bawat issuance.');
     }
@@ -338,15 +374,31 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     }
     if (!isReusableBorrow && borrowDetails) throw conflict('Reusable quantity stock lamang ang nangangailangan ng borrowing schedule.');
     const isConsumableIssue = selectedFlows.has('consumable');
-    const initialStatus = isConsumableIssue || isReusableBorrow ? 'Issued' : 'Pending';
+    // Per-unit assets may only enter this flow from an approved purchase requisition.
+    // GSO prepares them for pickup immediately, including their barcode labels; the
+    // requester no longer needs to acknowledge a separate handover step.
+    const isPerUnitPickup = selectedFlows.has('per-unit');
+    const initialStatus = isConsumableIssue || isReusableBorrow || isPerUnitPickup ? 'Issued' : 'Pending';
     const initialDecisionNote = isConsumableIssue
       ? 'Released by GSO. No employee approval is required for consumable stock.'
       : isReusableBorrow
         ? 'Face-to-face reusable-stock borrowing recorded by GSO; return is due at the scheduled date and time.'
-        : 'Awaiting physical handover and employee receipt acknowledgment.';
+        : 'GSO prepared the per-unit asset for pickup. Barcode labels are ready; no requester confirmation is required.';
     for (const item of items) {
       if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
-      const availableQuantity = await getAvailableQuantity(client, item);
+      if (item.purchaseRequisitionLine) {
+        const allocation = await client.query(
+          `SELECT quantity, fulfilled_quantity
+             FROM purchase_requisition_line_allocations
+            WHERE line_id = $1 AND item_id = $2 AND status = 'Reserved'
+            FOR UPDATE`,
+          [item.purchaseRequisitionLine.id, item.id],
+        );
+        const reserved = allocation.rows.reduce((sum, row) => sum + Number(row.quantity) - Number(row.fulfilled_quantity), 0);
+        if (reserved < item.requestedQuantity) throw conflict(`Hindi na sapat ang nakareserbang stock para sa ${item.item_code}. I-refresh ang requisition queue.`);
+        item.purchaseRequisitionReservedQuantity = reserved;
+      }
+      const availableQuantity = await getAvailableQuantity(client, item) + Number(item.purchaseRequisitionReservedQuantity || 0);
       if (item.inventory_status === 'Borrowed' || availableQuantity < item.requestedQuantity) {
         throw conflict(`Hindi sapat ang available stock para sa ${item.item_code || 'napiling item'}. ${availableQuantity} ${item.unit_of_measure || 'unit'} na lang ang available.`);
       }
@@ -356,9 +408,10 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     const batchResult = await client.query(
       `INSERT INTO employee_issuance_batches (
          employee_id, requested_by_user_id, requester_user_id, status, token_hash, token_expires_at,
-         borrow_use_date, expected_return_date, borrow_use_at, expected_return_at, use_location, use_purpose, decision_note, decided_at
+         borrow_use_date, expected_return_date, borrow_use_at, expected_return_at, use_location, use_purpose, decision_note, decided_at,
+         purchase_requisition_id
        ) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours', $6, $7, $8, $9, $10, $11, $12,
-                 CASE WHEN $4 = 'Issued' THEN NOW() ELSE NULL END)
+                 CASE WHEN $4 = 'Issued' THEN NOW() ELSE NULL END, $13)
        RETURNING id, status, token_expires_at AS "expiresAt", requested_at AS "requestedAt",
                  borrow_use_date::TEXT AS "borrowUseDate",
                  to_char(borrow_use_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS "borrowUseAt",
@@ -368,7 +421,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       [employee.id, requestedByUserId, employee.requester_user_id, initialStatus, tokenHash,
         borrowDetails?.useDate ?? null, borrowDetails?.expectedReturnDate ?? null,
         borrowDetails?.useAt ?? null, borrowDetails?.expectedReturnAt ?? null,
-        borrowDetails?.useLocation ?? null, borrowDetails?.purpose ?? null, initialDecisionNote],
+        borrowDetails?.useLocation ?? null, borrowDetails?.purpose ?? null, initialDecisionNote, purchaseRequisitionId || null],
     );
     const batch = batchResult.rows[0];
 
@@ -377,13 +430,39 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       const inserted = await client.query(
         `INSERT INTO employee_issuances (
            batch_id, employee_id, item_id, requested_by_user_id, status, token_hash,
-           token_expires_at, item_condition, notes, quantity, unit_of_measure, decision_note, decided_at
+           token_expires_at, item_condition, notes, quantity, unit_of_measure, decision_note, decided_at,
+           purchase_requisition_line_id
          ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11,
-                   CASE WHEN $5 = 'Issued' THEN NOW() ELSE NULL END)
+                   CASE WHEN $5 = 'Issued' THEN NOW() ELSE NULL END, $12)
          RETURNING id`,
-        [batch.id, employee.id, item.id, requestedByUserId, initialStatus, batch.expiresAt, item.condition, notes, item.requestedQuantity, item.unit_of_measure, initialDecisionNote],
+        [batch.id, employee.id, item.id, requestedByUserId, initialStatus, batch.expiresAt, item.condition, notes, item.requestedQuantity, item.unit_of_measure, initialDecisionNote, item.purchaseRequisitionLine?.id || null],
       );
-      await refreshInventoryStatus(client, item.id);
+      if (item.purchaseRequisitionLine) {
+        const line = item.purchaseRequisitionLine;
+        await client.query(
+          `UPDATE purchase_requisition_line_allocations
+              SET fulfilled_quantity = fulfilled_quantity + $3,
+                  status = CASE WHEN fulfilled_quantity + $3 >= quantity THEN 'Fulfilled' ELSE 'Reserved' END,
+                  updated_at = NOW()
+            WHERE line_id = $1 AND item_id = $2 AND status = 'Reserved'`,
+          [line.id, item.id, item.requestedQuantity],
+        );
+        if (initialStatus === 'Pending') {
+          line.route_status = 'HANDOVER_PENDING';
+        } else {
+          line.issued_quantity = Number(line.issued_quantity) + item.requestedQuantity;
+          if (line.issued_quantity < Number(line.reserved_quantity)) line.route_status = 'PARTIALLY_ISSUED';
+          else if (Number(line.finance_quantity) > 0) {
+          line.route_status = requisition.status === 'Sent to Finance' ? 'WAITING_FOR_PURCHASE' : 'WAITING_FINANCE';
+          } else line.route_status = 'ISSUED';
+        }
+        await client.query(
+          `UPDATE purchase_requisition_lines
+              SET issued_quantity = $2, route_status = $3, updated_at = NOW()
+            WHERE id = $1`,
+          [line.id, line.issued_quantity, line.route_status],
+        );
+      }
       const issuance = {
         id: inserted.rows[0].id,
         employee_id: employee.id,
@@ -393,10 +472,15 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         item_id: item.id,
         item_code: item.item_code,
         description: item.description,
+        tracking_mode: item.tracking_mode,
         item_condition: item.condition,
         quantity: item.requestedQuantity,
         unit_of_measure: item.unit_of_measure,
       };
+      const tags = initialStatus === 'Issued' && item.tracking_mode === 'individual'
+        ? await createUnitTags(client, issuance, employee.requester_user_id)
+        : [];
+      await refreshInventoryStatus(client, item.id);
       issuanceItems.push({
         id: issuance.id,
         itemId: item.id,
@@ -408,6 +492,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         quantity: item.requestedQuantity,
         unitOfMeasure: item.unit_of_measure,
         availableQuantity: item.availableQuantityBefore - item.requestedQuantity,
+        tags: tags.map((tag) => ({ tagCode: tag.tagCode, unitNumber: tag.unitNumber, printedAt: null })),
       });
 
       await writeAuditLog(client, issuance, {
@@ -416,15 +501,16 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
           ? `GSO issued ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} to ${employee.employee_code}; no employee approval is required for consumable stock.`
           : isReusableBorrow
             ? `GSO recorded a face-to-face borrowing of ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} for ${employee.employee_code}.`
-            : `Per-unit asset ${issuance.description} is reserved for handover to ${employee.employee_code}; employee receipt acknowledgment is required before custody becomes active.`,
+            : `GSO prepared per-unit asset ${issuance.description} for pickup by ${employee.employee_code}; barcode labels are ready and no requester confirmation is required.`,
         oldValues: { inventoryStatus: item.inventory_status, availableQuantity: item.availableQuantityBefore },
         newValues: {
           inventoryStatus: item.requestedQuantity === item.availableQuantityBefore
-            ? isReusableBorrow ? 'Borrowed' : isConsumableIssue ? 'Issued' : 'Reserved'
+            ? isReusableBorrow ? 'Borrowed' : isConsumableIssue || isPerUnitPickup ? 'Issued' : 'Reserved'
             : 'Available',
           reservedQuantity: initialStatus === 'Pending' ? item.requestedQuantity : 0,
           issuedQuantity: initialStatus === 'Issued' ? item.requestedQuantity : 0,
           issuanceStatus: initialStatus,
+          barcodeCount: tags.length,
           borrowingSchedule: isReusableBorrow ? {
             useAt: batch.borrowUseAt,
             expectedReturnAt: batch.expectedReturnAt,
@@ -438,6 +524,51 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       });
     }
 
+    if (purchaseRequisitionId) {
+      const issuedSummary = issuanceItems.map((item) => `${item.quantity} ${item.unitOfMeasure} ${item.itemName}`).join('; ');
+      const actionNote = isPerUnitPickup
+        ? `GSO Staff prepared ${issuedSummary} for pickup; barcode labels are ready.`
+        : initialStatus === 'Pending'
+        ? `GSO Staff prepared the physical handover for ${issuedSummary}; requester receipt is pending.`
+        : `GSO Staff issued ${issuedSummary} through Main Issuance.`;
+      await client.query(
+        `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+         VALUES ($1, $2, $2, $3, $4)`,
+        [purchaseRequisitionId, requisition.status, actionNote, requestedByUserId],
+      );
+    }
+
+    if (purchaseRequisitionId && initialStatus !== 'Pending') {
+      const unfinishedResult = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE route_status NOT IN ('ISSUED', 'REJECTED', 'CANCELLED'))::INTEGER AS unfinished,
+                BOOL_OR(route_status = 'ISSUED') AS has_issued
+           FROM purchase_requisition_lines
+          WHERE request_id = $1`,
+        [purchaseRequisitionId],
+      );
+      if (Number(unfinishedResult.rows[0]?.unfinished || 0) === 0 && unfinishedResult.rows[0]?.has_issued) {
+        const finalRequestStatus = isPerUnitPickup ? 'Ready for Pickup' : 'Completed';
+        const finalRequestNote = isPerUnitPickup
+          ? 'All approved requisition items are prepared for pickup by GSO; barcode labels are ready.'
+          : 'All approved requisition items have been issued by GSO Staff.';
+        const completed = await client.query(
+          `UPDATE service_requests
+              SET status = $2,
+                  completed_at = CASE WHEN $2 = 'Completed' THEN NOW() ELSE NULL END,
+                  updated_at = NOW()
+            WHERE id = $1 AND status <> $2
+            RETURNING status`,
+          [purchaseRequisitionId, finalRequestStatus],
+        );
+        if (completed.rowCount) {
+          await client.query(
+            `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [purchaseRequisitionId, requisition.status, finalRequestStatus, finalRequestNote, requestedByUserId],
+          );
+        }
+      }
+    }
     await client.query('COMMIT');
     return {
       id: batch.id,
@@ -555,6 +686,62 @@ async function markBatchEmailFailed(batchId) {
     throw error;
   } finally {
     client.release();
+  }
+}
+
+// Old purchase-requisition batches may still be Pending from the former
+// requester-confirmation flow. Promote only all-per-unit batches so they adopt
+// the new pickup flow without affecting any other legacy approval process.
+async function prepareLegacyPendingPickupBatches(userId) {
+  const pendingResult = await pool.query(
+    `SELECT batch.id::TEXT AS id
+       FROM employee_issuance_batches AS batch
+       JOIN employees AS employee ON employee.id = batch.employee_id
+       JOIN requester_identity_profiles AS profile
+         ON profile.user_id = $1
+        AND profile.verification_status = 'Verified'
+        AND lower(trim(profile.employee_code)) = lower(trim(employee.employee_code))
+      WHERE batch.requester_user_id = $1
+        AND batch.status = 'Pending'
+        AND batch.purchase_requisition_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM employee_issuances AS issue
+            JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+           WHERE issue.batch_id = batch.id
+             AND inventory.tracking_mode = 'individual'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM employee_issuances AS issue
+            JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+           WHERE issue.batch_id = batch.id
+             AND (inventory.tracking_mode <> 'individual' OR issue.status <> 'Pending')
+        )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM employee_issuances AS issue
+           WHERE issue.batch_id = batch.id
+             AND issue.purchase_requisition_line_id IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1
+            FROM employee_issuances AS issue
+            JOIN purchase_requisition_lines AS line ON line.id = issue.purchase_requisition_line_id
+           WHERE issue.batch_id = batch.id
+             AND line.route_status <> 'HANDOVER_PENDING'
+        )
+      ORDER BY batch.id`,
+    [userId],
+  );
+
+  for (const batch of pendingResult.rows) {
+    await resolveApproval({
+      batchId: batch.id,
+      requesterUserId: userId,
+      action: 'acknowledge',
+      autoPreparePickup: true,
+    });
   }
 }
 
@@ -1088,16 +1275,18 @@ async function lookupApproval(tokenHash) {
   return result.rows[0] || null;
 }
 
-async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId, action, handoverMethod, handoverNote }) {
+async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId, action, handoverMethod, handoverNote, autoPreparePickup = false }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const batchResult = batchId !== undefined && requesterUserId !== undefined
       ? await client.query(
-        `SELECT batch.id, batch.status, batch.token_expires_at, employee.id AS employee_id,
+        `SELECT batch.id, batch.status, batch.token_expires_at, batch.purchase_requisition_id,
+                requisition.status AS purchase_requisition_status, employee.id AS employee_id,
                 employee.employee_code, employee.first_name, employee.last_name
            FROM employee_issuance_batches AS batch
            JOIN employees AS employee ON employee.id = batch.employee_id
+           LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
            JOIN requester_identity_profiles AS profile
              ON profile.user_id = $2
             AND profile.verification_status = 'Verified'
@@ -1110,19 +1299,23 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
       : batchId !== undefined && gsoUserId !== undefined
         ? await client.query(
           `SELECT batch.id, batch.status, batch.token_expires_at, batch.requester_user_id,
+                  batch.purchase_requisition_id, requisition.status AS purchase_requisition_status,
                   employee.id AS employee_id,
                   employee.employee_code, employee.first_name, employee.last_name
              FROM employee_issuance_batches AS batch
              JOIN employees AS employee ON employee.id = batch.employee_id
+             LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
             WHERE batch.id = $1
             FOR UPDATE OF batch`,
           [batchId],
         )
         : await client.query(
-        `SELECT batch.id, batch.status, batch.token_expires_at, employee.id AS employee_id,
+        `SELECT batch.id, batch.status, batch.token_expires_at, batch.purchase_requisition_id,
+                requisition.status AS purchase_requisition_status, employee.id AS employee_id,
                 employee.employee_code, employee.first_name, employee.last_name
            FROM employee_issuance_batches AS batch
            JOIN employees AS employee ON employee.id = batch.employee_id
+           LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
           WHERE batch.token_hash = $1
           FOR UPDATE OF batch`,
         [tokenHash],
@@ -1135,6 +1328,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
     if (batch) {
       const itemsResult = await client.query(
         `SELECT issue.id, issue.status, issue.employee_id, issue.item_id, issue.quantity, issue.unit_of_measure,
+                issue.purchase_requisition_line_id,
                 issue.item_condition, issue.notes, employee.employee_code,
                  employee.first_name, employee.last_name, inventory.item_code,
                  inventory.description, inventory.inventory_status, inventory.tracking_mode
@@ -1195,6 +1389,23 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
             WHERE batch_id = $1 AND status = 'Pending'`,
           [batch.id],
         );
+        for (const item of items) {
+          if (!batch.purchase_requisition_id || !item.purchase_requisition_line_id) continue;
+          await client.query(
+            `UPDATE purchase_requisition_line_allocations
+                SET fulfilled_quantity = GREATEST(fulfilled_quantity - $3, 0),
+                    status = 'Reserved', updated_at = NOW()
+              WHERE line_id = $1 AND item_id = $2 AND status IN ('Reserved', 'Fulfilled')`,
+            [item.purchase_requisition_line_id, item.item_id, item.quantity],
+          );
+          await client.query(
+            `UPDATE purchase_requisition_lines
+                SET route_status = CASE WHEN finance_quantity > 0 THEN 'PARTIAL_STOCK' ELSE 'READY_FOR_STAFF' END,
+                    updated_at = NOW()
+              WHERE id = $1 AND route_status = 'HANDOVER_PENDING'`,
+            [item.purchase_requisition_line_id],
+          );
+        }
         const itemIds = items.map((item) => item.item_id);
         for (const itemId of new Set(itemIds.map(String))) await refreshInventoryStatus(client, itemId);
         for (const item of items) {
@@ -1212,6 +1423,14 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
             newValues: { issuanceStatus: 'Expired' },
           });
         }
+        if (batch.purchase_requisition_id) {
+          const summary = items.map((item) => `${item.quantity} ${item.unit_of_measure} ${item.description}`).join('; ');
+          await client.query(
+            `INSERT INTO service_request_history (request_id, previous_status, new_status, note)
+             VALUES ($1, $2, $2, $3)`,
+            [batch.purchase_requisition_id, batch.purchase_requisition_status, `Employee handover expired; the stock reservation returned to the GSO Staff queue. ${summary}`],
+          );
+        }
         await client.query('COMMIT');
         return { expired: true };
       }
@@ -1225,11 +1444,15 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
       }
 
       const nextStatus = action === 'reject' ? 'Rejected' : 'Issued';
-      const decisionChannel = gsoUserId !== undefined
-        ? 'GSO-recorded handover'
-        : requesterUserId !== undefined ? 'Requester Dashboard' : 'legacy email approval link';
+      const decisionChannel = autoPreparePickup
+        ? 'automatic pickup preparation'
+        : gsoUserId !== undefined
+          ? 'GSO-recorded handover'
+          : requesterUserId !== undefined ? 'Requester Dashboard' : 'legacy email approval link';
       const decisionNote = action === 'reject'
         ? `Rejected by employee through the ${decisionChannel}.`
+        : autoPreparePickup
+          ? 'GSO prepared the per-unit assets for pickup. Barcode labels are ready; no requester confirmation is required.'
         : action === 'acknowledge' && gsoUserId !== undefined
           ? `Receipt recorded by GSO via ${handoverMethod === 'authorized_handover' ? 'authorized handover' : 'signed receipt'}${handoverNote ? `: ${handoverNote}` : ''}.`
           : action === 'acknowledge'
@@ -1249,6 +1472,56 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
           WHERE batch_id = $1 AND status = 'Pending'`,
         [batch.id, nextStatus, decisionNote],
       );
+      if (action === 'reject') {
+        for (const item of items) {
+          if (!batch.purchase_requisition_id || !item.purchase_requisition_line_id) continue;
+          await client.query(
+            `UPDATE purchase_requisition_line_allocations
+                SET fulfilled_quantity = GREATEST(fulfilled_quantity - $3, 0),
+                    status = 'Reserved', updated_at = NOW()
+              WHERE line_id = $1 AND item_id = $2 AND status IN ('Reserved', 'Fulfilled')`,
+            [item.purchase_requisition_line_id, item.item_id, item.quantity],
+          );
+          await client.query(
+            `UPDATE purchase_requisition_lines
+                SET route_status = CASE WHEN finance_quantity > 0 THEN 'PARTIAL_STOCK' ELSE 'READY_FOR_STAFF' END,
+                    updated_at = NOW()
+              WHERE id = $1 AND route_status = 'HANDOVER_PENDING'`,
+            [item.purchase_requisition_line_id],
+          );
+        }
+      } else {
+        // A requisition line can be fulfilled by several per-unit inventory
+        // records. Update each line once with its total, otherwise the first
+        // update changes HANDOVER_PENDING and the next one fails its guard.
+        const quantitiesByLine = new Map();
+        for (const item of items) {
+          if (!batch.purchase_requisition_id || !item.purchase_requisition_line_id) continue;
+          const lineKey = String(item.purchase_requisition_line_id);
+          const existing = quantitiesByLine.get(lineKey);
+          quantitiesByLine.set(lineKey, {
+            lineId: item.purchase_requisition_line_id,
+            quantity: Number(existing?.quantity || 0) + Number(item.quantity),
+          });
+        }
+        for (const { lineId, quantity } of quantitiesByLine.values()) {
+          const lineResult = await client.query(
+            `UPDATE purchase_requisition_lines AS line
+                SET issued_quantity = line.issued_quantity + $2,
+                    route_status = CASE
+                      WHEN line.issued_quantity + $2 < line.reserved_quantity THEN 'PARTIALLY_ISSUED'
+                      WHEN line.finance_quantity > 0 AND $3 = 'Sent to Finance' THEN 'WAITING_FOR_PURCHASE'
+                      WHEN line.finance_quantity > 0 THEN 'WAITING_FINANCE'
+                      ELSE 'ISSUED'
+                    END,
+                    updated_at = NOW()
+              WHERE line.id = $1 AND line.route_status = 'HANDOVER_PENDING'
+              RETURNING line.request_id`,
+            [lineId, quantity, batch.purchase_requisition_status],
+          );
+          if (!lineResult.rowCount) throw conflict('Nagbago ang purchase requisition line habang nire-record ang handover. I-refresh ang page.');
+        }
+      }
       const generatedTags = [];
       if (action !== 'reject') {
         const assignedUserId = requesterUserId ?? await requesterUserIdForEmployee(client, batch.employee_code);
@@ -1271,9 +1544,11 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
           description: item.description,
         };
         await writeAuditLog(client, issuance, {
-          changedByUserId: requesterUserId ?? gsoUserId ?? null,
+          changedByUserId: autoPreparePickup ? null : requesterUserId ?? gsoUserId ?? null,
           reason: action === 'acknowledge'
-            ? `${decisionNote} Unit custody was activated for ${item.employee_code}.`
+            ? autoPreparePickup
+              ? `${decisionNote} Unit custody is prepared for pickup by ${item.employee_code}.`
+              : `${decisionNote} Unit custody was activated for ${item.employee_code}.`
             : `${nextStatus} by employee ${item.employee_code} in the ${decisionChannel} for ${item.quantity} ${item.unit_of_measure}.`,
           oldValues: { issuanceStatus: 'Pending', quantity: item.quantity, unitOfMeasure: item.unit_of_measure },
           newValues: {
@@ -1282,6 +1557,55 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
             barcodeCount: action !== 'reject' && item.tracking_mode !== 'quantity' ? Number(item.quantity) : 0,
           },
         });
+      }
+      if (batch.purchase_requisition_id) {
+        const summary = items.map((item) => `${item.quantity} ${item.unit_of_measure} ${item.description}`).join('; ');
+        const requestNote = action === 'reject'
+          ? `Requester declined the handover; the stock reservation returned to the GSO Staff queue. ${summary}`
+          : autoPreparePickup
+            ? `GSO prepared the approved items for pickup; barcode labels are ready. ${summary}`
+          : action === 'acknowledge' && gsoUserId !== undefined
+            ? `GSO Staff recorded the completed item handover. ${summary}`
+            : action === 'acknowledge'
+              ? `Requester confirmed receipt of the issued items. ${summary}`
+              : `Employee approved the issued items. ${summary}`;
+        await client.query(
+          `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+           VALUES ($1, $2, $2, $3, $4)`,
+          [batch.purchase_requisition_id, batch.purchase_requisition_status, requestNote, autoPreparePickup ? null : requesterUserId ?? gsoUserId ?? null],
+        );
+      }
+
+      if (batch.purchase_requisition_id && action !== 'reject') {
+        const unfinishedResult = await client.query(
+          `SELECT COUNT(*) FILTER (WHERE route_status NOT IN ('ISSUED', 'REJECTED', 'CANCELLED'))::INTEGER AS unfinished,
+                  BOOL_OR(route_status = 'ISSUED') AS has_issued
+             FROM purchase_requisition_lines
+            WHERE request_id = $1`,
+          [batch.purchase_requisition_id],
+        );
+        if (Number(unfinishedResult.rows[0]?.unfinished || 0) === 0 && unfinishedResult.rows[0]?.has_issued) {
+          const finalRequestStatus = autoPreparePickup ? 'Ready for Pickup' : 'Completed';
+          const finalRequestNote = autoPreparePickup
+            ? 'All approved requisition items are prepared for pickup by GSO; barcode labels are ready.'
+            : 'All approved requisition items have been issued by GSO Staff.';
+          const updatedRequest = await client.query(
+            `UPDATE service_requests
+                SET status = $2,
+                    completed_at = CASE WHEN $2 = 'Completed' THEN NOW() ELSE NULL END,
+                    updated_at = NOW()
+              WHERE id = $1 AND status <> $2
+              RETURNING status`,
+            [batch.purchase_requisition_id, finalRequestStatus],
+          );
+          if (updatedRequest.rowCount) {
+            await client.query(
+              `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [batch.purchase_requisition_id, batch.purchase_requisition_status, finalRequestStatus, finalRequestNote, autoPreparePickup ? null : requesterUserId ?? gsoUserId ?? null],
+            );
+          }
+        }
       }
 
       await client.query('COMMIT');
@@ -1602,6 +1926,7 @@ module.exports = {
   getEmployeeReturnBlockers,
   createPendingIssuance,
   createPendingIssuanceBatch,
+  prepareLegacyPendingPickupBatches,
   listMyPendingIssuanceBatches,
   listMyIssuanceActivity,
   listMyDepartmentReturnActivity,

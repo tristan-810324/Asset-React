@@ -9,6 +9,7 @@ export type GsoNavigationItem =
   | 'Employees & Requesters'
   | 'Issuance & Borrowing'
   | 'Main Issuance'
+  | 'Purchase Requisitions'
   | 'Request & Borrowing'
   | 'Returns & Records'
   | 'Issuances Records'
@@ -143,6 +144,7 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Overview', icon: 'grid', href: '/gso' },
   { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
+  { kind: 'link', name: 'Purchase Requisitions', icon: 'clipboard-check', href: '/gso/purchase-requisitions' },
   {
     kind: 'group',
     name: 'Issuance & Borrowing',

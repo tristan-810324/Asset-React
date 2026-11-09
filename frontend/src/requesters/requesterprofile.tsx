@@ -53,7 +53,7 @@ function RequesterProfileContent() {
 
     {!identityLoading && showForm && <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="mb-5"><h2 className="text-lg font-black text-slate-900">{identity?.status === 'Needs Correction' ? 'Update staff details' : 'Complete staff details'}</h2><p className="mt-1 text-sm leading-relaxed text-slate-500">GSO will review your full name, employee code, department, position, contact number, and account email before verification.</p></div>
-      <RequesterIdentityForm profile={identity} accountName={user?.name || ''} accountEmail={user?.email || ''} onSaved={async () => { await refreshIdentity(); setEditing(false) }} onCancel={identity?.status === 'Verified' ? () => setEditing(false) : undefined} />
+      <RequesterIdentityForm profile={identity} accountEmail={user?.email || ''} onSaved={async () => { await refreshIdentity(); setEditing(false) }} onCancel={identity?.status === 'Verified' ? () => setEditing(false) : undefined} />
     </section>}
   </div>
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
-import { listCatalogAssets, listRequesterDepartmentStaff, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type RequesterDepartmentStaff, type RequestType } from './requesterApi'
+import { listCatalogAssets, listPurchaseItemNames, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType } from './requesterApi'
 
 type FormRow = Record<string, string | number>
 type FormValues = {
@@ -23,6 +23,8 @@ type FormValues = {
   venue?: string
   equipment?: FormRow[]
   requiredDate?: string
+  urgency?: string
+  urgentReason?: string
   requesterCertification?: boolean
   incidentType?: string
   keyArea?: string
@@ -99,22 +101,6 @@ const today = () => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-function parseSelectedStaffCodes(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((code): code is string => typeof code === 'string')
-  if (typeof value !== 'string') return []
-  try {
-    const parsed: unknown = JSON.parse(value)
-    return Array.isArray(parsed) ? parsed.filter((code): code is string => typeof code === 'string') : []
-  } catch {
-    return []
-  }
-}
-const twoWeeksFromToday = () => {
-  const date = new Date()
-  date.setDate(date.getDate() + 14)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
-
 type ItemPrefill = {
   name?: string
   description?: string
@@ -126,20 +112,20 @@ function initialForm(type: RequestType, prefill: ItemPrefill = {}): FormValues {
   if (type === 'BORROWING') return { purpose: '', neededDate: '', returnDate: '', useLocation: '', remarks: '', items: [] }
   if (type === 'FACILITY_USE') return { departmentOrganization: '', activity: '', purpose: '', activityType: 'CURRICULAR', otherActivityType: '', date: '', startTime: '', endTime: '', participantsMale: '', participantsFemale: '', venue: '', equipment: [], remarks: '' }
   if (type === 'JOB_REQUEST') return { departmentOrganization: '', purpose: '', requiredDate: '', tasks: [{ quantity: 1, particulars: '', natureOfWork: '', remarks: '' }], remarks: '' }
-  if (type === 'PURCHASE_REQUISITION') return { purpose: '', requiredDate: '', requesterCertification: false, items: [{ quantity: 1, category: prefill.category || '', catalogItemId: prefill.catalogItemId || '', itemName: prefill.name || '', description: prefill.description || '', intendedStaffCodes: '[]' }], remarks: '' }
+  if (type === 'PURCHASE_REQUISITION') return { purpose: '', requiredDate: today(), urgency: 'Standard', urgentReason: '', requesterCertification: false, items: [{ quantity: 1, category: prefill.category || '', catalogItemId: prefill.catalogItemId || '', itemNameId: '', itemName: prefill.name || '', description: prefill.description || '' }], remarks: '' }
   if (type === 'ISSUANCE_REQUEST') return { purpose: '', neededDate: '', remarks: '', items: [{ quantity: 1, description: prefill.name || '' }] }
   return { incidentType: 'LOST', keyArea: '', incidentDate: '', responsiblePerson: '', items: [{ quantity: 1, description: '', assetCode: '', remarks: '' }], remarks: '' }
 }
 
 function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
-  return <label className="block min-w-0"><span className="mb-1.5 block text-[0.66rem] font-extrabold uppercase tracking-wide text-slate-500">{label}</span>{children}{hint && <span className="mt-1.5 block text-[0.65rem] leading-relaxed text-slate-400">{hint}</span>}</label>
+  return <label className="block min-w-0"><span className="mb-1.5 block text-sm font-extrabold text-slate-900">{label}</span>{children}{hint && <span className="mt-1 block text-xs leading-relaxed text-slate-500">{hint}</span>}</label>
 }
 
-const inputClass = 'h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none transition placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100'
-const textareaClass = 'min-h-24 w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 outline-none transition placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100'
+const inputClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
+const textareaClass = 'min-h-20 w-full resize-y rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 
 function RequestItemContent() {
-  const { identity, identityLoading, refreshIdentity, openIdentityPrompt } = useRequesterIdentity()
+  const { identity, identityLoading, refreshIdentity } = useRequesterIdentity()
   const params = new URLSearchParams(window.location.search)
   const requestedType = params.get('type') as RequestType | 'ITEM_REQUEST' | null
   const unifiedItemRequest = requestedType === 'ITEM_REQUEST'
@@ -155,11 +141,9 @@ function RequestItemContent() {
     : requestTypes.includes(requestedType as RequestType) ? requestedType as RequestType : null
   const [form, setForm] = useState<FormValues>(() => type ? initialForm(type, itemPrefill) : {})
   const [catalog, setCatalog] = useState<CatalogAsset[]>([])
+  const [purchaseItemNames, setPurchaseItemNames] = useState<PurchaseItemName[]>([])
   const [catalogError, setCatalogError] = useState('')
   const [catalogLoaded, setCatalogLoaded] = useState(false)
-  const [departmentStaff, setDepartmentStaff] = useState<RequesterDepartmentStaff[]>([])
-  const [departmentStaffLoading, setDepartmentStaffLoading] = useState(true)
-  const [departmentStaffError, setDepartmentStaffError] = useState('')
   const [search, setSearch] = useState(() => (params.get('q') || '').slice(0, 100))
   const [category, setCategory] = useState('')
   const [itemName, setItemName] = useState('')
@@ -173,7 +157,6 @@ function RequestItemContent() {
     .join(' ') || identity?.accountName || ''
   const verifiedDepartment = identity?.matchedDepartment || identity?.department || ''
   const verifiedPosition = identity?.matchedPosition || identity?.position || ''
-  const verifiedEmployeeCode = identity?.matchedEmployeeCode || identity?.employeeCode || ''
   const requestDateLabel = useMemo(() => new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date()), [])
 
   useEffect(() => {
@@ -185,14 +168,13 @@ function RequestItemContent() {
   }, [type])
 
   useEffect(() => {
-    if (type !== 'PURCHASE_REQUISITION' || identity?.status !== 'Verified') return
+    if (type !== 'PURCHASE_REQUISITION') return
     let active = true
-    listRequesterDepartmentStaff()
-      .then((staff) => { if (active) setDepartmentStaff(staff) })
-      .catch((reason: unknown) => { if (active) setDepartmentStaffError(reason instanceof Error ? reason.message : 'Hindi ma-load ang staff sa department mo.') })
-      .finally(() => { if (active) setDepartmentStaffLoading(false) })
+    listPurchaseItemNames()
+      .then((itemNames) => { if (active) setPurchaseItemNames(itemNames) })
+      .catch((reason: unknown) => { if (active) setCatalogError(reason instanceof Error ? reason.message : 'Unable to load saved item names.') })
     return () => { active = false }
-  }, [identity?.status, type])
+  }, [type])
 
   // Browsing goes category → item name → specific items; typing a search jumps straight to matching items.
   const term = search.trim().toLowerCase()
@@ -217,7 +199,6 @@ function RequestItemContent() {
   const selectedItems = (type === 'BORROWING' ? form.items ?? [] : []) as FormRow[]
   const fallbackQuery = search.trim() ? `&item=${encodeURIComponent(search.trim())}` : ''
 
-  const minPurchaseDate = useMemo(() => twoWeeksFromToday(), [])
   const setField = (key: string, value: string | number | boolean) => setForm((current) => ({ ...current, [key]: value }))
   const updateRow = (key: string, index: number, field: string, value: string | number) => {
     setForm((current) => {
@@ -246,8 +227,7 @@ function RequestItemContent() {
     try {
       const currentIdentity = identity?.status === 'Verified' ? identity : await refreshIdentity()
       if (currentIdentity?.status !== 'Verified') {
-        setError(currentIdentity?.status === 'Pending' ? 'Nasa GSO pa ang identity verification mo. Hintayin muna ang approval bago magpadala ng request.' : 'Kumpletuhin muna ang staff identity details at hintayin ang GSO verification bago magpadala ng request.')
-        openIdentityPrompt()
+        setError(currentIdentity?.status === 'Pending' ? 'Nasa GSO pa ang identity verification mo. Hintayin muna ang approval bago magpadala ng request.' : 'Kailangan mo munang kumpletuhin ang iyong staff identity details bago makapagpadala ng request. Maaari mo itong sagutan ngayon o bumalik mamaya — basta hindi ito matatanggap hangga’t hindi natatapos.')
         return
       }
       const requestData = type === 'PURCHASE_REQUISITION'
@@ -255,8 +235,8 @@ function RequestItemContent() {
           ...form,
           items: ((form.items ?? []) as FormRow[]).map((item) => ({
             ...item,
-            catalogItemId: item.catalogItemId ? String(item.catalogItemId) : null,
-            intendedStaffCodes: parseSelectedStaffCodes(item.intendedStaffCodes),
+            catalogItemId: item.catalogItemId && item.catalogItemId !== '__GENERAL__' ? String(item.catalogItemId) : null,
+            itemNameId: item.itemNameId ? String(item.itemNameId) : null,
           })),
         }
         : form
@@ -264,8 +244,7 @@ function RequestItemContent() {
       window.location.replace(`/requester/requests/${request.id}`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Hindi naisumite ang request. Subukan ulit.')
-      const currentIdentity = await refreshIdentity()
-      if (currentIdentity?.status !== 'Verified') openIdentityPrompt()
+      void refreshIdentity()
     } finally {
       setSaving(false)
     }
@@ -283,20 +262,9 @@ function RequestItemContent() {
           <div className="relative"><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {unifiedItemRequest ? 'Item request' : 'New school request'}</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">{unifiedItemRequest ? 'Request an item' : REQUEST_TYPE_LABELS[type]}</h1><p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">{unifiedItemRequest ? 'Tell GSO what your department needs. GSO will check the catalog and decide the next step.' : type === 'PURCHASE_REQUISITION' ? 'Describe the general item your department needs. GSO will review the request before any purchase or issuance.' : 'Complete the form details below. GSO will review your submission and provide a reference number for tracking.'}</p></div>
         </section>
         <a href="/requester/request-center" className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 hover:underline">← Request Center</a>
-        <section className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/70 p-4 shadow-sm shadow-blue-950/5 sm:p-5">
-          <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">{type === 'PURCHASE_REQUISITION' ? 'EmployeeHead / requester' : 'Requester account'}</p>
-          <p className="mt-1 text-sm font-bold text-slate-800">Your signed-in school account will be recorded automatically.</p>
-          {type === 'PURCHASE_REQUISITION' && identity?.status === 'Verified' && <p className="mt-1 text-xs font-semibold text-slate-600">{verifiedEmployeeName}{verifiedEmployeeCode ? ` · ${verifiedEmployeeCode}` : ''}{verifiedDepartment ? ` · ${verifiedDepartment}` : ''}{verifiedPosition ? ` · ${verifiedPosition}` : ''}</p>}
-          <p className="mt-1 text-xs leading-relaxed text-slate-600">{type === 'PURCHASE_REQUISITION' ? 'The verified employee department is attached automatically. The GSO Head reviews and endorses the requisition before it is forwarded to Finance.' : 'A submission creates a reference number and enters the GSO review queue. It is not an approval.'}</p>
-        </section>
-
-        {identity?.status !== 'Verified' && <section className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:p-5" role="status">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-sm font-extrabold text-amber-950">{identityLoading ? 'Checking GSO verification…' : identity?.status === 'Pending' ? 'Your identity is awaiting GSO verification' : identity?.status === 'Needs Correction' ? 'Your identity details need correction' : 'GSO identity verification is required'}</p><p className="mt-1 text-xs leading-relaxed text-amber-900">{identity?.status === 'Pending' ? 'Hindi maipapadala ang request habang pending pa ang review.' : 'Maaari mong kumpletuhin ang staff details ngayon; kailangan itong ma-verify bago makapag-submit.'}</p></div><button type="button" onClick={openIdentityPrompt} className="shrink-0 rounded-xl bg-amber-900 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-amber-950">{identity?.status === 'Pending' ? 'View status' : 'Complete identity'}</button></div>
-        </section>}
-
-        <form onSubmit={onSubmit} className="mt-5 space-y-5">
+        <form onSubmit={onSubmit} className="mt-4 space-y-3">
           {type === 'BORROWING' && <>
-            <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+            <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md shadow-slate-200/55 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">Step 1 · Choose items</p>
@@ -379,7 +347,7 @@ function RequestItemContent() {
               </div>}
             </section>
 
-            <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+            <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md shadow-slate-200/55 sm:p-5">
               <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">Step 2 · Quantity and schedule</p>
               <h2 className="mt-1 text-lg font-black tracking-tight">Selected items ({selectedItems.length})</h2>
               <p className="mt-1 text-xs text-slate-500">GSO reviews the quantity, use details, and return date before pickup.</p>
@@ -395,7 +363,7 @@ function RequestItemContent() {
                     </div>
                   })}
                 </div>}
-              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field>
                 <Field label="Expected return date"><input className={inputClass} type="date" min={form.neededDate || today()} value={form.returnDate} onChange={(event) => setField('returnDate', event.target.value)} required /></Field>
                 <Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field>
@@ -405,9 +373,9 @@ function RequestItemContent() {
             </section>
           </>}
 
-          {type === 'FACILITY_USE' && <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+          {type === 'FACILITY_USE' && <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md shadow-slate-200/55 sm:p-5">
             <h2 className="text-lg font-black tracking-tight">Permit to use school facilities</h2><p className="mt-1 text-xs text-slate-500">Facility approval is subject to venue availability and school approval.</p>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Field label="Department / year & section / organization"><input className={inputClass} value={form.departmentOrganization} onChange={(event) => setField('departmentOrganization', event.target.value)} required /></Field>
               <Field label="Activity"><input className={inputClass} value={form.activity} onChange={(event) => setField('activity', event.target.value)} required /></Field>
               <Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field>
@@ -421,23 +389,22 @@ function RequestItemContent() {
               <Field label="Female participants"><input className={inputClass} type="number" min="0" value={form.participantsFemale} onChange={(event) => setField('participantsFemale', event.target.value)} /></Field>
               <Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field>
             </div>
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/80 p-4">
+            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3">
               <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-extrabold text-slate-800">Equipment / materials</h2><p className="mt-1 text-[0.68rem] text-slate-500">Optional; add rows for equipment requested with the venue.</p></div><button type="button" onClick={() => addRow('equipment', { name: '', quantity: 1, unit: 'pcs' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button></div>
               <div className="mt-3 space-y-3">{(form.equipment ?? []).map((item: FormRow, index: number) => <div key={index} className="grid gap-3 sm:grid-cols-[1fr_8rem_8rem_auto]"><Field label="Equipment"><input className={inputClass} value={item.name} onChange={(event) => updateRow('equipment', index, 'name', event.target.value)} required /></Field><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('equipment', index, 'quantity', event.target.value)} required /></Field><Field label="Unit"><input className={inputClass} value={item.unit} onChange={(event) => updateRow('equipment', index, 'unit', event.target.value)} /></Field><button type="button" onClick={() => removeRow('equipment', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button></div>)}</div>
             </div>
           </section>}
 
-          {type === 'JOB_REQUEST' && <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+          {type === 'JOB_REQUEST' && <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md shadow-slate-200/55 sm:p-5">
             <h2 className="text-lg font-black tracking-tight">Job request</h2><p className="mt-1 text-xs text-slate-500">Describe the work requested and when it is needed.</p>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="Area / department"><input className={inputClass} value={form.departmentOrganization} onChange={(event) => setField('departmentOrganization', event.target.value)} required /></Field><Field label="Date required"><input className={inputClass} type="date" min={today()} value={form.requiredDate} onChange={(event) => setField('requiredDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/80 p-4"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Particulars / nature of work</h2><button type="button" onClick={() => addRow('tasks', { quantity: 1, particulars: '', natureOfWork: '', remarks: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700">+ Add task</button></div><div className="mt-3 space-y-4">{(form.tasks ?? []).map((task: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[8rem_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={task.quantity} onChange={(event) => updateRow('tasks', index, 'quantity', event.target.value)} required /></Field><Field label="Particulars"><input className={inputClass} value={task.particulars} onChange={(event) => updateRow('tasks', index, 'particulars', event.target.value)} required /></Field>{(form.tasks?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('tasks', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button>}</div><Field label="Description / nature of work"><textarea className={`${textareaClass} mt-3`} value={task.natureOfWork} onChange={(event) => updateRow('tasks', index, 'natureOfWork', event.target.value)} required /></Field><Field label="Task remarks"><input className={`${inputClass} mt-3`} value={task.remarks} onChange={(event) => updateRow('tasks', index, 'remarks', event.target.value)} /></Field></div>)}</div></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Area / department"><input className={inputClass} value={form.departmentOrganization} onChange={(event) => setField('departmentOrganization', event.target.value)} required /></Field><Field label="Date required"><input className={inputClass} type="date" min={today()} value={form.requiredDate} onChange={(event) => setField('requiredDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
+            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Particulars / nature of work</h2><button type="button" onClick={() => addRow('tasks', { quantity: 1, particulars: '', natureOfWork: '', remarks: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700">+ Add task</button></div><div className="mt-3 space-y-4">{(form.tasks ?? []).map((task: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[8rem_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={task.quantity} onChange={(event) => updateRow('tasks', index, 'quantity', event.target.value)} required /></Field><Field label="Particulars"><input className={inputClass} value={task.particulars} onChange={(event) => updateRow('tasks', index, 'particulars', event.target.value)} required /></Field>{(form.tasks?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('tasks', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button>}</div><Field label="Description / nature of work"><textarea className={`${textareaClass} mt-3`} value={task.natureOfWork} onChange={(event) => updateRow('tasks', index, 'natureOfWork', event.target.value)} required /></Field><Field label="Task remarks"><input className={`${inputClass} mt-3`} value={task.remarks} onChange={(event) => updateRow('tasks', index, 'remarks', event.target.value)} /></Field></div>)}</div></div>
           </section>}
 
-          {type === 'PURCHASE_REQUISITION' && <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+          {type === 'PURCHASE_REQUISITION' && <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md shadow-slate-200/55 sm:p-5">
             <h2 className="text-lg font-black tracking-tight">Item requisition for staff issue</h2>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">The Head submits the request; GSO validates stock and coordinates the next step.</p>
 
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Field label="EmployeeHead / requester">
                 <input className={inputClass} value={verifiedEmployeeName || identity?.accountName || ''} readOnly aria-readonly="true" placeholder="GSO-verified identity required" />
               </Field>
@@ -450,86 +417,64 @@ function RequestItemContent() {
               <Field label="Request date">
                 <input className={inputClass} value={requestDateLabel} readOnly aria-readonly="true" />
               </Field>
-              <Field label="Date needed" hint="Isumite nang hindi bababa sa dalawang linggo bago ang petsang kailangan.">
-                <input className={inputClass} type="date" min={minPurchaseDate} value={form.requiredDate} onChange={(event) => setField('requiredDate', event.target.value)} required />
+              <Field label="Date needed">
+                <input className={inputClass} type="date" min={today()} value={form.requiredDate} onChange={(event) => setField('requiredDate', event.target.value)} required />
               </Field>
+              <Field label="Urgency">
+                <select className={inputClass} value={String(form.urgency || 'Standard')} onChange={(event) => setField('urgency', event.target.value)}><option value="Standard">Standard</option><option value="Urgent">Urgent</option></select>
+              </Field>
+              {form.urgency === 'Urgent' && <div className="sm:col-span-2"><Field label="Why is this urgent?"><input className={inputClass} value={String(form.urgentReason || '')} onChange={(event) => setField('urgentReason', event.target.value)} maxLength={500} required placeholder="Briefly explain when the item is needed and why." /></Field><p className="mt-1.5 text-[0.65rem] font-medium text-amber-700">Urgent requests still follow the item's approval rule. Available stock may go directly to GSO Staff.</p></div>}
               <div className="sm:col-span-2">
-                <Field label="Purpose / justification">
-                  <textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} placeholder="Bakit kailangan ng department ang mga item na ito?" required maxLength={2000} />
+                <Field label="Purpose">
+                  <textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required maxLength={2000} />
                 </Field>
               </div>
             </div>
 
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/80 p-4">
+            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3">
               <div className="flex items-center justify-between gap-3">
-                <div><h3 className="text-sm font-extrabold text-slate-800">Items for requisition</h3><p className="mt-1 text-[0.68rem] text-slate-500">Add the category, quantity, and specifications.</p></div>
-                <button type="button" onClick={() => addRow('items', { quantity: 1, category: '', catalogItemId: '', itemName: '', description: '', intendedStaffCodes: '[]' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button>
+                <h3 className="text-sm font-extrabold text-slate-800">Items for requisition</h3>
+                <button type="button" onClick={() => addRow('items', { quantity: 1, category: '', catalogItemId: '', itemNameId: '', itemName: '', description: '' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button>
               </div>
               <div className="mt-3 space-y-3">
                 {(form.items ?? []).map((item: FormRow, index: number) => {
-                  const selectedStaffCodes = parseSelectedStaffCodes(item.intendedStaffCodes)
-                  const matchingCatalogItems = purchaseCatalogItems.filter((asset) => !item.category || catalogMatchesCategory(asset, String(item.category)))
+                  const matchingCatalogItems = purchaseCatalogItems.filter((asset) => Boolean(item.category) && catalogMatchesCategory(asset, String(item.category)))
+                  const matchingManagedNames = purchaseItemNames.filter((saved) => Boolean(item.category) && purchaseCategoryForCatalogCategory(saved.category) === item.category)
+                  const isGeneralItem = item.catalogItemId === '__GENERAL__'
                   return <div key={index} className="rounded-xl border border-slate-200 bg-white p-3">
                     <div className="grid gap-3 sm:grid-cols-[14rem_1fr_8rem_auto]">
-                      <Field label="Requisition category"><select className={inputClass} value={item.category} onChange={(event) => { updateRow('items', index, 'category', event.target.value); updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemName', '') }} required><option value="">Select category</option>{purchaseCategoryOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-                       <Field label="Item name" hint="Choose a saved item, or select general if it is not listed."><select className={inputClass} value={item.catalogItemId ? String(item.catalogItemId) : item.itemName ? '__GENERAL__' : ''} onChange={(event) => { const selected = matchingCatalogItems.find((asset) => String(asset.id) === event.target.value); if (!selected) { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemName', ''); updateRow('items', index, 'description', ''); return } updateRow('items', index, 'catalogItemId', String(selected.id)); updateRow('items', index, 'category', purchaseCategoryForCatalogCategory(selected.category)); updateRow('items', index, 'itemName', selected.name); updateRow('items', index, 'description', selected.description) }} required><option value="">Select an item</option><option value="__GENERAL__">General item / not listed</option>{matchingCatalogItems.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}{hasDescription(asset) ? ` · ${asset.description}` : ''}</option>)}</select></Field>
+                      <Field label="Requisition category"><select className={inputClass} value={item.category} onChange={(event) => { updateRow('items', index, 'category', event.target.value); updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', '') }} required><option value="">Select category</option>{purchaseCategoryOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+                      <Field label="Item name"><select className={inputClass} value={item.itemNameId ? `managed:${item.itemNameId}` : item.catalogItemId ? String(item.catalogItemId) : ''} onChange={(event) => { const value = event.target.value; const managed = value.startsWith('managed:') ? matchingManagedNames.find((saved) => saved.id === value.slice(8)) : undefined; const selected = matchingCatalogItems.find((asset) => String(asset.id) === value); if (value === '__GENERAL__') { updateRow('items', index, 'catalogItemId', '__GENERAL__'); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', ''); updateRow('items', index, 'description', ''); return } if (managed) { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', managed.id); updateRow('items', index, 'itemName', managed.name); updateRow('items', index, 'description', ''); return } if (!selected) { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', ''); updateRow('items', index, 'description', ''); return } updateRow('items', index, 'catalogItemId', String(selected.id)); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'category', purchaseCategoryForCatalogCategory(selected.category)); updateRow('items', index, 'itemName', selected.name); updateRow('items', index, 'description', selected.description) }} required disabled={!item.category}><option value="">{!item.category ? 'Choose a category first' : matchingManagedNames.length || matchingCatalogItems.length ? 'Select item' : 'No saved items'}</option><option value="__GENERAL__">General item / not listed</option>{matchingManagedNames.map((saved) => <option key={`managed-${saved.id}`} value={`managed:${saved.id}`}>{saved.name}</option>)}{matchingCatalogItems.filter((asset) => !matchingManagedNames.some((saved) => saved.name.trim().toLowerCase() === asset.name.trim().toLowerCase())).map((asset) => <option key={`stock-${asset.id}`} value={asset.id}>{asset.name}{hasDescription(asset) ? ` · ${asset.description}` : ''}</option>)}</select></Field>
                       <Field label="Quantity"><input className={inputClass} type="number" min="1" step="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field>
                       {(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>}
                     </div>
-                     {!item.catalogItemId && <Field label="General item name" hint="Type the item name if it is not in the saved catalog."><input className={`${inputClass} mt-3`} value={item.itemName || ''} onChange={(event) => { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemName', event.target.value) }} placeholder="e.g. Bond paper or projector" required maxLength={250} /></Field>}
-                     <Field label={`Item ${index + 1} description / specifications`}><textarea className={`${textareaClass} mt-3`} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} placeholder="Add the required specifications or details" required maxLength={1000} /></Field>
-                    <fieldset className="mt-4">
-                       <legend className="text-[0.66rem] font-extrabold uppercase tracking-wide text-slate-600">Planned staff recipient(s) <span className="font-semibold normal-case tracking-normal text-slate-400">(optional)</span></legend>
-                       <p id={`purchase-staff-help-${index}`} className="mt-1 text-[0.65rem] leading-relaxed text-slate-500">Piliin kung alam na kung sino ang gagamit. Final assignment at location ay kukumpirmahin sa Main Issuance bago i-release.</p>
-                      {identity?.status !== 'Verified' ? <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-800">Kailangan munang ma-verify ng GSO ang requester identity mo para ma-load ang department staff.</p>
-                        : departmentStaffLoading ? <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[0.68rem] font-semibold text-slate-500">Loading active department staff…</p>
-                          : departmentStaffError ? <p role="alert" className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-[0.68rem] font-semibold text-rose-700">{departmentStaffError}</p>
-                            : departmentStaff.length === 0 ? <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-800">Walang ibang active staff sa verified department. Ipa-check sa GSO ang Employee Master Data.</p>
-                              : <div aria-describedby={`purchase-staff-help-${index}`} className="mt-2 grid max-h-44 gap-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/70 p-2 sm:grid-cols-2">
-                                {departmentStaff.map((staff) => {
-                                  const checked = selectedStaffCodes.includes(staff.employeeCode)
-                                  return <label key={staff.employeeCode} className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 transition ${checked ? 'border-[#9bb8ae] bg-[#edf4f0]' : 'border-transparent bg-white hover:border-slate-200'}`}>
-                                    <input type="checkbox" checked={checked} onChange={(event) => {
-                                      const nextCodes = event.target.checked
-                                        ? [...selectedStaffCodes, staff.employeeCode]
-                                        : selectedStaffCodes.filter((code) => code !== staff.employeeCode)
-                                      updateRow('items', index, 'intendedStaffCodes', JSON.stringify(nextCodes))
-                                    }} className="mt-0.5 h-4 w-4 shrink-0 accent-[#42675b]" />
-                                    <span className="min-w-0"><span className="block truncate text-xs font-extrabold text-slate-800">{staff.employeeName}</span><span className="mt-0.5 block truncate text-[0.6rem] font-semibold text-slate-500">{staff.email}{staff.position ? ` · ${staff.position}` : ''}</span></span>
-                                  </label>
-                                })}
-                              </div>}
-                       <p className="mt-1.5 text-[0.62rem] font-bold text-slate-500">{selectedStaffCodes.length ? `${selectedStaffCodes.length} planned recipient${selectedStaffCodes.length === 1 ? '' : 's'}` : 'No planned recipient yet · optional at this stage'}</p>
-                    </fieldset>
+                    <p className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[0.66rem] font-semibold text-emerald-800">
+                      GSO Staff checks stock first and can issue it from available stock. If GSO has to buy it, the GSO Head reviews the purchase.
+                    </p>
+                     {isGeneralItem && <div className="mt-3 rounded-xl border-2 border-blue-200 bg-blue-50/50 p-3"><Field label="Proposed item name"><input className={`${inputClass} mt-1`} value={item.itemName || ''} onChange={(event) => updateRow('items', index, 'itemName', event.target.value)} placeholder="Type item name" required maxLength={250} /></Field></div>}
+                     <Field label="Specifications"><textarea className={`${textareaClass} mt-3`} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>
                   </div>
                 })}
               </div>
             </div>
 
-            <Field label="Additional remarks">
-              <textarea className={`${textareaClass} mt-4`} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} placeholder="Optional supporting details" maxLength={2000} />
-            </Field>
-
-            <p className="mt-4 rounded-xl border border-blue-100 bg-blue-50/70 p-3 text-xs leading-relaxed text-blue-900">
-              Sa pagpasa, pinatutunayan mong tama ang detalye at kailangan ito ng iyong department. Itatala ng system ang verified requester, department, at oras ng submission; GSO Head ang susunod na magre-review.
-            </p>
             <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-3.5">
               <input type="checkbox" checked={Boolean(form.requesterCertification)} onChange={(event) => setField('requesterCertification', event.target.checked)} required className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600" />
-              <span className="text-xs font-semibold leading-relaxed text-slate-700">Kinukumpirma ko na tama ang mga item, dami, purpose, at date needed, at para ito sa pangangailangan ng aking department.</span>
+              <span className="text-xs font-semibold leading-relaxed text-slate-700">Kinukumpirma ko na tama at kailangan ng department ang request na ito.</span>
             </label>
           </section>}
 
-          {type === 'ISSUANCE_REQUEST' && <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+          {type === 'ISSUANCE_REQUEST' && <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md shadow-slate-200/55 sm:p-5">
             <h2 className="text-lg font-black tracking-tight">Item issuance request</h2>
             <p className="mt-1 text-xs leading-relaxed text-slate-500">Para sa item na wala sa borrowing catalog o kailangan mong hawakan nang pangmatagalan. Titingnan ng GSO kung may stock; kapag na-issue, makikita mo ito sa My Issued Items. Kung wala, maaaring payuhan ka ng GSO na mag-purchase requisition.</p>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} placeholder="Saan at bakit mo ito kailangan" required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/80 p-4"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Requested items</h2><button type="button" onClick={() => addRow('items', { quantity: 1, description: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button></div><div className="mt-3 space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[8rem_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field><Field label={`Item ${index + 1} description / specifications`}><textarea className={textareaClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>{(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>}</div></div>)}</div></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} placeholder="Saan at bakit mo ito kailangan" required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
+            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Requested items</h2><button type="button" onClick={() => addRow('items', { quantity: 1, description: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button></div><div className="mt-3 space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[8rem_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field><Field label={`Item ${index + 1} description / specifications`}><textarea className={textareaClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>{(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>}</div></div>)}</div></div>
           </section>}
 
-          {type === 'LOSS_DAMAGE_REPORT' && <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+          {type === 'LOSS_DAMAGE_REPORT' && <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md shadow-slate-200/55 sm:p-5">
             <h2 className="text-lg font-black tracking-tight">Losses and damages report</h2><p className="mt-1 text-xs text-slate-500">This submits an incident for review. It does not automatically assign fault or a charge.</p>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2"><Field label="Incident type"><select className={inputClass} value={form.incidentType} onChange={(event) => setField('incidentType', event.target.value)}><option value="LOST">Lost</option><option value="DAMAGED">Damaged</option></select></Field><Field label="Key area / location"><input className={inputClass} value={form.keyArea} onChange={(event) => setField('keyArea', event.target.value)} required /></Field><Field label="Date of incident"><input className={inputClass} type="date" max={today()} value={form.incidentDate} onChange={(event) => setField('incidentDate', event.target.value)} required /></Field><Field label="Reported / responsible person"><input className={inputClass} value={form.responsiblePerson} onChange={(event) => setField('responsiblePerson', event.target.value)} required /></Field></div>
-            <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/80 p-4"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Affected property</h2><button type="button" onClick={() => addRow('items', { quantity: 1, description: '', assetCode: '', remarks: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700">+ Add item</button></div><div className="mt-3 space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[7rem_1fr_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field><Field label="Item / description"><input className={inputClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required /></Field><Field label="Asset/control number"><input className={inputClass} value={item.assetCode} onChange={(event) => updateRow('items', index, 'assetCode', event.target.value)} /></Field>{(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button>}</div><Field label="Item remarks"><input className={`${inputClass} mt-3`} value={item.remarks} onChange={(event) => updateRow('items', index, 'remarks', event.target.value)} /></Field></div>)}</div></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Incident type"><select className={inputClass} value={form.incidentType} onChange={(event) => setField('incidentType', event.target.value)}><option value="LOST">Lost</option><option value="DAMAGED">Damaged</option></select></Field><Field label="Key area / location"><input className={inputClass} value={form.keyArea} onChange={(event) => setField('keyArea', event.target.value)} required /></Field><Field label="Date of incident"><input className={inputClass} type="date" max={today()} value={form.incidentDate} onChange={(event) => setField('incidentDate', event.target.value)} required /></Field><Field label="Reported / responsible person"><input className={inputClass} value={form.responsiblePerson} onChange={(event) => setField('responsiblePerson', event.target.value)} required /></Field></div>
+            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Affected property</h2><button type="button" onClick={() => addRow('items', { quantity: 1, description: '', assetCode: '', remarks: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700">+ Add item</button></div><div className="mt-3 space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[7rem_1fr_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field><Field label="Item / description"><input className={inputClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required /></Field><Field label="Asset/control number"><input className={inputClass} value={item.assetCode} onChange={(event) => updateRow('items', index, 'assetCode', event.target.value)} /></Field>{(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button>}</div><Field label="Item remarks"><input className={`${inputClass} mt-3`} value={item.remarks} onChange={(event) => updateRow('items', index, 'remarks', event.target.value)} /></Field></div>)}</div></div>
             <Field label="Incident details / remarks"><textarea className={`${textareaClass} mt-5`} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} required /></Field>
           </section>}
 

@@ -352,7 +352,7 @@ export async function createEmployeeIssuance(
 
 export async function createEmployeeIssuanceBatch(
   employeeCode: string,
-  items: Array<{ itemId: string; quantity: number }>,
+  items: Array<{ itemId: string; quantity: number; purchaseRequisitionLineId?: string }>,
   notes: string,
   borrowDetails: {
     useAt: string
@@ -362,6 +362,7 @@ export async function createEmployeeIssuanceBatch(
     useLocation: string
     purpose: string
   } | null = null,
+  purchaseRequisitionId?: string,
 ) {
   const result = await apiRequest<{
     batch: {
@@ -390,6 +391,12 @@ export async function createEmployeeIssuanceBatch(
         quantity: number
         unitOfMeasure: string
         availableQuantity: number
+        tags: Array<{
+          tagCode: string
+          unitNumber: number
+          printedAt?: string | null
+          returned?: boolean
+        }>
       }>
       notes: string
       requestedAt: string
@@ -398,7 +405,7 @@ export async function createEmployeeIssuanceBatch(
     }
   }>('/issuances/batch', {
     method: 'POST',
-    body: JSON.stringify({ employeeCode, items, notes, borrowDetails }),
+    body: JSON.stringify({ employeeCode, items, notes, borrowDetails, purchaseRequisitionId }),
   })
   return result.batch
 }
@@ -499,6 +506,7 @@ export type UnitLabel = {
   holderName: string
   issuedAt: string | null
   batchId: string | null
+  purchaseRequisitionReference: string | null
   // Set when the current barcode itself came from a reprint.
   reprintedAt: string | null
   reprintReason: string | null
@@ -527,6 +535,14 @@ export async function recordLabelPrint(tagCode: string) {
     { method: 'POST', body: JSON.stringify({}) },
   )
   return result.label
+}
+
+export async function recordLabelPrintBatch(tagCodes: string[]) {
+  const result = await apiRequest<{ labels: Array<{ tagCode: string; printedAt: string }> }>('/issuances/labels/print', {
+    method: 'POST',
+    body: JSON.stringify({ tagCodes }),
+  })
+  return result.labels
 }
 
 export async function reprintUnitLabel(tagCode: string, reason: string) {

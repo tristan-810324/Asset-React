@@ -14,6 +14,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
               employee.first_name || ' ' || employee.last_name AS "holderName",
               COALESCE(issue.decided_at, issue.requested_at) AS "issuedAt",
               issue.batch_id::TEXT AS "batchId",
+              requisition.reference_no AS "purchaseRequisitionReference",
               tag.label_printed_at AS "labelPrintedAt",
               label_printer.name AS "labelPrintedBy",
               current_reprint.created_at AS "reprintedAt",
@@ -28,6 +29,8 @@ async function listUnitLabels({ limit = 2000 } = {}) {
          JOIN item_catalog AS item ON item.id = tag.item_id
          JOIN employees AS employee ON employee.id = tag.assigned_employee_id
          LEFT JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
+         LEFT JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+         LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
          -- Set only when the current barcode itself came from a reprint.
          LEFT JOIN asset_label_reprints AS current_reprint
            ON current_reprint.asset_unit_tag_id = tag.id AND current_reprint.new_tag_code = tag.tag_code AND current_reprint.kind = 'reprint'
@@ -47,6 +50,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
               employee.first_name || ' ' || employee.last_name AS "holderName",
               COALESCE(issue.decided_at, issue.requested_at) AS "issuedAt",
               issue.batch_id::TEXT AS "batchId",
+              requisition.reference_no AS "purchaseRequisitionReference",
               NULL::TIMESTAMPTZ AS "labelPrintedAt",
               NULL::TEXT AS "labelPrintedBy",
               NULL::TIMESTAMPTZ AS "reprintedAt",
@@ -66,6 +70,8 @@ async function listUnitLabels({ limit = 2000 } = {}) {
           AND return_record.tag_snapshot->>'tagCode' = reprint.old_tag_code
          JOIN employee_issuances AS issue ON issue.id = return_record.issuance_id
          JOIN employees AS employee ON employee.id = issue.employee_id
+         LEFT JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+         LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
          LEFT JOIN users AS processor ON processor.id = return_record.requested_by_user_id
         WHERE reprint.kind = 'return'
         ORDER BY COALESCE(return_record.decided_at, return_record.requested_at) DESC, item.item_code, tag.unit_number
@@ -168,23 +174,40 @@ async function inTransaction(work) {
 
 // The one free print of the current barcode; printing it again needs a reprint with a new barcode.
 async function recordLabelPrint({ tagCode, userId }) {
+  const [label] = await recordLabelPrintBatch({ tagCodes: [tagCode], userId });
+  return label;
+}
+
+// Marks an entire issuance's labels in one transaction, so a failed group print does not consume only some labels.
+async function recordLabelPrintBatch({ tagCodes, userId }) {
   return inTransaction(async (client) => {
-    const tag = await lockCurrentLabel(client, tagCode);
-    if (tag.label_printed_at) {
-      const printedOn = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(tag.label_printed_at));
-      throw Object.assign(new Error(`Na-print na ang label na ito noong ${printedOn}${tag.label_printed_by ? ` ni ${tag.label_printed_by}` : ''}. Kung kailangan ng bago, gamitin ang Reprint label.`), { status: 409 });
+    const tagsByCode = new Map();
+    // Use a stable lock order to avoid deadlocks when two staff members print overlapping groups.
+    for (const tagCode of [...tagCodes].sort()) {
+      const tag = await lockCurrentLabel(client, tagCode);
+      if (tag.label_printed_at) {
+        const printedOn = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(tag.label_printed_at));
+        throw Object.assign(new Error(`Na-print na ang label na ito noong ${printedOn}${tag.label_printed_by ? ` ni ${tag.label_printed_by}` : ''}. Kung kailangan ng bago, gamitin ang Reprint label.`), { status: 409 });
+      }
+      tagsByCode.set(tagCode, tag);
     }
-    const printed = await client.query(
-      'UPDATE asset_unit_tags SET label_printed_at = NOW(), label_printed_by_user_id = $2 WHERE id = $1 RETURNING label_printed_at AS "printedAt"',
-      [tag.id, userId],
-    );
-    await writeLabelLog(client, tag, {
-      reason: `Label #${tag.label_version} for unit ${tag.unit_number} printed (barcode ${tag.tag_code}).`,
-      oldValues: { labelPrinted: false },
-      newValues: { labelPrinted: true, tagCode: tag.tag_code, labelVersion: Number(tag.label_version) },
-      userId,
-    });
-    return { tagCode: tag.tag_code, printedAt: printed.rows[0].printedAt };
+
+    const labels = [];
+    for (const tagCode of tagCodes) {
+      const tag = tagsByCode.get(tagCode);
+      const printed = await client.query(
+        'UPDATE asset_unit_tags SET label_printed_at = NOW(), label_printed_by_user_id = $2 WHERE id = $1 RETURNING label_printed_at AS "printedAt"',
+        [tag.id, userId],
+      );
+      await writeLabelLog(client, tag, {
+        reason: `Label #${tag.label_version} for unit ${tag.unit_number} printed (barcode ${tag.tag_code}).`,
+        oldValues: { labelPrinted: false },
+        newValues: { labelPrinted: true, tagCode: tag.tag_code, labelVersion: Number(tag.label_version) },
+        userId,
+      });
+      labels.push({ tagCode: tag.tag_code, printedAt: printed.rows[0].printedAt });
+    }
+    return labels;
   });
 }
 
@@ -214,4 +237,4 @@ async function reprintUnitLabel({ tagCode, reason, userId }) {
   });
 }
 
-module.exports = { listUnitLabels, recordLabelPrint, reprintUnitLabel, retireUnitLabel };
+module.exports = { listUnitLabels, recordLabelPrint, recordLabelPrintBatch, reprintUnitLabel, retireUnitLabel };

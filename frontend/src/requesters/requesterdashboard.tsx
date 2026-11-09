@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
+import { MetricIcon, RequestItemPreview } from './requesterrequestcard'
+import { formatDate, formatDateTime, getRequestItems, requestStatusLabel, requestStatusTone } from './requesterrequestutils'
 import {
-  decideMyIssuanceBatch,
   getMyDepartmentIssuanceSummary,
   listMyDepartmentReturns,
   listMyPendingIssuanceBatches,
@@ -13,42 +14,6 @@ import {
   type ServiceRequest,
 } from './requesterApi'
 
-type MetricIconName = 'requests' | 'action' | 'progress' | 'issuance' | 'shield' | 'id' | 'document' | 'return' | 'box'
-
-function MetricIcon({ name, className = 'h-5 w-5' }: { name: MetricIconName; className?: string }) {
-  return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    {name === 'requests' && <><path d="M8 6h13M8 12h13M8 18h13" /><path d="M3 6h.01M3 12h.01M3 18h.01" /></>}
-    {name === 'action' && <><circle cx="12" cy="12" r="9" /><path d="M12 8v4m0 4h.01" /></>}
-    {name === 'progress' && <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>}
-    {name === 'issuance' && <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 8 9 5 9-5M3 8v9l9 5 9-5V8M12 13v9" /></>}
-    {name === 'shield' && <><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z" /><path d="m9 12 2 2 4-4" /></>}
-    {name === 'id' && <><rect x="3" y="5" width="18" height="14" rx="2.5" /><circle cx="9" cy="12" r="2" /><path d="M14 10h5M14 14h5M6 17.2c.5-1.4 1.8-2.2 3-2.2s2.5.8 3 2.2" /></>}
-    {name === 'document' && <><path d="M7 3h7l4 4v14H7z" /><path d="M14 3v4h4M9.5 12h5M9.5 15.5h5" /></>}
-    {name === 'return' && <><path d="M4 7h11a4.5 4.5 0 0 1 0 9H9" /><path d="m8 12-4-4 4-4" /></>}
-    {name === 'box' && <><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z" /><path d="M4.5 7.5 12 12l7.5-4.5M12 12v9" /></>}
-  </svg>
-}
-
-function requestStatusLabel(request: ServiceRequest) {
-  if (request.status === 'Submitted' || request.status === 'Under Review') return 'Pending'
-  if (request.status === 'Finance Response Recorded') return `Finance ${request.financeDecision || 'responded'}`
-  if (request.status === 'GSO Endorsed') return 'Endorsed'
-  if (request.status === 'Finance Handoff Pending') return 'Sending to Finance'
-  if (request.status === 'Finance Handoff Failed') return 'Finance email failed'
-  if (request.status === 'Sent to Finance') return 'With Finance'
-  if (request.status === 'Cancelled') return 'Cancelled'
-  return request.status
-}
-
-function requestStatusTone(request: ServiceRequest) {
-  if (request.status === 'Rejected' || request.status === 'Finance Handoff Failed') return 'border-rose-200 bg-rose-50 text-rose-700'
-  if (request.status === 'Cancelled') return 'border-slate-200 bg-slate-100 text-slate-600'
-  if (request.status === 'Approved' || request.status === 'GSO Endorsed' || request.status === 'Finance Response Recorded') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
-  if (request.status === 'Needs Information') return 'border-amber-200 bg-amber-50 text-amber-800'
-  if (request.status === 'Sent to Finance' || request.status === 'Finance Handoff Pending') return 'border-sky-200 bg-sky-50 text-sky-700'
-  return 'border-slate-200 bg-slate-50 text-slate-700'
-}
-
 function returnStatusTone(status: string) {
   if (status === 'Returned') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (status === 'Pending' || status === 'Email Failed') return 'border-amber-200 bg-amber-50 text-amber-800'
@@ -56,43 +21,8 @@ function returnStatusTone(status: string) {
   return 'border-slate-200 bg-slate-50 text-slate-700'
 }
 
-function getRequestItems(request: ServiceRequest) {
-  const formItems = request.formData.items
-  if (Array.isArray(formItems) && formItems.length > 0) {
-    return formItems.slice(0, 6).map((value, index) => {
-      const item = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
-      const linkedAsset = request.assets[index]
-      const itemName = String(item.itemName || item.name || linkedAsset?.itemName || `Item ${index + 1}`)
-      const description = String(item.description || '')
-      const quantity = String(item.quantity ?? linkedAsset?.quantity ?? '')
-      const intendedStaff = Array.isArray(item.intendedStaff)
-        ? item.intendedStaff.flatMap((entry) => {
-          if (typeof entry !== 'object' || entry === null) return []
-          const employeeName = (entry as Record<string, unknown>).employeeName
-          return typeof employeeName === 'string' && employeeName.trim() ? [employeeName] : []
-        })
-        : []
-      return { itemName, description, quantity, intendedStaff }
-    })
-  }
-  return request.assets.slice(0, 6).map((asset) => ({
-    itemName: asset.itemName,
-    description: '',
-    quantity: String(asset.quantity),
-    intendedStaff: [] as string[],
-  }))
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value))
-}
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value))
-}
-
 function RequesterDashboardContent() {
-  const { identity, openIdentityPrompt, user } = useRequesterIdentity()
+  const { identity, user } = useRequesterIdentity()
   const [requests, setRequests] = useState<ServiceRequest[]>([])
   const [pendingIssuances, setPendingIssuances] = useState<RequesterIssuanceApproval[]>([])
   const [departmentIssuedUnits, setDepartmentIssuedUnits] = useState<number | null>(null)
@@ -105,8 +35,6 @@ function RequesterDashboardContent() {
   const [loading, setLoading] = useState(true)
   const [issuanceLoading, setIssuanceLoading] = useState(true)
   const [issuanceError, setIssuanceError] = useState('')
-  const [issuanceDecisionMessage, setIssuanceDecisionMessage] = useState('')
-  const [activeIssuanceDecision, setActiveIssuanceDecision] = useState('')
 
   useEffect(() => {
     let active = true
@@ -160,36 +88,18 @@ function RequesterDashboardContent() {
         if (active) setPendingIssuances(batches)
       })
       .catch((reason: unknown) => {
-        if (active) setIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-load ang pending issuance handovers.')
+        if (active) setIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-update ang pickup preparation.')
       })
       .finally(() => { if (active) setIssuanceLoading(false) })
     return () => { active = false }
   }, [])
 
-  async function handleIssuanceDecision(batchId: string) {
-    setActiveIssuanceDecision(batchId)
-    setIssuanceError('')
-    setIssuanceDecisionMessage('')
-    try {
-      const decision = await decideMyIssuanceBatch(batchId, 'acknowledge')
-      setPendingIssuances((current) => current.filter((batch) => batch.id !== batchId))
-      setIssuanceDecisionMessage(decision.status === 'Issued'
-        ? `Receipt confirmed. Custody is active${decision.generatedTagCount ? ` and ${decision.generatedTagCount} unit barcode${decision.generatedTagCount === 1 ? '' : 's'} is now linked to your account` : ''}.`
-        : 'Receipt status updated.')
-    } catch (reason) {
-      setIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-save ang issuance decision.')
-    } finally {
-      setActiveIssuanceDecision('')
-    }
-  }
-
   const inProgressStatuses = useMemo(() => new Set([
     'Submitted', 'Under Review', 'Needs Information', 'GSO Endorsed', 'Finance Handoff Pending',
-    'Finance Handoff Failed', 'Sent to Finance', 'Finance Response Recorded', 'Approved',
+    'Finance Handoff Failed', 'Sent to Finance', 'Approved',
     'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair', 'In Progress',
   ]), [])
-  const inProgressCount = useMemo(() => requests.filter((request) => inProgressStatuses.has(request.status)
-    && !(request.status === 'Finance Response Recorded' && request.financeDecision === 'Rejected')).length, [inProgressStatuses, requests])
+  const inProgressCount = useMemo(() => requests.filter((request) => inProgressStatuses.has(request.status)).length, [inProgressStatuses, requests])
   const recentRequests = useMemo(() => [...requests]
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
     .slice(0, 8), [requests])
@@ -198,13 +108,7 @@ function RequesterDashboardContent() {
     .slice(0, 8), [departmentReturns])
 
   return <div className="space-y-6">
-    {identity && identity.status !== 'Verified' && <section className="flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5" role="status">
-      <div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700"><MetricIcon name="action" /></span><div><p className="text-sm font-extrabold text-slate-900">{identity.status === 'Pending' ? 'Identity review in progress' : identity.status === 'Needs Correction' ? 'Identity details need correction' : 'Complete your EmployeeHead details'}</p><p className="mt-1 text-xs leading-relaxed text-slate-600">{identity.status === 'Pending' ? 'Nasa GSO ang identity verification mo. Magiging available ang request submission kapag verified na.' : identity.status === 'Needs Correction' ? 'Sundin ang note ng GSO at i-update ang profile bago magsumite.' : 'Kumpletuhin ang profile para ma-verify ng GSO ang requester account mo.'}</p></div></div>
-      <button type="button" onClick={openIdentityPrompt} className="shrink-0 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-amber-700">{identity.status === 'Pending' ? 'View status' : 'Update profile'}</button>
-    </section>}
-
     {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700">{error}</p>}
-    {issuanceDecisionMessage && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-700">{issuanceDecisionMessage}</p>}
 
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.85fr)]" aria-label="Requester overview" aria-busy={loading || departmentIssuanceLoading}>
       <article className="relative isolate overflow-hidden rounded-2xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-4 text-white shadow-xl shadow-blue-950/15 sm:p-5">
@@ -243,26 +147,26 @@ function RequesterDashboardContent() {
       </article>
 
       <div className="grid w-full grid-cols-2 gap-2 sm:gap-3 lg:h-full lg:grid-cols-1 lg:grid-rows-2 lg:gap-4">
-        <article className="flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-4 lg:h-full">
+        <article className="flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4 lg:h-full">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">In review / process</p>
               <p aria-live="polite" className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{loading ? '—' : inProgressCount.toLocaleString('en-PH')}</p>
             </div>
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><MetricIcon name="progress" className="h-4 w-4 sm:h-5 sm:w-5" /></span>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><MetricIcon name="progress" className="h-4 w-4 sm:h-5 sm:w-5" /></span>
           </div>
-          <div className="mt-2 border-t border-slate-100 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">Open requests being handled</div>
+          <div className="mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">Open requests being handled</div>
         </article>
 
-        <article className="flex flex-col justify-between rounded-2xl border-2 border-blue-200 bg-blue-50/80 p-3 shadow-md shadow-blue-900/10 ring-1 ring-blue-100/70 sm:p-4 lg:h-full">
+        <article className="flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4 lg:h-full">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-[0.65rem] font-bold text-blue-800/70 sm:text-xs">Total issuance</p>
+              <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">Total issuance</p>
               <p aria-live="polite" className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{departmentIssuanceLoading || Boolean(departmentIssuanceError) ? '—' : (departmentIssuedUnits ?? 0).toLocaleString('en-PH')}</p>
             </div>
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-200 bg-white/70 text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><MetricIcon name="issuance" className="h-4 w-4 sm:h-5 sm:w-5" /></span>
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><MetricIcon name="issuance" className="h-4 w-4 sm:h-5 sm:w-5" /></span>
           </div>
-          <div className={`mt-2 border-t border-blue-200/70 pt-2 text-[0.62rem] font-medium sm:mt-4 sm:pt-3 sm:text-[0.68rem] ${departmentIssuanceError ? 'text-rose-700' : 'text-blue-900/65'}`}>{departmentIssuanceError || 'Units issued across active staff in your department'}</div>
+          <div className={`mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium sm:mt-4 sm:pt-3 sm:text-[0.68rem] ${departmentIssuanceError ? 'text-rose-700' : 'text-slate-500'}`}>{departmentIssuanceError || 'Units issued across active staff in your department'}</div>
         </article>
       </div>
     </section>
@@ -271,12 +175,12 @@ function RequesterDashboardContent() {
       <a href="/requester/my-requests" className="group flex min-h-16 items-center gap-3 rounded-2xl border-2 border-slate-300/80 bg-linear-to-r from-blue-50/70 to-white px-3.5 py-3 shadow-md shadow-slate-300/30 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm"><MetricIcon name="document" className="h-4 w-4" /></span>
         <span className="min-w-0 flex-1"><span className="block text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-blue-600">Request activity</span><span className="mt-0.5 block text-sm font-black text-slate-900">Recent requests</span><span className="mt-0.5 block text-[0.62rem] font-medium text-slate-500">{loading ? 'Loading' : `${requests.length} total`}</span></span>
-        <span aria-hidden="true" className="text-lg text-blue-700 transition group-hover:translate-x-1">→</span>
+        <span aria-hidden="true" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-blue-200 bg-white text-blue-700 shadow-sm transition group-hover:translate-x-0.5 group-hover:border-blue-400 group-hover:bg-blue-50 group-focus-visible:ring-4 group-focus-visible:ring-blue-100"><MetricIcon name="arrow-right" className="h-4 w-4" /></span>
       </a>
       <a href="/requester/return-items" className="group flex min-h-16 items-center gap-3 rounded-2xl border-2 border-slate-300/80 bg-linear-to-r from-sky-50/75 to-white px-3.5 py-3 shadow-md shadow-slate-300/30 ring-1 ring-slate-900/5 transition hover:border-sky-300 hover:shadow-lg focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-100 bg-white text-sky-700 shadow-sm"><MetricIcon name="return" className="h-4 w-4" /></span>
         <span className="min-w-0 flex-1"><span className="block text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-sky-700">Custody activity</span><span className="mt-0.5 block text-sm font-black text-slate-900">Recent returns</span><span className="mt-0.5 block text-[0.62rem] font-medium text-slate-500">{departmentReturnsLoading ? 'Loading' : `${departmentReturns.length} records`}</span></span>
-        <span aria-hidden="true" className="text-lg text-sky-700 transition group-hover:translate-x-1">→</span>
+        <span aria-hidden="true" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-sky-200 bg-white text-sky-700 shadow-sm transition group-hover:translate-x-0.5 group-hover:border-sky-400 group-hover:bg-sky-50 group-focus-visible:ring-4 group-focus-visible:ring-sky-100"><MetricIcon name="arrow-right" className="h-4 w-4" /></span>
       </a>
     </nav>
 
@@ -292,10 +196,11 @@ function RequesterDashboardContent() {
 
         {loading ? <div className="grid min-h-40 place-items-center text-xs font-semibold text-slate-500">Loading recent requests…</div>
           : recentRequests.length === 0 ? <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><div><span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><MetricIcon name="requests" /></span><p className="mt-2 text-xs font-extrabold text-slate-700">No requests yet</p><p className="mt-1 text-[0.68rem] text-slate-500">Start a purchase requisition or another GSO request.</p><a href="/requester/request-center" className="mt-3 inline-flex text-[0.68rem] font-extrabold text-blue-600 hover:underline">Open Request Center →</a></div></div>
-             : <ul className="divide-y divide-slate-200 px-3 sm:px-6">{recentRequests.map((request) => {
+             : <ul className="max-h-[30rem] divide-y divide-slate-200 overflow-y-auto px-3 sm:px-6">{recentRequests.map((request) => {
               const items = getRequestItems(request)
+              const [firstItem] = items
               return <li key={request.id} className="py-2.5 first:pt-1 last:pb-1 sm:py-4">
-                <a href={`/requester/requests/${request.id}`} className="block rounded-xl border border-slate-200 bg-white p-2.5 transition hover:border-blue-200 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 sm:p-3">
+                <a href={`/requester/requests/${request.id}`} className="block rounded-xl border border-slate-200 bg-white p-3.5 transition hover:border-blue-200 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 sm:p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2 sm:gap-3">
                     <div className="flex min-w-0 items-start gap-2 sm:gap-3">
                       <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700 sm:h-9 sm:w-9"><MetricIcon name="document" className="h-3.5 w-3.5 sm:h-4.5 sm:w-4.5" /></span>
@@ -311,16 +216,19 @@ function RequesterDashboardContent() {
                     </div>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[0.56rem] font-extrabold sm:px-2.5 sm:py-1 sm:text-[0.6rem] ${requestStatusTone(request)}`}>{requestStatusLabel(request)}</span>
                   </div>
-                  {items.length > 0 && <div className="mt-2 grid gap-1.5 sm:mt-3 sm:grid-cols-2 sm:gap-2">{items.map((item, index) => <div key={`${request.id}-item-${index}`} className="flex items-start gap-2 rounded-lg border border-blue-100 bg-blue-50/40 px-2.5 py-1.5 sm:gap-2.5 sm:px-3 sm:py-2"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md bg-white text-blue-600 shadow-sm shadow-blue-900/5 sm:h-6 sm:w-6"><MetricIcon name="box" className="h-3 w-3 sm:h-3.5 sm:w-3.5" /></span><div className="min-w-0"><p className="text-[0.68rem] font-bold text-slate-700 sm:text-[0.72rem]">{item.quantity ? `${item.quantity} × ` : ''}{item.itemName}</p>{item.description && item.description.toLowerCase() !== item.itemName.toLowerCase() && <p className="mt-1 line-clamp-2 text-[0.6rem] leading-relaxed text-slate-500 sm:text-[0.63rem]">{item.description}</p>}{item.intendedStaff.length > 0 ? <p className="mt-1 text-[0.6rem] leading-relaxed text-slate-500 sm:text-[0.63rem]"><span className="font-extrabold text-blue-700">Planned staff:</span> {item.intendedStaff.join(', ')}</p> : request.requestType === 'PURCHASE_REQUISITION' && <p className="mt-1 text-[0.6rem] font-semibold text-slate-400 sm:text-[0.62rem]">Final recipient will be assigned before handover.</p>}</div></div>)}</div>}
-                  {request.status === 'Needs Information' && <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[0.62rem] font-bold text-amber-800 sm:mt-3 sm:px-3 sm:py-2 sm:text-[0.65rem]">May hinihinging dagdag na impormasyon ang GSO Head.</p>}
+                  {firstItem && <div className="mt-3">
+                    <RequestItemPreview item={firstItem} index={0} requestType={request.requestType} />
+                    {items.length > 1 && <p className="mt-1.5 text-[0.6rem] font-bold text-blue-600">+{items.length - 1} more item{items.length - 1 === 1 ? '' : 's'} · view full request</p>}
+                  </div>}
+                  {request.status === 'Needs Information' && <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[0.62rem] font-bold text-amber-800 sm:mt-3 sm:px-3 sm:py-2 sm:text-[0.65rem]">May hinihinging dagdag na impormasyon ang GSO.</p>}
                 </a>
               </li>
             })}</ul>}
 
         {(issuanceError || pendingIssuances.length > 0) && <div className="mx-5 mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5 sm:mx-6">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-[0.61rem] font-extrabold uppercase tracking-wide text-amber-700">Per-unit handover</p><p className="mt-1 text-[0.68rem] font-bold text-slate-700">Confirm receipt after the unit is physically handed over.</p></div><span className="rounded-lg bg-white px-2 py-1 text-[0.58rem] font-extrabold text-amber-700">{issuanceLoading ? 'Loading' : `${pendingIssuances.length} waiting`}</span></div>
+          <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-[0.61rem] font-extrabold uppercase tracking-wide text-amber-700">Pickup preparation</p><p className="mt-1 text-[0.68rem] font-bold text-slate-700">GSO prepares the barcode labels and pickup record automatically. No confirmation is needed from you.</p></div><span className="rounded-lg bg-white px-2 py-1 text-[0.58rem] font-extrabold text-amber-700">{issuanceLoading ? 'Loading' : `${pendingIssuances.length} updating`}</span></div>
           {issuanceError && <p role="alert" className="mt-2 text-[0.65rem] font-bold text-rose-700">{issuanceError}</p>}
-          {pendingIssuances.map((batch) => <div key={batch.id} className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-100 bg-white p-3"><div className="min-w-0"><p className="text-xs font-extrabold text-slate-800">{batch.items.map((item) => `${item.quantity} ${item.unitOfMeasure} ${item.itemName}`).join(', ')}</p><p className="mt-1 truncate text-[0.62rem] font-semibold text-slate-500">For {batch.employeeName} · {batch.employeeCode} · {formatDate(batch.requestedAt)}</p></div><button type="button" disabled={activeIssuanceDecision === batch.id} onClick={() => void handleIssuanceDecision(batch.id)} className="shrink-0 rounded-lg bg-blue-600 px-3 py-2 text-[0.62rem] font-extrabold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-50">{activeIssuanceDecision === batch.id ? 'Saving…' : 'Confirm receipt'}</button></div>)}
+          {pendingIssuances.map((batch) => <div key={batch.id} className="mt-3 rounded-lg border border-amber-100 bg-white p-3"><p className="text-xs font-extrabold text-slate-800">{batch.items.map((item) => `${item.quantity} ${item.unitOfMeasure} ${item.itemName}`).join(', ')}</p><p className="mt-1 text-[0.62rem] font-semibold text-slate-500">GSO is updating this legacy record for {batch.employeeName} · {batch.employeeCode}. Please refresh shortly.</p></div>)}
         </div>}
       </article>
 

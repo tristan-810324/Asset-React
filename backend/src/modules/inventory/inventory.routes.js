@@ -5,15 +5,18 @@ const inventoryController = require('./inventory.controller');
 
 const router = express.Router();
 
-router.use(authenticate, requireRole('GSO_STAFF'));
-router.get('/categories', inventoryController.listCategories);
+router.use(authenticate);
+router.get('/categories', requireRole('GSO_STAFF', 'GSO_HEAD'), inventoryController.listCategories);
+router.get('/item-names', requireRole('GSO_STAFF', 'GSO_HEAD'), inventoryController.listCategoryItemNames);
+router.get('/items', requireRole('GSO_STAFF', 'GSO_HEAD'), inventoryController.listItems);
+router.patch('/item-names/:id/policy', requireRole('GSO_HEAD'), inventoryController.updateCategoryItemNamePolicy);
+
+router.use(requireRole('GSO_STAFF'));
 router.post('/categories', inventoryController.createCategory);
 router.patch('/categories/:id', inventoryController.renameCategory);
 router.delete('/categories/:id', inventoryController.deleteCategory);
-router.get('/item-names', inventoryController.listCategoryItemNames);
 router.post('/categories/:id/item-names', inventoryController.createCategoryItemName);
 router.delete('/item-names/:id', inventoryController.deleteCategoryItemName);
-router.get('/items', inventoryController.listItems);
 router.post('/items/bulk', inventoryController.createItems);
 router.post('/items', inventoryController.createItem);
 router.post('/items/:id/restock', inventoryController.restockItem);

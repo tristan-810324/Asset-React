@@ -8,7 +8,12 @@ export type InventoryCategory = {
 export type InventoryCategoryItemName = {
   id: string
   categoryId: string
+  category?: string
   name: string
+  approvalPolicy: 'GSO_HEAD' | 'STAFF_ISSUE'
+  staffIssueMaxQuantity: number | null
+  policyUpdatedAt?: string
+  policyUpdatedBy?: string | null
   createdAt: string
 }
 
@@ -153,6 +158,17 @@ export async function deleteInventoryCategory(id: string, reason: string) {
 export async function listInventoryCategoryItemNames() {
   const result = await apiRequest<{ itemNames: InventoryCategoryItemName[] }>('/inventory/item-names')
   return result.itemNames
+}
+
+export async function updateInventoryCategoryItemNamePolicy(
+  id: string,
+  change: { approvalPolicy: 'GSO_HEAD' | 'STAFF_ISSUE'; staffIssueMaxQuantity: number | null; reason: string },
+) {
+  const result = await apiRequest<{ itemName: Partial<InventoryCategoryItemName> }>(
+    `/inventory/item-names/${encodeURIComponent(id)}/policy`,
+    { method: 'PATCH', body: JSON.stringify(change) },
+  )
+  return result.itemName
 }
 
 export async function createInventoryCategoryItemName(categoryId: string, name: string) {

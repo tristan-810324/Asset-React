@@ -55,12 +55,16 @@ async function getItemStockUsage(queryable, itemId) {
          FROM service_request_assets AS asset
          JOIN service_requests AS request ON request.id = asset.request_id
         WHERE asset.item_id = $1
+     ), requisition_usage AS (
+       SELECT COALESCE(SUM(allocation.quantity - allocation.fulfilled_quantity), 0)::INTEGER AS reserved_quantity
+         FROM purchase_requisition_line_allocations AS allocation
+        WHERE allocation.item_id = $1 AND allocation.status = 'Reserved'
      )
-     SELECT (employee_usage.pending_quantity + borrower_usage.reserved_quantity)::INTEGER AS "pendingQuantity",
+     SELECT (employee_usage.pending_quantity + borrower_usage.reserved_quantity + requisition_usage.reserved_quantity)::INTEGER AS "pendingQuantity",
             (employee_usage.issued_quantity + borrower_usage.issued_quantity)::INTEGER AS "issuedQuantity",
             (employee_usage.pending_quantity + employee_usage.issued_quantity
-              + borrower_usage.reserved_quantity + borrower_usage.issued_quantity)::INTEGER AS "activeQuantity"
-       FROM employee_usage CROSS JOIN borrower_usage`,
+              + borrower_usage.reserved_quantity + borrower_usage.issued_quantity + requisition_usage.reserved_quantity)::INTEGER AS "activeQuantity"
+       FROM employee_usage CROSS JOIN borrower_usage CROSS JOIN requisition_usage`,
     [itemId],
   );
   return addRepairHold(queryable, itemId, result.rows[0] || { pendingQuantity: 0, issuedQuantity: 0, activeQuantity: 0 });

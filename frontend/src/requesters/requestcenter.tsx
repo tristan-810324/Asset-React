@@ -36,7 +36,7 @@ function StartLabel({ children = 'Start request' }: { children?: ReactNode }) {
 }
 
 function RequestCenterContent() {
-  const { identity, identityLoading, openIdentityPrompt } = useRequesterIdentity()
+  const { identity } = useRequesterIdentity()
   const verified = identity?.status === 'Verified'
   return (
     <div>
@@ -47,11 +47,6 @@ function RequestCenterContent() {
           <p className="mt-1.5 max-w-2xl text-xs font-medium leading-relaxed text-blue-100 sm:mt-2 sm:text-sm">{verified ? 'Your verified identity is attached automatically.' : 'Complete GSO verification before submitting.'} Track updates in My Requests.</p>
         </div>
       </section>
-
-      {!verified && <section className="mt-5 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5" role="status">
-        <div><h2 className="text-sm font-extrabold text-amber-950">{identityLoading ? 'Checking your identity status…' : identity?.status === 'Pending' ? 'Waiting for GSO verification' : identity?.status === 'Needs Correction' ? 'Update the details requested by GSO' : 'Complete your EmployeeHead/requester identity before requesting'}</h2><p className="mt-1 text-xs leading-relaxed text-amber-900">{identity?.status === 'Pending' ? 'Hindi maipapadala ang service request hanggang ma-verify ng GSO.' : 'Puwede mong buksan ang form at maghanda ng request, pero hindi ito maipapadala hangga’t hindi verified.'}</p></div>
-        <button type="button" onClick={openIdentityPrompt} className="shrink-0 rounded-xl bg-amber-900 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-amber-950">{identity?.status === 'Pending' ? 'View verification status' : 'Complete staff details'}</button>
-      </section>}
 
       <section className="mt-6" aria-labelledby="inventory-heading">
         <p className={eyebrowClass}>Equipment & supplies</p>

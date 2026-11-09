@@ -25,6 +25,65 @@ export type RequestHistory = {
   changedAt: string
 }
 
+export type PurchaseRequisitionAllocation = {
+  id: string
+  itemId: string
+  itemCode: string
+  inventoryName: string
+  quantity: number
+  fulfilledQuantity: number
+  status: 'Reserved' | 'Fulfilled' | 'Released'
+  unitOfMeasure: string
+}
+
+export type StaffRoute = 'ISSUE' | 'HEAD_ISSUE' | 'PURCHASE'
+
+// Live stock and rule check the server adds to items GSO Staff still has to route.
+export type PurchaseRequisitionStockCheck = {
+  route: StaffRoute
+  // Routes GSO Staff may pick; the first is the default. Two options means the staff member decides.
+  options: StaffRoute[]
+  availableQuantity: number
+  reservedQuantity: number
+  matches: Array<{ itemId: string; itemCode: string; name: string; unitOfMeasure: string; availableQuantity: number; reserveQuantity: number }>
+}
+
+export type PurchaseRequisitionLine = {
+  id: string
+  lineNumber: number
+  itemNameId: string | null
+  category: string
+  itemName: string
+  specifications: string
+  requestedQuantity: number
+  approvalPolicy: 'GSO_HEAD' | 'STAFF_ISSUE'
+  staffIssueMaxQuantity: number | null
+  reservedQuantity: number
+  financeQuantity: number
+  issuedQuantity: number
+  routeStatus: string
+  reviewNote: string
+  pendingBatchId?: string | null
+  allocations: PurchaseRequisitionAllocation[]
+  receipts?: PurchaseRequisitionReceipt[]
+  stockCheck?: PurchaseRequisitionStockCheck
+}
+
+// A purchased delivery GSO Staff recorded in Item Master Data and linked to a requisition item.
+export type PurchaseRequisitionReceipt = {
+  id: string
+  itemCode: string
+  inventoryName: string
+  quantity: number
+  unitOfMeasure: string
+  receiptReference: string
+  receivedBy: string | null
+  receivedAt: string
+  // An undone link stays on record, marked with who undid it and when.
+  voidedAt?: string | null
+  voidedBy?: string | null
+}
+
 export type ServiceRequest = {
   id: string
   referenceNo: string
@@ -46,16 +105,15 @@ export type ServiceRequest = {
   financeEmail?: string | null
   financeSentAt?: string | null
   financeMessageId?: string | null
-  financeDecision?: string | null
-  financeReference?: string | null
-  financeResponseNote?: string | null
-  financeResponseAt?: string | null
-  financeResponseByUserId?: string | null
+  staffReviewedAt?: string | null
+  staffReviewedBy?: string | null
+  staffReviewNote?: string
   requesterId: string
   requesterName: string
   requesterEmail: string
   assets: RequestAsset[]
   history: RequestHistory[]
+  purchaseLines?: PurchaseRequisitionLine[]
 }
 
 export type CatalogAsset = {
@@ -69,6 +127,14 @@ export type CatalogAsset = {
   availableQuantity: number
   trackingMode: 'individual' | 'quantity'
   issueBehavior: 'consumable' | 'returnable'
+}
+
+export type PurchaseItemName = {
+  id: string
+  name: string
+  category: string
+  approvalPolicy: 'GSO_HEAD' | 'STAFF_ISSUE'
+  staffIssueMaxQuantity: number | null
 }
 
 export type RequesterIdentityStatus = 'Incomplete' | 'Pending' | 'Verified' | 'Needs Correction'
@@ -100,7 +166,7 @@ export type RequesterIdentity = {
   employeeRecordMatch: boolean
 }
 
-export type RequesterIdentityInput = Pick<RequesterIdentity, 'employeeCode' | 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'department' | 'position' | 'contactNumber' | 'pictureData'>
+export type RequesterIdentityInput = Pick<RequesterIdentity, 'employeeCode' | 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'department' | 'position' | 'contactNumber'>
 
 export type RequesterIssuanceApproval = {
   id: string
@@ -186,6 +252,10 @@ export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
 
 export function listCatalogAssets() {
   return apiRequest<{ items: CatalogAsset[] }>('/requests/assets').then((data) => data.items)
+}
+
+export function listPurchaseItemNames() {
+  return apiRequest<{ itemNames: PurchaseItemName[] }>('/requests/purchase-item-names').then((data) => data.itemNames)
 }
 
 export function listRequesterDepartmentStaff() {

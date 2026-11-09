@@ -24,6 +24,8 @@ import {
   type InventoryTrackingMode,
 } from './inventoryApi'
 import { addGsoNotification } from './notificationStore'
+import { DeliveryLinkDialog } from './deliveryLink'
+import { listAwaitingDeliveries, type AwaitingDeliveryLine } from './purchaseRequisitionsApi'
 
 type ItemHistoryEntry = {
   previous: string
@@ -906,6 +908,13 @@ export default function ItemsMasterData() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [isSavingItem, setIsSavingItem] = useState(false)
   const [inventoryLoadError, setInventoryLoadError] = useState('')
+  // Right after stock is added, the purchase requests waiting for that item can be linked to it.
+  const [deliveryPrompt, setDeliveryPrompt] = useState<{
+    itemIds: string[]
+    lines: AwaitingDeliveryLine[]
+    restocked: { quantity: number; unit: string; name: string }
+    receiptReference: string
+  } | null>(null)
 
   const showActionAlert = (message: string, title = 'Notice') => {
     window.alert(`${title}\n\n${message}`)
@@ -920,6 +929,16 @@ export default function ItemsMasterData() {
       href: '/gso/items',
     })
     showActionAlert(message, title)
+  }
+
+  const offerDeliveryLink = async (itemIds: string[], restocked: { quantity: number; unit: string; name: string }, receiptReference: string) => {
+    if (itemIds.length === 0) return
+    try {
+      const lines = await listAwaitingDeliveries(itemIds)
+      if (lines.length > 0) setDeliveryPrompt({ itemIds, lines, restocked, receiptReference })
+    } catch {
+      // The stock is already saved; the waiting requests can still be linked from Purchase Requisitions.
+    }
   }
 
   useEffect(() => {
@@ -1323,6 +1342,9 @@ export default function ItemsMasterData() {
       setSelectedItem(updatedItem)
       setShowItemEditModal(false)
       notifyAction('Inventory item updated', `"${updatedItem.name}" (${updatedItem.code}) was updated successfully.`)
+      if (quantity > previousQuantity && updatedItem.id) {
+        await offerDeliveryLink([updatedItem.id], { quantity: quantity - previousQuantity, unit: updatedItem.unit, name: updatedItem.name }, '')
+      }
     } catch (error) {
       setItemEditError(error instanceof Error ? error.message : 'Unable to update the inventory item.')
     } finally {
@@ -1396,6 +1418,7 @@ export default function ItemsMasterData() {
         handleClearForm(nextItems, formData.category)
         closeAddItemModal()
         notifyAction('Bulk stock restocked', `${quantity} ${updatedItem.unit} were added to ${updatedItem.code}. The delivery was saved in receipt history.`)
+        await offerDeliveryLink(updatedItem.id ? [updatedItem.id] : [], { quantity, unit: updatedItem.unit, name: updatedItem.name }, formData.receiptReference.trim())
         return
       }
 
@@ -1444,6 +1467,11 @@ export default function ItemsMasterData() {
         isIndividualTracking
           ? `${quantity} ${quantity === 1 ? 'individual asset was' : 'individual assets were'} added. Barcode labels are available after issuance approval.`
           : `${quantity} ${formData.unitOfMeasure.trim() || 'piece'} of ${formData.itemName.trim()} were added as quantity-tracked stock (${bulkCodeRange?.display || itemCodes[0]}).`,
+      )
+      await offerDeliveryLink(
+        newItems.flatMap((item) => item.id ? [item.id] : []),
+        { quantity, unit: formData.unitOfMeasure.trim() || 'piece', name: formData.itemName.trim() },
+        formData.receiptReference.trim(),
       )
     } catch (error) {
       showActionAlert(error instanceof Error ? error.message : 'Unable to save the item. Please try again.', 'Unable to save item')
@@ -3019,6 +3047,22 @@ export default function ItemsMasterData() {
             </footer>
           </form>
         </div>
+      )}
+
+      {/* LINK THE NEW STOCK TO WAITING PURCHASE REQUESTS */}
+      {deliveryPrompt && (
+        <DeliveryLinkDialog
+          itemIds={deliveryPrompt.itemIds}
+          initialLines={deliveryPrompt.lines}
+          restocked={deliveryPrompt.restocked}
+          receiptReference={deliveryPrompt.receiptReference}
+          onClose={() => setDeliveryPrompt(null)}
+          onLinked={(message) => {
+            setDeliveryPrompt(null)
+            listInventoryItems().then((records) => setItems(records.map(mapInventoryRecord))).catch(() => undefined)
+            notifyAction('Deliveries linked', message)
+          }}
+        />
       )}
 
     </GsoPageFrame>

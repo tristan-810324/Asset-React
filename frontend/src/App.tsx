@@ -18,9 +18,10 @@ import ITStaffDashboard from './itstaff/itstaffdashboard'
 
 import GsoDashboard from './gso/gsodashboard'
 import GsoHeadDashboard from './gsohead/gsoheaddashboard'
-import BorrowingPage from './gso/borrowing'
+import HeadApproval from './gso/headapproval'
 import EmployeeMasterData from './gso/employemasterdata'
 import MainIssuance from './gso/mainissuance'
+import GsoPurchaseRequisitions from './gso/purchaserequisitions'
 import IssuanceRecord from './gso/issuancerecord'
 import ReturnItems from './gso/returnitems'
 import ToRepaired from './gso/torepaired'
@@ -131,6 +132,12 @@ export default function App() {
   if (path === '/gso-head' || path === '/gso-head/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadDashboard /></ProtectedDashboard>
   }
+  if (path === '/gso-head/items') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadDashboard /></ProtectedDashboard>
+  }
+  if (path === '/gso-head/requests') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><HeadApproval /></ProtectedDashboard>
+  }
   if (path === '/gso/items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ItemsMasterData /></ProtectedDashboard>
   }
@@ -149,6 +156,9 @@ export default function App() {
   if (path === '/gso/main-issuance') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><MainIssuance /></ProtectedDashboard>
   }
+  if (path === '/gso/purchase-requisitions') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoPurchaseRequisitions /></ProtectedDashboard>
+  }
   if (path === '/gso/return-items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ReturnItems /></ProtectedDashboard>
   }
@@ -156,7 +166,7 @@ export default function App() {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ToRepaired /></ProtectedDashboard>
   }
   if (path === '/gso/requests-borrowing') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><BorrowingPage /></ProtectedDashboard>
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><MainIssuance /></ProtectedDashboard>
   }
   if (path === '/gso' || path === '/gso/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoDashboard /></ProtectedDashboard>

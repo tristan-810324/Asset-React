@@ -7,6 +7,7 @@ import {
   type RequesterIssuanceApproval,
   type ServiceRequest,
 } from './requesterApi'
+import { listServerNotifications, type ServerNotification } from '../auth/notificationsApi'
 
 type ActivityEvent = {
   key: string
@@ -37,9 +38,9 @@ function issuanceActivity(batch: RequesterIssuanceApproval): ActivityEvent {
   const title = isConsumable && batch.status === 'Issued'
     ? 'Consumable stock issued · no action needed'
     : isPerUnit && batch.status === 'Pending'
-      ? 'Per-unit asset awaiting handover acknowledgment'
+      ? 'Per-unit asset being prepared for pickup'
       : isPerUnit && batch.status === 'Issued'
-        ? 'Per-unit custody acknowledged'
+        ? 'Per-unit assets ready for pickup'
         : isReusableBorrow && batch.items.every((item) => item.status === 'Returned')
           ? 'Reusable-stock return recorded'
           : isReusableBorrow && batch.status === 'Issued'
@@ -59,7 +60,7 @@ function issuanceActivity(batch: RequesterIssuanceApproval): ActivityEvent {
     title,
     details: detailParts.join(' · '),
     source: 'GSO item activity',
-    href: isPerUnit && batch.status === 'Pending' ? '/requester' : undefined,
+    href: undefined,
     tone: isConsumable || isReusableBorrow && batch.items.every((item) => item.status === 'Returned') ? 'green' : isPerUnit && batch.status === 'Pending' ? 'amber' : isReusableBorrow ? 'amber' : 'blue',
   }
 }
@@ -67,6 +68,7 @@ function issuanceActivity(batch: RequesterIssuanceApproval): ActivityEvent {
 export default function RequesterNotifications() {
   const [requests, setRequests] = useState<ServiceRequest[]>([])
   const [issuanceBatches, setIssuanceBatches] = useState<RequesterIssuanceApproval[]>([])
+  const [serverNotifications, setServerNotifications] = useState<ServerNotification[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [currentTime, setCurrentTime] = useState<number | null>(null)
@@ -80,11 +82,12 @@ export default function RequesterNotifications() {
 
   useEffect(() => {
     let active = true
-    Promise.all([listMyRequests(), listMyIssuanceActivity()])
-      .then(([requestRows, batches]) => {
+    Promise.all([listMyRequests(), listMyIssuanceActivity(), listServerNotifications().catch(() => [])])
+      .then(([requestRows, batches, notifications]) => {
         if (!active) return
         setRequests(requestRows)
         setIssuanceBatches(batches)
+        setServerNotifications(notifications)
       })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang notifications.') })
       .finally(() => { if (active) setLoading(false) })
@@ -93,7 +96,11 @@ export default function RequesterNotifications() {
 
   const events = useMemo(() => {
     const now = currentTime
-    const requestEvents: ActivityEvent[] = requests.flatMap((request) => request.history.map((event) => ({
+    const hasPurchaseNotification = (requestId: string, status: string) => serverNotifications.some((notification) => notification.dedupeKey.startsWith(`purchase-requester:${requestId}:${status}:`))
+    const requestEvents: ActivityEvent[] = requests.flatMap((request) => request.history
+      .filter((event) => !hasPurchaseNotification(request.id, event.status)
+        && !(event.status === 'Approved' && hasPurchaseNotification(request.id, 'Stock Received')))
+      .map((event) => ({
       key: `request-${request.id}-${event.id}`,
       at: event.changedAt,
       title: event.status,
@@ -101,7 +108,24 @@ export default function RequesterNotifications() {
       source: `${request.referenceNo} · ${REQUEST_TYPE_LABELS[request.requestType]}`,
       href: `/requester/requests/${request.id}`,
       tone: event.status === 'Rejected' ? 'rose' : event.status === 'Approved' || event.status === 'Returned' ? 'green' : event.status === 'Needs Information' ? 'amber' : 'blue',
-    })))
+      })))
+    const purchaseNotifications: ActivityEvent[] = serverNotifications
+      .filter((notification) => notification.type === 'PURCHASE_REQUISITION')
+      .map((notification) => {
+        const requestId = notification.href.match(/\/requester\/requests\/(\d+)/)?.[1]
+        const request = requests.find((row) => row.id === requestId)
+        const rejected = /declined|rejected/i.test(notification.title)
+        const approved = /approved|received|completed/i.test(notification.title)
+        return {
+          key: `server-notification-${notification.id}`,
+          at: notification.createdAt,
+          title: notification.title,
+          details: notification.message,
+          source: request?.referenceNo ? `${request.referenceNo} · Purchase Requisition` : 'Purchase Requisition',
+          href: notification.href,
+          tone: rejected ? 'rose' : approved ? 'green' : /information|changes/i.test(notification.title) ? 'amber' : 'blue',
+        }
+      })
     const today = new Date(now ?? 0)
     today.setHours(0, 0, 0, 0)
     const returnReminders: ActivityEvent[] = requests
@@ -148,9 +172,9 @@ export default function RequesterNotifications() {
           tone: hoursUntilDue < 0 ? 'rose' as const : 'amber' as const,
         }]
       })
-    return [...requestEvents, ...issuanceBatches.map(issuanceActivity), ...returnReminders, ...gsoBorrowingReminders]
+    return [...purchaseNotifications, ...requestEvents, ...issuanceBatches.map(issuanceActivity), ...returnReminders, ...gsoBorrowingReminders]
       .sort((first, second) => new Date(second.at).getTime() - new Date(first.at).getTime())
-  }, [currentTime, requests, issuanceBatches])
+  }, [currentTime, requests, issuanceBatches, serverNotifications])
 
   const toneClasses = {
     blue: 'bg-blue-50 text-blue-700',
@@ -165,7 +189,7 @@ export default function RequesterNotifications() {
       {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</p>}
       <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-200/55 sm:p-6">
         <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-100 pb-4"><div><h2 className="text-sm font-black text-slate-900">Activity timeline</h2><p className="mt-1 text-[0.68rem] font-medium text-slate-500">Request decisions and GSO item records are combined here.</p></div><span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">{loading ? 'Loading' : `${events.length} notifications`}</span></div>
-        {loading ? <div className="grid min-h-48 place-items-center text-sm font-bold text-slate-400">Loading notifications...</div> : events.length === 0 ? <div className="grid min-h-48 place-items-center text-center"><div><span className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-lg font-black text-blue-700">↻</span><h2 className="mt-3 text-sm font-extrabold text-slate-700">No notifications yet</h2><p className="mt-1 text-xs text-slate-500">GSO request and item notices will appear here.</p></div></div> : <ol className="space-y-0">{events.map((event) => <li key={event.key} className="relative flex gap-3 border-b border-slate-100 py-4 first:pt-1 last:border-0"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm font-black ${toneClasses[event.tone]}`}>{event.tone === 'rose' ? '×' : event.tone === 'green' ? '✓' : event.tone === 'amber' ? '!' : '↻'}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-black text-slate-800">{event.title}</p><time className="text-[0.62rem] font-semibold text-slate-400">{new Date(event.at).toLocaleString('en-PH')}</time></div><p className="mt-1 text-xs leading-relaxed text-slate-600">{event.details}</p><p className="mt-1 text-[0.62rem] font-bold text-slate-400">{event.source}</p>{event.href && <a href={event.href} className="mt-2 inline-block text-[0.65rem] font-extrabold text-blue-700 hover:underline">{event.title.includes('acknowledgment') ? 'Confirm receipt' : 'Open request'} →</a>}</div></li>)}</ol>}
+        {loading ? <div className="grid min-h-48 place-items-center text-sm font-bold text-slate-400">Loading notifications...</div> : events.length === 0 ? <div className="grid min-h-48 place-items-center text-center"><div><span className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-blue-50 text-lg font-black text-blue-700">↻</span><h2 className="mt-3 text-sm font-extrabold text-slate-700">No notifications yet</h2><p className="mt-1 text-xs text-slate-500">GSO request and item notices will appear here.</p></div></div> : <ol className="space-y-0">{events.map((event) => <li key={event.key} className="relative flex gap-3 border-b border-slate-100 py-4 first:pt-1 last:border-0"><span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm font-black ${toneClasses[event.tone]}`}>{event.tone === 'rose' ? '×' : event.tone === 'green' ? '✓' : event.tone === 'amber' ? '!' : '↻'}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-black text-slate-800">{event.title}</p><time className="text-[0.62rem] font-semibold text-slate-400">{new Date(event.at).toLocaleString('en-PH')}</time></div><p className="mt-1 text-xs leading-relaxed text-slate-600">{event.details}</p><p className="mt-1 text-[0.62rem] font-bold text-slate-400">{event.source}</p>{event.href && <a href={event.href} className="mt-2 inline-block text-[0.65rem] font-extrabold text-blue-700 hover:underline">Open request →</a>}</div></li>)}</ol>}
       </section>
     </div>
   </RequesterLayout>

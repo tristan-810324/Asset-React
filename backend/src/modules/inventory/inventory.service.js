@@ -7,6 +7,7 @@ const {
   validateCreateCategory,
   validateCategoryChange,
   validateCreateCategoryItemName,
+  validateCategoryItemNamePolicy,
 } = require('./inventory.validation');
 
 function validateId(value, label) {
@@ -148,6 +149,15 @@ async function createCategoryItemName(categoryIdValue, input, user) {
   }
 }
 
+async function updateCategoryItemNamePolicy(idValue, input, user) {
+  const id = validateId(idValue, 'item name ID');
+  const policy = validateCategoryItemNamePolicy(input);
+  return inventoryRepository.updateCategoryItemNamePolicy(id, {
+    ...policy,
+    changedByUserId: user.id,
+  });
+}
+
 async function deleteCategoryItemName(idValue) {
   const id = validateId(idValue, 'item name ID');
   return inventoryRepository.deleteCategoryItemName(id);
@@ -165,5 +175,6 @@ module.exports = {
   deleteCategory,
   listCategoryItemNames,
   createCategoryItemName,
+  updateCategoryItemNamePolicy,
   deleteCategoryItemName,
 };

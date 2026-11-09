@@ -14,9 +14,14 @@ const recordLabelPrint = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { label } });
 });
 
+const recordLabelPrintBatch = asyncHandler(async (req, res) => {
+  const labels = await labelsService.recordLabelPrintBatch(req.body, req.user);
+  res.json({ success: true, data: { labels } });
+});
+
 const reprintUnitLabel = asyncHandler(async (req, res) => {
   const label = await labelsService.reprintUnitLabel(req.params.tagCode, req.body, req.user);
   res.status(201).json({ success: true, data: { label } });
 });
 
-module.exports = { listUnitLabels, recordLabelPrint, reprintUnitLabel };
+module.exports = { listUnitLabels, recordLabelPrint, recordLabelPrintBatch, reprintUnitLabel };

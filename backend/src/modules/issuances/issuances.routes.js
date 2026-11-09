@@ -12,6 +12,7 @@ router.post('/batch', authenticate, requireRole('GSO_STAFF'), issuancesControlle
 router.get('/batch/approved', authenticate, requireRole('GSO_STAFF'), issuancesController.listApprovedIssuanceBatches);
 router.get('/batch/:batchId', authenticate, requireRole('GSO_STAFF'), issuancesController.getIssuanceBatch);
 router.get('/labels', authenticate, requireRole('GSO_STAFF'), labelsController.listUnitLabels);
+router.post('/labels/print', authenticate, requireRole('GSO_STAFF'), labelsController.recordLabelPrintBatch);
 router.post('/tags/:tagCode/print', authenticate, requireRole('GSO_STAFF'), labelsController.recordLabelPrint);
 router.post('/tags/:tagCode/reprint', authenticate, requireRole('GSO_STAFF'), labelsController.reprintUnitLabel);
 router.get('/tags/:tagCode', authenticate, requireRole('GSO_STAFF'), issuancesController.getAssetTag);

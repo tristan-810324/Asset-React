@@ -5,6 +5,7 @@ import {
   subscribeToGsoNotifications,
   type NotificationRecord,
 } from '../../gso/notificationStore'
+import { listServerNotifications, markAllServerNotificationsRead, markServerNotificationRead } from '../../auth/notificationsApi'
 
 type GsoNotifProps = {
   open: boolean
@@ -30,6 +31,30 @@ export default function GsoNotif({ open, onOpenChange }: GsoNotifProps) {
   }), [])
 
   useEffect(() => {
+    let active = true
+    const refresh = () => listServerNotifications().then((rows) => {
+      if (!active) return
+      const persistent: NotificationRecord[] = rows.map((row) => ({
+        id: `server-${row.id}`,
+        module: row.type === 'PURCHASE_REQUISITION' ? 'Requests' : 'Inventory',
+        title: row.title,
+        message: row.message,
+        createdAt: row.createdAt,
+        priority: 'Normal',
+        read: Boolean(row.readAt),
+        archived: false,
+        actionLabel: 'Open request',
+        href: row.href,
+      }))
+      const local = readGsoNotifications() ?? []
+      setNotifications([...persistent, ...local.filter((item) => !item.id.startsWith('server-'))])
+    }).catch(() => undefined)
+    refresh()
+    const interval = window.setInterval(refresh, 30_000)
+    return () => { active = false; window.clearInterval(interval) }
+  }, [])
+
+  useEffect(() => {
     if (!open) return
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -48,12 +73,14 @@ export default function GsoNotif({ open, onOpenChange }: GsoNotifProps) {
   }, [open, onOpenChange])
 
   const markAsRead = (id: string) => {
+    if (id.startsWith('server-')) void markServerNotificationRead(id.slice('server-'.length)).catch(() => undefined)
     const updatedNotifications = notifications.map((notification) => notification.id === id ? { ...notification, read: true } : notification)
     setNotifications(updatedNotifications)
     publishGsoNotifications(updatedNotifications)
   }
 
   const markAllAsRead = () => {
+    void markAllServerNotificationsRead().catch(() => undefined)
     const updatedNotifications = notifications.map((notification) => notification.archived ? notification : { ...notification, read: true })
     setNotifications(updatedNotifications)
     publishGsoNotifications(updatedNotifications)

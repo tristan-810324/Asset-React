@@ -128,7 +128,7 @@ async function submitMine(userId, identity) {
        department = EXCLUDED.department,
        position = EXCLUDED.position,
        contact_number = EXCLUDED.contact_number,
-       picture_data = EXCLUDED.picture_data,
+        picture_data = COALESCE(EXCLUDED.picture_data, requester_identity_profiles.picture_data),
        verification_status = 'Pending',
        review_note = '',
        submitted_at = NOW(),

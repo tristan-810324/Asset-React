@@ -1,5 +1,4 @@
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import RequesterRequestInbox from './requesterinbox'
 
 export default function BorrowingPage() {
   return (
@@ -25,8 +24,6 @@ export default function BorrowingPage() {
             </a>
           </nav>
         </section>
-
-        <RequesterRequestInbox />
       </div>
     </GsoPageFrame>
   )

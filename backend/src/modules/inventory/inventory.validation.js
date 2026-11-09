@@ -229,6 +229,29 @@ function validateCreateCategoryItemName(input) {
   return { name: requiredText(input.name, 'Item name', 500) };
 }
 
+function validateCategoryItemNamePolicy(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    invalid('Hindi valid ang item approval policy.');
+  }
+  const approvalPolicy = input.approvalPolicy;
+  if (!['GSO_HEAD', 'STAFF_ISSUE'].includes(approvalPolicy)) {
+    invalid('Pumili ng valid na approval policy.');
+  }
+  // GSO Staff decides with no limit when the limit is left blank.
+  let staffIssueMaxQuantity = null;
+  if (approvalPolicy === 'STAFF_ISSUE' && ![undefined, null, ''].includes(input.staffIssueMaxQuantity)) {
+    staffIssueMaxQuantity = Number(input.staffIssueMaxQuantity);
+    if (!Number.isSafeInteger(staffIssueMaxQuantity) || staffIssueMaxQuantity < 1 || staffIssueMaxQuantity > 1000) {
+      invalid('Maglagay ng limit mula 1 hanggang 1,000, o iwanang blangko kung walang limit.');
+    }
+  }
+  return {
+    approvalPolicy,
+    staffIssueMaxQuantity,
+    reason: requiredText(input.reason, 'Dahilan ng policy change', 1000),
+  };
+}
+
 module.exports = {
   validateCreateInventoryItem,
   validateCreateInventoryItems,
@@ -237,4 +260,5 @@ module.exports = {
   validateCreateCategory,
   validateCategoryChange,
   validateCreateCategoryItemName,
+  validateCategoryItemNamePolicy,
 };

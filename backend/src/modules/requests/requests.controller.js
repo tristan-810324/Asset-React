@@ -9,6 +9,11 @@ const listAssets = asyncHandler(async (_req, res) => {
   res.json({ success: true, data: { items } });
 });
 
+const listPurchaseItemNames = asyncHandler(async (_req, res) => {
+  const itemNames = await requestsService.listPurchaseItemNames();
+  res.json({ success: true, data: { itemNames } });
+});
+
 const listRequesterDepartmentStaff = asyncHandler(async (req, res) => {
   const staff = await requestsService.listRequesterDepartmentStaff(req.user);
   res.json({ success: true, data: { staff } });
@@ -54,6 +59,36 @@ const listPurchaseRequisitions = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { requests } });
 });
 
+const listStaffPurchaseRequisitions = asyncHandler(async (_req, res) => {
+  const requests = await requestsService.listStaffPurchaseRequisitions();
+  res.json({ success: true, data: { requests } });
+});
+
+const staffReviewPurchaseRequisition = asyncHandler(async (req, res) => {
+  const result = await requestsService.staffReviewPurchaseRequisition(req.params.id, req.body, req.user);
+  res.json({ success: true, data: result });
+});
+
+const getStaffPurchaseRequisitionForIssuance = asyncHandler(async (req, res) => {
+  const request = await requestsService.getStaffPurchaseRequisitionForIssuance(req.params.id);
+  res.json({ success: true, data: { request } });
+});
+
+const listAwaitingPurchaseDeliveries = asyncHandler(async (req, res) => {
+  const lines = await requestsService.listAwaitingPurchaseDeliveries(req.query);
+  res.json({ success: true, data: { lines } });
+});
+
+const recordPurchaseDeliveries = asyncHandler(async (req, res) => {
+  const requests = await requestsService.recordPurchaseDeliveries(req.body, req.user);
+  res.json({ success: true, data: { requests } });
+});
+
+const undoPurchaseDelivery = asyncHandler(async (req, res) => {
+  const request = await requestsService.undoPurchaseDelivery(req.params.id, req.params.receiptId, req.user);
+  res.json({ success: true, data: { request } });
+});
+
 const reviewPurchaseRequisition = asyncHandler(async (req, res) => {
   const result = await requestsService.reviewPurchaseRequisition(req.params.id, req.body, req.user);
   res.json({ success: true, data: result });
@@ -61,11 +96,6 @@ const reviewPurchaseRequisition = asyncHandler(async (req, res) => {
 
 const sendPurchaseRequisitionToFinance = asyncHandler(async (req, res) => {
   const result = await requestsService.sendPurchaseRequisitionToFinance(req.params.id, req.body, req.user);
-  res.json({ success: true, data: result });
-});
-
-const recordFinanceResponse = asyncHandler(async (req, res) => {
-  const result = await requestsService.recordFinanceResponse(req.params.id, req.body, req.user);
   res.json({ success: true, data: result });
 });
 
@@ -81,6 +111,7 @@ const updateStatus = asyncHandler(async (req, res) => {
 
 module.exports = {
   listAssets,
+  listPurchaseItemNames,
   listRequesterDepartmentStaff,
   createRequest,
   listMine,
@@ -90,9 +121,14 @@ module.exports = {
   requestReturn,
   listAll,
   listPurchaseRequisitions,
+  listStaffPurchaseRequisitions,
+  staffReviewPurchaseRequisition,
+  getStaffPurchaseRequisitionForIssuance,
+  listAwaitingPurchaseDeliveries,
+  recordPurchaseDeliveries,
+  undoPurchaseDelivery,
   reviewPurchaseRequisition,
   sendPurchaseRequisitionToFinance,
-  recordFinanceResponse,
   getForGso,
   updateStatus,
 };

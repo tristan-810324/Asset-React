@@ -152,40 +152,38 @@ function validateCreateRequest(input) {
   if (requestType === 'PURCHASE_REQUISITION') {
     if (data.requesterCertification !== true) invalid('Kumpirmahin muna na tama ang detalye at kailangan ang request ng iyong department.');
     const requiredDate = date(data.requiredDate, 'required date', { notPast: true });
-    const [year, month, day] = requiredDate.split('-').map(Number);
-    const minimumDate = new Date();
-    minimumDate.setHours(0, 0, 0, 0);
-    minimumDate.setDate(minimumDate.getDate() + 14);
-    const requested = new Date(year, month - 1, day);
-    if (requested < minimumDate) invalid('Ayon sa form, magsumite ng purchase requisition nang hindi bababa sa dalawang linggo bago ang required date.');
+    const urgency = data.urgency === 'Urgent' ? 'Urgent' : 'Standard';
+    const urgentReason = text(data.urgentReason, 'urgent reason', 500, { optional: urgency !== 'Urgent' });
+    if (urgency === 'Urgent' && !urgentReason) invalid('Ipaliwanag kung bakit kailangan agad ang request.');
+    const items = rows(data.items, 'Purchase items', (row) => {
+      const category = text(row.category, 'requisition category', 60).toUpperCase();
+      if (!PURCHASE_CATEGORIES.has(category)) invalid('Pumili ng valid requisition category.');
+      const catalogItemId = integer(row.catalogItemId, 'catalog item id', { optional: true, minimum: 1 });
+      const itemNameId = integer(row.itemNameId, 'saved item name id', { optional: true, minimum: 1 });
+      if (catalogItemId !== null && itemNameId !== null) invalid('Pumili ng isang saved item source lamang.');
+      return {
+        quantity: integer(row.quantity, 'item quantity', { minimum: 1 }),
+        category,
+        catalogItemId,
+        itemNameId,
+        itemName: text(row.itemName, 'item name', 250),
+        description: text(row.description, 'item description/specifications', 1000),
+      };
+    }, { max: 30 });
+    const uniqueLineKeys = new Set();
+    for (const item of items) {
+      const lineKey = `${item.category}|${item.itemName.trim().toLowerCase()}`;
+      if (uniqueLineKeys.has(lineKey)) invalid('Pagsamahin sa iisang row ang parehong item para tama ang stock reservation.');
+      uniqueLineKeys.add(lineKey);
+    }
     return {
       requestType,
       formData: {
         purpose: text(data.purpose, 'purpose of request', 2000),
         requiredDate,
-        items: rows(data.items, 'Purchase items', (row) => {
-          const category = text(row.category, 'requisition category', 60).toUpperCase();
-          if (!PURCHASE_CATEGORIES.has(category)) invalid('Pumili ng valid requisition category.');
-          const catalogItemId = integer(row.catalogItemId, 'catalog item id', { optional: true, minimum: 1 });
-          return {
-            quantity: integer(row.quantity, 'item quantity', { minimum: 1 }),
-            category,
-            catalogItemId,
-            itemName: text(row.itemName, 'item name', 250),
-            description: text(row.description, 'item description/specifications', 1000),
-            intendedStaffCodes: (() => {
-              if (row.intendedStaffCodes === undefined || row.intendedStaffCodes === null) return [];
-              if (!Array.isArray(row.intendedStaffCodes) || row.intendedStaffCodes.length > 25) {
-                invalid('Hindi dapat lumampas sa 25 ang planned staff recipients sa bawat item.');
-              }
-              const codes = row.intendedStaffCodes.map((code) => text(code, 'intended staff employee code', 40));
-              if (new Set(codes.map((code) => code.toLowerCase())).size !== codes.length) {
-                invalid('Alisin ang duplicate na intended staff sa purchase item.');
-              }
-              return codes;
-            })(),
-          };
-        }, { max: 30 }),
+        urgency,
+        urgentReason,
+        items,
         remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
       },
     };

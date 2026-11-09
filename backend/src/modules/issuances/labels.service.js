@@ -19,6 +19,18 @@ async function recordLabelPrint(tagCodeValue, user) {
   return labelsRepository.recordLabelPrint({ tagCode: readTagCode(tagCodeValue), userId: user.id });
 }
 
+async function recordLabelPrintBatch(input, user) {
+  const rawTagCodes = input?.tagCodes;
+  if (!Array.isArray(rawTagCodes) || rawTagCodes.length < 1 || rawTagCodes.length > 100) {
+    throw httpError(400, 'Pumili ng 1 hanggang 100 barcode label na ipi-print.');
+  }
+  const tagCodes = rawTagCodes.map(readTagCode);
+  if (new Set(tagCodes).size !== tagCodes.length) {
+    throw httpError(400, 'May nadobleng barcode label sa print request.');
+  }
+  return labelsRepository.recordLabelPrintBatch({ tagCodes, userId: user.id });
+}
+
 async function reprintUnitLabel(tagCodeValue, input, user) {
   const tagCode = readTagCode(tagCodeValue);
   const reason = typeof input?.reason === 'string' ? input.reason.trim() : '';
@@ -27,4 +39,4 @@ async function reprintUnitLabel(tagCodeValue, input, user) {
   return labelsRepository.reprintUnitLabel({ tagCode, reason, userId: user.id });
 }
 
-module.exports = { listUnitLabels, recordLabelPrint, reprintUnitLabel };
+module.exports = { listUnitLabels, recordLabelPrint, recordLabelPrintBatch, reprintUnitLabel };

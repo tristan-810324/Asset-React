@@ -74,13 +74,27 @@ function validateCreateIssuanceBatch(input) {
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2147483647) {
       throw httpError(400, 'Ang quantity ng bawat item ay dapat whole number na hindi bababa sa 1.');
     }
-    return { itemId, quantity };
+    const rawLineId = value.purchaseRequisitionLineId;
+    const purchaseRequisitionLineId = rawLineId === undefined || rawLineId === null || rawLineId === ''
+      ? null
+      : String(rawLineId);
+    if (purchaseRequisitionLineId !== null && !/^\d{1,20}$/.test(purchaseRequisitionLineId)) {
+      throw httpError(400, 'Hindi valid ang purchase requisition item reference.');
+    }
+    return { itemId, quantity, purchaseRequisitionLineId };
   });
   const itemIds = items.map((item) => item.itemId);
   if (new Set(itemIds).size !== itemIds.length) {
     throw httpError(400, 'May nadobleng inventory item sa request.');
   }
   const notes = requiredText(input.notes, 'issuance notes', 1000, { optional: true });
+  const purchaseRequisitionId = input.purchaseRequisitionId === undefined || input.purchaseRequisitionId === null || input.purchaseRequisitionId === ''
+    ? null
+    : String(input.purchaseRequisitionId);
+  if (purchaseRequisitionId !== null && !/^\d{1,20}$/.test(purchaseRequisitionId)) throw httpError(400, 'Hindi valid ang purchase requisition reference.');
+  if (purchaseRequisitionId && items.some((item) => !item.purchaseRequisitionLineId)) {
+    throw httpError(400, 'Pumili ng mga item mula sa nakatalagang purchase requisition.');
+  }
   let borrowDetails = null;
   if (input.borrowDetails !== undefined && input.borrowDetails !== null) {
     if (typeof input.borrowDetails !== 'object' || Array.isArray(input.borrowDetails)) {
@@ -139,7 +153,7 @@ function validateCreateIssuanceBatch(input) {
     }
     borrowDetails = { useDate, expectedReturnDate, useAt, expectedReturnAt, useLocation, purpose };
   }
-  return { employeeCode, items, notes, borrowDetails };
+  return { employeeCode, items, notes, borrowDetails, purchaseRequisitionId };
 }
 
 function validateToken(value) {
@@ -189,7 +203,7 @@ async function createIssuance(input, user) {
   };
 }
 async function createIssuanceBatch(input, user) {
-  const { employeeCode, items, notes, borrowDetails } = validateCreateIssuanceBatch(input);
+  const { employeeCode, items, notes, borrowDetails, purchaseRequisitionId } = validateCreateIssuanceBatch(input);
   const blockers = await issuancesRepository.getEmployeeReturnBlockers(employeeCode);
   if (blockers.overdue || blockers.unsettled) {
     const problems = [
@@ -204,6 +218,7 @@ async function createIssuanceBatch(input, user) {
     items,
     notes,
     borrowDetails,
+    purchaseRequisitionId,
     tokenHash: hashToken(token),
     requestedByUserId: user.id,
   });
@@ -215,14 +230,12 @@ async function createIssuanceBatch(input, user) {
     ? 'GSO consumable stock issued'
     : isReusableBorrow
       ? 'GSO reusable-stock borrowing recorded'
-      : 'Per-unit asset ready for handover';
+      : 'Per-unit assets ready for pickup';
   const employeeActionText = isConsumableDistribution
     ? 'GSO has issued this consumable stock. No approval or follow-up action is needed.'
     : isReusableBorrow
       ? 'GSO recorded your face-to-face borrowing. Return the borrowed items by the scheduled date and time.'
-    : batch.requesterAccountLinked
-      ? 'GSO reserved this per-unit asset for handover. Confirm receipt in your A.S.SET account only after you physically receive the unit.'
-      : 'GSO reserved this per-unit asset for handover. After pickup, GSO will record the signed receipt or authorized handover for you.';
+    : 'GSO prepared these per-unit assets for pickup. Barcode labels are ready; no requester confirmation is required.';
   const itemTypeLabel = (item) => item.trackingMode === 'individual'
     ? 'Per-unit asset'
     : item.issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock';
@@ -263,7 +276,7 @@ async function createIssuanceBatch(input, user) {
       text: [
         `Hello ${batch.employee_name},`,
         '',
-        `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : 'a per-unit asset handover'} for these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'}:`,
+        `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : 'per-unit assets ready for pickup'} for these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'}:`,
         ...textItems,
         ...borrowingDetailsText,
         `Notes: ${notes || 'No additional notes.'}`,
@@ -327,10 +340,12 @@ async function listEmployeeIssuances(employeeCodeValue) {
 }
 
 async function listMyPendingIssuanceBatches(user) {
+  await issuancesRepository.prepareLegacyPendingPickupBatches(user.id);
   return issuancesRepository.listMyPendingIssuanceBatches(user.id);
 }
 
 async function listMyIssuanceActivity(user) {
+  await issuancesRepository.prepareLegacyPendingPickupBatches(user.id);
   return issuancesRepository.listMyIssuanceActivity(user.id);
 }
 

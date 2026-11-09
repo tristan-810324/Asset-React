@@ -2,7 +2,7 @@
 
 ## Migrations
 
-`migrations/` builds the whole schema from an empty database in thirteen files, one per feature. Keep their order: later files reference tables created by earlier files.
+`migrations/` builds the whole schema from an empty database in sixteen files, one per feature. Keep their order: later files reference tables created by earlier files.
 
 | Version | File | Scope |
 | --- | --- | --- |
@@ -19,8 +19,13 @@
 | 011 | `011_issuance_request_type.sql` | Allows the `ISSUANCE_REQUEST` service request type |
 | 012 | `012_gso_head_role.sql` | Adds the distinct GSO Head login role |
 | 013 | `013_purchase_requisition_finance_handoff.sql` | Adds GSO Head PR review and Finance handoff tracking |
+| 014 | `014_purchase_requisition_routing.sql` | Adds per-item approval policies, stock reservations, issuance links, and routing history |
+| 015 | `015_staff_first_requisition_routing.sql` | GSO Staff checks stock and routes each requisition item before the GSO Head sees it |
+| 016 | `016_staff_choice_for_in_stock_items.sql` | GSO Staff choose to issue in-stock items or ask the GSO Head, unless the Head locked the item |
+| 017 | `017_app_notifications.sql` | In-app notifications for users and roles |
+| 018 | `018_purchase_delivery_without_finance_reply.sql` | Finance no longer replies in the app: Finance reply statuses become `WAITING_FOR_PURCHASE`, and a delivery link can be undone |
 
-Treat an applied migration as history. Add a new numbered file, starting at `014`, for every later schema change. Do not edit, rename, move, or delete a file that a database has already applied.
+Treat an applied migration as history. Add a new numbered file, starting at `019`, for every later schema change. Do not edit, rename, move, or delete a file that a database has already applied.
 
 Run migrations with `npm run db:migrate`, which applies the pending files in order and records each one in `schema_migrations`. The script takes its target only from `MIGRATION_DATABASE_URL`, never from `backend/.env`, and refuses Neon pooled connection strings.
 

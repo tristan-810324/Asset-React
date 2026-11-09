@@ -38,14 +38,14 @@ function itemStatus(batch: RequesterIssuanceApproval, item: IssuedItem) {
     && Number(item.quantity) - Number(item.returnedQuantity || 0) <= 0) return 'Returned'
   if (item.status === 'Returned') return 'Returned'
   if (batch.status === 'Pending' && item.trackingMode === 'individual') return 'Awaiting acknowledgment'
-  if (batch.status === 'Issued' && item.trackingMode === 'individual') return 'Assigned to you'
+  if (batch.status === 'Issued' && item.trackingMode === 'individual') return 'Ready for pickup'
   if (batch.status === 'Issued' && item.issueBehavior === 'consumable') return 'Distributed'
   if (batch.status === 'Issued' && item.issueBehavior === 'returnable') return 'Borrowed'
   return item.status || batch.status
 }
 
 function statusTone(status: string) {
-  if (['Assigned to you', 'Distributed', 'Borrowed', 'Returned', 'Issued'].includes(status)) return 'bg-emerald-50 text-emerald-700'
+  if (['Ready for pickup', 'Distributed', 'Borrowed', 'Returned', 'Issued'].includes(status)) return 'bg-emerald-50 text-emerald-700'
   if (['Pending', 'Approved', 'Awaiting acknowledgment', 'Return Requested'].includes(status)) return 'bg-amber-50 text-amber-800'
   if (['Rejected', 'Cancelled', 'For Repair'].includes(status)) return 'bg-rose-50 text-rose-700'
   return 'bg-slate-100 text-slate-700'

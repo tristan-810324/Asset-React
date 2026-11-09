@@ -1,8 +1,34 @@
 const pool = require('../../config/db');
 
+async function createUserNotification({ userId, type, title, message, href, dedupeKey }) {
+  await pool.query(
+    `INSERT INTO app_notifications (recipient_user_id, notification_type, title, message, href, dedupe_key)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (dedupe_key) DO UPDATE SET
+       title = EXCLUDED.title, message = EXCLUDED.message, href = EXCLUDED.href, resolved_at = NULL,
+       read_at = CASE WHEN app_notifications.resolved_at IS NOT NULL THEN NULL ELSE app_notifications.read_at END`,
+    [userId, type, title, message, href, dedupeKey],
+  );
+}
+
+async function createRoleNotification({ roleKey, type, title, message, href, dedupeKey }) {
+  await pool.query(
+    `INSERT INTO app_notifications (recipient_user_id, notification_type, title, message, href, dedupe_key)
+     SELECT account.id, $2, $3, $4, $5, $6 || ':' || account.id::TEXT
+       FROM users AS account
+       JOIN user_roles AS assigned ON assigned.user_id = account.id
+       JOIN roles ON roles.id = assigned.role_id
+      WHERE roles.role_key = $1 AND account.is_active = TRUE
+     ON CONFLICT (dedupe_key) DO UPDATE SET
+       title = EXCLUDED.title, message = EXCLUDED.message, href = EXCLUDED.href, resolved_at = NULL,
+       read_at = CASE WHEN app_notifications.resolved_at IS NOT NULL THEN NULL ELSE app_notifications.read_at END`,
+    [roleKey, type, title, message, href, dedupeKey],
+  );
+}
+
 async function listForUser(user) {
   const result = await pool.query(
-    `SELECT id, notification_type AS "type", title, message, href,
+    `SELECT id, notification_type AS "type", title, message, href, dedupe_key AS "dedupeKey",
             created_at AS "createdAt", read_at AS "readAt", resolved_at AS "resolvedAt"
        FROM app_notifications
       WHERE resolved_at IS NULL
@@ -107,4 +133,4 @@ async function refreshOperationalNotifications() {
        )`);
 }
 
-module.exports = { listForUser, markRead, markAllRead, refreshOperationalNotifications };
+module.exports = { listForUser, markRead, markAllRead, refreshOperationalNotifications, createUserNotification, createRoleNotification };

@@ -988,13 +988,60 @@ async function listCategoryItemNames() {
   const result = await pool.query(
     `SELECT item_name.id,
             item_name.category_id AS "categoryId",
+            category.name AS category,
             item_name.name,
+            item_name.approval_policy AS "approvalPolicy",
+            item_name.staff_issue_max_quantity AS "staffIssueMaxQuantity",
+            item_name.policy_updated_at AS "policyUpdatedAt",
+            editor.name AS "policyUpdatedBy",
             item_name.created_at AS "createdAt"
        FROM item_category_item_names AS item_name
        JOIN item_categories AS category ON category.id = item_name.category_id
+       LEFT JOIN users AS editor ON editor.id = item_name.policy_updated_by_user_id
       ORDER BY lower(category.name), lower(item_name.name), item_name.id`,
   );
   return result.rows;
+}
+
+async function updateCategoryItemNamePolicy(id, { approvalPolicy, staffIssueMaxQuantity, reason, changedByUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      `SELECT id, approval_policy, staff_issue_max_quantity
+         FROM item_category_item_names
+        WHERE id = $1
+        FOR UPDATE`,
+      [id],
+    );
+    const current = currentResult.rows[0];
+    if (!current) throw Object.assign(new Error('Hindi na makita ang saved item name.'), { status: 404 });
+    const updated = await client.query(
+      `UPDATE item_category_item_names
+          SET approval_policy = $2,
+              staff_issue_max_quantity = $3,
+              policy_updated_at = NOW(),
+              policy_updated_by_user_id = $4
+        WHERE id = $1
+        RETURNING id, approval_policy AS "approvalPolicy",
+                  staff_issue_max_quantity AS "staffIssueMaxQuantity",
+                  policy_updated_at AS "policyUpdatedAt"`,
+      [id, approvalPolicy, staffIssueMaxQuantity, changedByUserId],
+    );
+    await client.query(
+      `INSERT INTO item_category_item_name_policy_history (
+         item_name_id, previous_policy, new_policy, previous_staff_limit, new_staff_limit, reason, changed_by_user_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, current.approval_policy, approvalPolicy, current.staff_issue_max_quantity, staffIssueMaxQuantity, reason, changedByUserId],
+    );
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function createCategoryItemName(categoryId, { name, createdByUserId }) {
@@ -1037,5 +1084,6 @@ module.exports = {
   deleteCategory,
   listCategoryItemNames,
   createCategoryItemName,
+  updateCategoryItemNamePolicy,
   deleteCategoryItemName,
 };

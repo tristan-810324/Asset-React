@@ -10,7 +10,6 @@ const typeOptions = [
 ]
 
 const actionsFor = (request: ServiceRequest) => {
-  if (request.requestType === 'PURCHASE_REQUISITION') return []
   const common = ['Submitted', 'Under Review', 'Needs Information'].includes(request.status)
     ? ['Under Review', 'Needs Information', 'Approved', 'Rejected']
     : []
@@ -182,7 +181,7 @@ export default function RequesterRequestInbox() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live database queue
             </span>
             <h2 className="mt-2 text-lg font-black tracking-tight text-slate-900">Requester Submissions</h2>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">Review school service requests and track borrowing activity. Purchase requisitions are handled separately in the GSO Head workspace.</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">Review school service requests and track borrowing activity. Item requisitions are handled in <a href="/gso/purchase-requisitions" className="font-extrabold text-blue-700 underline-offset-2 hover:underline">Purchase Requisitions</a>.</p>
           </div>
           <button type="button" onClick={() => void loadRequests()} disabled={loading} className="self-start rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700 disabled:cursor-wait disabled:opacity-60 lg:self-auto">
             {loading ? 'Refreshing…' : 'Refresh queue'}

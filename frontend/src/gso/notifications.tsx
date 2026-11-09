@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
+import { listServerNotifications, markAllServerNotificationsRead, markServerNotificationRead } from '../auth/notificationsApi'
 import {
   publishGsoNotifications,
   readGsoNotifications,
@@ -46,6 +47,27 @@ export default function Notifications() {
     })
   }, [])
 
+  useEffect(() => {
+    let active = true
+    listServerNotifications().then((rows) => {
+      if (!active) return
+      const persistent: NotificationRecord[] = rows.map((row) => ({
+        id: `server-${row.id}`,
+        module: row.type === 'PURCHASE_REQUISITION' ? 'Requests' : 'Inventory',
+        title: row.title,
+        message: row.message,
+        createdAt: row.createdAt,
+        priority: 'Normal',
+        read: Boolean(row.readAt),
+        archived: false,
+        actionLabel: 'Open request',
+        href: row.href,
+      }))
+      setNotifications((current) => [...persistent, ...current.filter((item) => !item.id.startsWith('server-'))])
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [])
+
   const visibleNotifications = useMemo(() => {
     const query = search.trim().toLowerCase()
     return notifications
@@ -57,12 +79,14 @@ export default function Notifications() {
   }, [filter, notifications, search])
 
   function updateReadState(id: string, read: boolean) {
+    if (id.startsWith('server-') && read) void markServerNotificationRead(id.slice('server-'.length)).catch(() => undefined)
     const updated = notifications.map((notification) => notification.id === id ? { ...notification, read } : notification)
     setNotifications(updated)
     publishGsoNotifications(updated)
   }
 
   function markAllAsRead() {
+    void markAllServerNotificationsRead().catch(() => undefined)
     const updated = notifications.map((notification) => notification.archived ? notification : { ...notification, read: true })
     setNotifications(updated)
     publishGsoNotifications(updated)

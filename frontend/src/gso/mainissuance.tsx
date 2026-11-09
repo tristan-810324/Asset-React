@@ -8,7 +8,7 @@ import {
   recordEmployeeIssuanceHandover,
   listEmployeeIssuances,
   listUnitLabels,
-  recordLabelPrint,
+  recordLabelPrintBatch,
   reprintUnitLabel,
   type EmployeeIssuanceBatchDetails,
   type EmployeeIssuanceRecord,
@@ -16,6 +16,7 @@ import {
 } from './issuancesApi'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
+import { getStaffPurchaseRequisition } from './purchaseRequisitionsApi'
 
 type SelectionMode = 'single' | 'multiple'
 type InventoryTypeFilter = 'all' | 'individual' | 'consumable' | 'reusable'
@@ -57,6 +58,17 @@ type PrintableBarcodeLabel = {
   tagCode: string
   itemCode: string
   itemName: string
+  unitNumber?: number
+}
+
+type UnitLabelGroup = {
+  id: string
+  batchId: string | null
+  holderName: string
+  holderCode: string
+  purchaseRequisitionReference: string | null
+  issuedAt: string | null
+  labels: UnitLabel[]
 }
 
 type LabelFilter = 'toPrint' | 'printed' | 'all' | 'returned'
@@ -76,9 +88,19 @@ function formatLabelDateTime(value: string) {
   return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(value))
 }
 
+function toPrintableBarcodeLabel(label: UnitLabel): PrintableBarcodeLabel {
+  return {
+    tagCode: label.tagCode,
+    itemCode: label.itemCode,
+    itemName: label.itemName,
+    unitNumber: label.unitNumber,
+  }
+}
+
 const reprintReasons = ['Damaged or unreadable', 'Torn or peeling', 'Label lost or missing', 'Printer error', 'Other']
 
 const employeeCodeFromUrl = new URLSearchParams(window.location.search).get('employeeCode')?.trim() ?? ''
+const purchaseRequisitionIdFromUrl = new URLSearchParams(window.location.search).get('purchaseRequisitionId')?.trim() ?? ''
 const batchIdFromUrl = new URLSearchParams(window.location.search).get('batchId')?.trim() ?? ''
 
 function employeeName(employee: EmployeeProfile) {
@@ -94,6 +116,10 @@ function isReusableQuantityStock(item: InventoryItemRecord) {
 function inventoryTypeFor(item: InventoryItemRecord): Exclude<InventoryTypeFilter, 'all'> {
   if (item.trackingMode === 'individual') return 'individual'
   return item.issueBehavior === 'consumable' ? 'consumable' : 'reusable'
+}
+
+function requiresPurchaseRequisition(item: InventoryItemRecord) {
+  return item.trackingMode === 'individual'
 }
 
 function availableUnitConditionSummary(item: InventoryItemRecord) {
@@ -226,6 +252,12 @@ function StepHeader({ step, status, titleId, title, description, children }: {
 }
 
 export default function MainIssuance() {
+  const isRequisitionIssuance = Boolean(purchaseRequisitionIdFromUrl)
+  const visibleInventoryTypeOptions = isRequisitionIssuance
+    ? inventoryTypeOptions
+    : inventoryTypeOptions
+      .filter((option) => option.value !== 'individual')
+      .map((option) => option.value === 'all' ? { ...option, label: 'Directly issuable stock' } : option)
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [inventory, setInventory] = useState<InventoryItemRecord[]>([])
   const [selectedEmployeeCode, setSelectedEmployeeCode] = useState(employeeCodeFromUrl)
@@ -235,6 +267,9 @@ export default function MainIssuance() {
   const [showEmployeeItems, setShowEmployeeItems] = useState(false)
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('single')
   const [selectedQuantities, setSelectedQuantities] = useState<Record<string, string>>({})
+  const [purchaseRequisitionLineIds, setPurchaseRequisitionLineIds] = useState<Record<string, string>>({})
+  const [purchaseRequisitionReference, setPurchaseRequisitionReference] = useState('')
+  const [purchaseRequisitionOtherTypeCount, setPurchaseRequisitionOtherTypeCount] = useState(0)
   const [itemSearch, setItemSearch] = useState('')
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('all')
   const [inventoryTypeFilter, setInventoryTypeFilter] = useState<InventoryTypeFilter>('all')
@@ -269,7 +304,7 @@ export default function MainIssuance() {
   const [approvedLabelsError, setApprovedLabelsError] = useState('')
   const [approvedLabelsRefresh, setApprovedLabelsRefresh] = useState(0)
   const [isApprovedLabelsExpanded, setIsApprovedLabelsExpanded] = useState(false)
-  const [labelToPrint, setLabelToPrint] = useState<PrintableBarcodeLabel | null>(null)
+  const [labelsToPrint, setLabelsToPrint] = useState<PrintableBarcodeLabel[]>([])
   const [shouldOpenPrintDialog, setShouldOpenPrintDialog] = useState(false)
   const [isRecordingPrint, setIsRecordingPrint] = useState(false)
   const [printError, setPrintError] = useState('')
@@ -280,11 +315,56 @@ export default function MainIssuance() {
   useEffect(() => {
     let active = true
 
-    Promise.all([listEmployees(), listInventoryItems()])
-      .then(([employeeResult, inventoryResult]) => {
+    Promise.all([
+      listEmployees(),
+      listInventoryItems(),
+      purchaseRequisitionIdFromUrl ? getStaffPurchaseRequisition(purchaseRequisitionIdFromUrl) : Promise.resolve(null),
+    ])
+      .then(([employeeResult, inventoryResult, purchaseRequisition]) => {
         if (!active) return
         setEmployees(employeeResult.employees)
-        setInventory(inventoryResult.filter((item) => item.status.toLowerCase() === 'available' && item.availableQuantity > 0))
+        if (purchaseRequisition) {
+          const reservedByItem = new Map<string, { quantity: number; lineId: string }>()
+          for (const line of purchaseRequisition.purchaseLines || []) {
+            if (!['READY_FOR_STAFF', 'PARTIAL_STOCK', 'PARTIALLY_ISSUED'].includes(line.routeStatus)) continue
+            for (const allocation of line.allocations || []) {
+              if (allocation.status !== 'Reserved') continue
+              const remaining = Number(allocation.quantity) - Number(allocation.fulfilledQuantity || 0)
+              if (remaining <= 0) continue
+              reservedByItem.set(allocation.itemId, { quantity: remaining, lineId: line.id })
+            }
+          }
+          const reservedItems = inventoryResult
+            .filter((item) => reservedByItem.has(item.id))
+            .map((item) => {
+              const reservation = reservedByItem.get(item.id)
+              return reservation ? { ...item, availableQuantity: reservation.quantity } : item
+            })
+          const firstFlow = reservedItems[0] ? inventoryTypeFor(reservedItems[0]) : null
+          const items = firstFlow ? reservedItems.filter((item) => inventoryTypeFor(item) === firstFlow) : []
+          const itemIds = new Set(items.map((item) => item.id))
+          const quantities = Object.fromEntries([...reservedByItem.entries()]
+            .filter(([itemId]) => itemIds.has(itemId))
+            .map(([itemId, reservation]) => [itemId, String(reservation.quantity)]))
+          setInventory(items)
+          setSelectedQuantities(quantities)
+          setPurchaseRequisitionLineIds(Object.fromEntries([...reservedByItem.entries()]
+            .filter(([itemId]) => itemIds.has(itemId))
+            .map(([itemId, reservation]) => [itemId, reservation.lineId])))
+          setPurchaseRequisitionOtherTypeCount(reservedItems.length - items.length)
+          setSelectionMode('multiple')
+          setPurchaseRequisitionReference(purchaseRequisition.referenceNo)
+          setNotes(`GSO issuance for ${purchaseRequisition.referenceNo}`)
+        } else {
+          setInventory(inventoryResult.filter((item) => (
+            item.status.toLowerCase() === 'available'
+            && item.availableQuantity > 0
+            && item.trackingMode === 'quantity'
+          )))
+          setPurchaseRequisitionLineIds({})
+          setPurchaseRequisitionReference('')
+          setPurchaseRequisitionOtherTypeCount(0)
+        }
         setLoadError('')
       })
       .catch((error: unknown) => {
@@ -356,10 +436,10 @@ export default function MainIssuance() {
   }, [approvedLabelsRefresh])
 
   useEffect(() => {
-    if (!labelToPrint || !shouldOpenPrintDialog) return
+    if (labelsToPrint.length === 0 || !shouldOpenPrintDialog) return
     const clearPrintMode = () => {
       setShouldOpenPrintDialog(false)
-      setLabelToPrint(null)
+      setLabelsToPrint([])
     }
     document.body.classList.add('printing-asset-labels')
     window.addEventListener('afterprint', clearPrintMode, { once: true })
@@ -369,7 +449,7 @@ export default function MainIssuance() {
       window.removeEventListener('afterprint', clearPrintMode)
       document.body.classList.remove('printing-asset-labels')
     }
-  }, [labelToPrint, shouldOpenPrintDialog])
+  }, [labelsToPrint, shouldOpenPrintDialog])
 
   useEffect(() => {
     if (!pendingBatchId) return
@@ -462,15 +542,45 @@ export default function MainIssuance() {
         || (labelStatusFilter === 'toPrint' ? label.needsPrinting : !label.needsPrinting))
     const matchesSearch = !labelSearchText || [
       label.itemName, label.itemCode, label.tagCode, label.holderName, label.holderCode,
+      label.purchaseRequisitionReference,
       label.returnCondition, label.returnReason, label.returnedByName,
     ].some((value) => value?.toLowerCase().includes(labelSearchText))
     return matchesFilter && matchesSearch
   })
+  const visibleUnitLabelGroups = useMemo(() => {
+    const groups = new Map<string, UnitLabelGroup>()
+    for (const label of visibleUnitLabels) {
+      const groupId = label.purchaseRequisitionReference
+        ? `requisition-${label.purchaseRequisitionReference}-${label.holderCode}`
+        : label.batchId
+          ? `batch-${label.batchId}`
+          : `label-${label.tagCode}`
+      const existing = groups.get(groupId)
+      if (existing) {
+        existing.labels.push(label)
+        continue
+      }
+      groups.set(groupId, {
+        id: groupId,
+        batchId: label.batchId,
+        holderName: label.holderName,
+        holderCode: label.holderCode,
+        purchaseRequisitionReference: label.purchaseRequisitionReference,
+        issuedAt: label.issuedAt,
+        labels: [label],
+      })
+    }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      labels: [...group.labels].sort((first, second) => first.itemName.localeCompare(second.itemName) || first.unitNumber - second.unitNumber),
+    }))
+  }, [visibleUnitLabels])
   const isReprintDetailsRequired = reprintReason === 'Other'
   const submittedBarcodeLabels: PrintableBarcodeLabel[] = generatedLabels.map(({ itemCode, itemName, tag }) => ({
     tagCode: tag.tagCode,
     itemCode,
     itemName,
+    unitNumber: tag.unitNumber,
   }))
   const isTagReturned = (tagCode: string) => generatedLabels.some(({ tag }) => tag.tagCode === tagCode && Boolean(tag.returned))
   const isTagPrinted = (tagCode: string) => printedTagCodes.has(tagCode)
@@ -478,6 +588,7 @@ export default function MainIssuance() {
   const expectedLabelCount = submittedBatch?.items.reduce((total, item) =>
     total + (item.trackingMode === 'individual' ? item.quantity : 0), 0) ?? 0
   const hasCompleteLabelSet = generatedLabels.length === expectedLabelCount && expectedLabelCount > 0
+  const printableSubmittedBarcodeLabels = submittedBarcodeLabels.filter((label) => !isTagReturned(label.tagCode) && !isTagPrinted(label.tagCode))
   // A sent batch replaces the empty review form until the staff selects another item or starts over.
   const isShowingSentBatch = Boolean(submittedBatch) && selectedItems.length === 0
   const isEmployeeStepDone = Boolean(selectedEmployee)
@@ -529,7 +640,13 @@ export default function MainIssuance() {
     }
     const item = scannedAssetItem || inventory.find((candidate) => candidate.itemCode.toLowerCase() === normalizedCode)
     if (!item) {
-      setSubmitError(`No available item matches barcode ${value.trim()}.`)
+      setSubmitError(isRequisitionIssuance
+        ? `No available item matches barcode ${value.trim()}.`
+        : `No directly issuable item matches barcode ${value.trim()}. Per-unit assets must be processed through Purchase Requisitions.`)
+      return
+    }
+    if (!isRequisitionIssuance && requiresPurchaseRequisition(item)) {
+      setSubmitError('Per-unit assets must be processed through Purchase Requisitions before they can be issued.')
       return
     }
     if (selectedQuantities[item.id] !== undefined) {
@@ -556,6 +673,14 @@ export default function MainIssuance() {
   }
 
   function toggleItem(item: InventoryItemRecord) {
+    if (purchaseRequisitionIdFromUrl) {
+      setSubmitError('Ang item at quantity ay nakatali sa purchase requisition na ito. Bumalik sa Request Requisitions kung kailangang baguhin ang request.')
+      return
+    }
+    if (requiresPurchaseRequisition(item)) {
+      setSubmitError('Per-unit assets must be processed through Purchase Requisitions before they can be issued.')
+      return
+    }
     clearSubmittedBatch()
     let nextQuantities: Record<string, string>
     if (selectedQuantities[item.id] !== undefined) {
@@ -624,27 +749,37 @@ export default function MainIssuance() {
     }
   }
 
-  function previewBarcodeLabel(label: PrintableBarcodeLabel) {
-    if (labelToPrint) return
+  function previewBarcodeLabels(labels: PrintableBarcodeLabel[]) {
+    if (labelsToPrint.length > 0) return
+    const uniqueLabels = [...new Map(labels.map((label) => [label.tagCode, label])).values()]
+    if (uniqueLabels.length === 0) return
     setShouldOpenPrintDialog(false)
     setPrintError('')
-    setLabelToPrint(label)
+    setLabelsToPrint(uniqueLabels)
+  }
+
+  function previewBarcodeLabel(label: PrintableBarcodeLabel) {
+    previewBarcodeLabels([label])
   }
 
   function closeLabelPreview() {
     if (isRecordingPrint) return
-    setLabelToPrint(null)
+    setLabelsToPrint([])
     setPrintError('')
   }
 
-  // Records the one print of this barcode, then opens the printer dialog.
+  // Records every label before opening the printer dialog, so each barcode keeps its one normal print.
   async function handleConfirmPrint() {
-    if (!labelToPrint || isRecordingPrint) return
+    if (labelsToPrint.length === 0 || isRecordingPrint) return
     setIsRecordingPrint(true)
     setPrintError('')
     try {
-      await recordLabelPrint(labelToPrint.tagCode)
-      setPrintedTagCodes((current) => new Set(current).add(labelToPrint.tagCode))
+      await recordLabelPrintBatch(labelsToPrint.map((label) => label.tagCode))
+      setPrintedTagCodes((current) => {
+        const next = new Set(current)
+        labelsToPrint.forEach((label) => next.add(label.tagCode))
+        return next
+      })
       setApprovedLabelsRefresh((current) => current + 1)
       setShouldOpenPrintDialog(true)
     } catch (error) {
@@ -696,6 +831,10 @@ export default function MainIssuance() {
       setSubmitError('Select at least one available item.')
       return
     }
+    if (!isRequisitionIssuance && selectedItems.some(({ item }) => requiresPurchaseRequisition(item))) {
+      setSubmitError('Per-unit assets must be processed through Purchase Requisitions before they can be issued.')
+      return
+    }
     if (hasInvalidQuantity) {
       setSubmitError('Check the requested quantities. Each quantity must be a whole number within the available stock.')
       return
@@ -715,7 +854,11 @@ export default function MainIssuance() {
     try {
       const batch = await createEmployeeIssuanceBatch(
         selectedEmployee.id,
-        selectedItems.map(({ item, quantity }) => ({ itemId: item.id, quantity })),
+        selectedItems.map(({ item, quantity }) => ({
+          itemId: item.id,
+          quantity,
+          ...(purchaseRequisitionIdFromUrl ? { purchaseRequisitionLineId: purchaseRequisitionLineIds[item.id] } : {}),
+        })),
         notes,
         isReusableBorrow ? {
           useAt: borrowUseAt,
@@ -725,6 +868,7 @@ export default function MainIssuance() {
           useLocation: borrowUseLocation.trim(),
           purpose: borrowPurpose.trim(),
         } : null,
+        purchaseRequisitionIdFromUrl || undefined,
       )
       setSubmittedBatch({
         id: batch.id,
@@ -742,9 +886,14 @@ export default function MainIssuance() {
           issueBehavior: item.issueBehavior,
           quantity: item.quantity,
           unitOfMeasure: item.unitOfMeasure,
-          tags: [],
+          tags: item.tags ?? [],
         })),
       })
+      if (batch.status === 'Issued' && batch.items.some((item) => item.trackingMode === 'individual')) {
+        setIsApprovedLabelsExpanded(true)
+        setLabelStatusFilter('toPrint')
+        setApprovedLabelsRefresh((current) => current + 1)
+      }
       const currentUrl = new URL(window.location.href)
       currentUrl.searchParams.set('batchId', batch.id)
       window.history.replaceState({}, '', currentUrl)
@@ -766,14 +915,15 @@ export default function MainIssuance() {
           body.printing-asset-labels > *:not(#asset-barcode-labels) { display: none !important; }
           body.printing-asset-labels > #asset-barcode-labels {
             display: block !important; position: static !important; inset: auto !important;
-            width: 50mm !important; height: 30mm !important; margin: 0 !important; padding: 0 !important; overflow: visible !important;
+            width: 50mm !important; height: auto !important; min-height: 30mm !important; margin: 0 !important; padding: 0 !important; overflow: visible !important;
           }
           body.printing-asset-labels .asset-barcode-label {
             box-sizing: border-box !important; display: flex !important; width: 50mm !important; height: 30mm !important;
             min-height: 30mm !important; flex-direction: column; align-items: center; justify-content: flex-start; gap: 0.2mm;
             padding: 0.3mm 0.5mm 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
-            overflow: hidden !important; page-break-inside: avoid; break-inside: avoid;
+            overflow: hidden !important; page-break-inside: avoid; break-inside: avoid; page-break-after: always; break-after: page;
           }
+          body.printing-asset-labels .asset-barcode-label:last-child { page-break-after: auto; break-after: auto; }
           body.printing-asset-labels .asset-barcode-label p {
             max-width: 100%; margin: 0 !important; color: #000 !important; line-height: 1.15;
             letter-spacing: normal; white-space: nowrap !important; overflow: visible !important; text-overflow: clip !important;
@@ -807,23 +957,15 @@ export default function MainIssuance() {
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Main Issuance</h1>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-            Issue consumables, record reusable-stock borrowing, or reserve a per-unit asset for handover.
+            Issue consumables, record reusable-stock borrowing, or complete a requisition-based per-unit handover.
           </p>
-          <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Issuance and borrowing pages">
-            <a href="/gso/main-issuance" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
-              + Main Issuance
-            </a>
-            <a href="/gso/requests-borrowing" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-              + Request &amp; Borrowing
-            </a>
-          </nav>
         </section>
 
         <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm" aria-labelledby="approved-labels-title">
           <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
             <div>
               <h2 id="approved-labels-title" className="text-sm font-black text-slate-900">Asset Labels</h2>
-              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">Print the current label once. Reprints need a reason and create a replacement barcode. Returned labels stay here as read-only history and cannot be printed.</p>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">Labels are grouped by requester and issuance. Open every ready barcode in one batch; reprints create a replacement barcode.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {toPrintCount > 0 && (
@@ -876,7 +1018,104 @@ export default function MainIssuance() {
               ))}
             </div>
           </div>
-          <div className="max-h-[42vh] overflow-auto border-t border-slate-100">
+          <div className="max-h-[42vh] overflow-y-auto border-t border-slate-100 bg-slate-50 p-3 sm:p-4">
+            {isLoadingApprovedLabels && <p role="status" className="rounded-xl bg-white px-4 py-8 text-center text-xs font-semibold text-slate-400">Loading label groups...</p>}
+            {!isLoadingApprovedLabels && visibleUnitLabelGroups.length > 0 && (
+              <div className="space-y-3">
+                {visibleUnitLabelGroups.map((group) => {
+                  const printableLabels = group.labels.filter((label) => label.needsPrinting)
+                  const returnedLabels = group.labels.filter((label) => label.isReturned)
+                  const groupReference = group.purchaseRequisitionReference
+                    ? `Request ${group.purchaseRequisitionReference}`
+                    : group.batchId
+                      ? `Issuance #${group.batchId}`
+                      : 'Direct issuance'
+                  return (
+                    <article key={group.id} className={`rounded-xl border bg-white p-3.5 shadow-sm ${printableLabels.length > 0 ? 'border-amber-200' : 'border-slate-200'}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-extrabold text-slate-900">{group.holderName}</p>
+                          <p className="mt-0.5 text-xs font-semibold text-slate-600">
+                            {group.holderCode} &middot; {groupReference}{group.issuedAt ? ` \u00b7 Issued ${formatLabelDate(group.issuedAt)}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[0.65rem] font-extrabold text-slate-700">{group.labels.length} label{group.labels.length === 1 ? '' : 's'}</span>
+                          {printableLabels.length > 0 ? (
+                            <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[0.65rem] font-extrabold text-amber-900">{printableLabels.length} ready to print</span>
+                          ) : returnedLabels.length === group.labels.length ? (
+                            <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[0.65rem] font-extrabold text-slate-600">Returned history</span>
+                          ) : (
+                            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[0.65rem] font-extrabold text-emerald-800">All printed</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {group.labels.map((label) => (
+                          <span key={label.tagCode} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[0.65rem] font-semibold text-slate-700">
+                            {label.itemName} &middot; Unit {label.unitNumber}
+                          </span>
+                        ))}
+                      </div>
+
+                      {printableLabels.length > 0 && (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2.5">
+                          <p className="text-xs font-semibold text-amber-950">Open every ready label in one preview, then print them together.</p>
+                          <button
+                            type="button"
+                            disabled={labelsToPrint.length > 0 || isRecordingPrint}
+                            onClick={() => previewBarcodeLabels(printableLabels.map(toPrintableBarcodeLabel))}
+                            className="shrink-0 rounded-lg bg-emerald-700 px-3 py-2 text-[0.68rem] font-extrabold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            View {printableLabels.length} barcode label{printableLabels.length === 1 ? '' : 's'}
+                          </button>
+                        </div>
+                      )}
+
+                      <details className="mt-3 border-t border-slate-100 pt-3">
+                        <summary className="cursor-pointer text-xs font-extrabold text-blue-700 marker:text-blue-700">View individual label records</summary>
+                        <div className="mt-3 space-y-2">
+                          {group.labels.map((label) => (
+                            <div key={label.tagCode} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-extrabold text-slate-900">{label.itemName} &middot; Unit {label.unitNumber}</p>
+                                <p className="mt-0.5 break-all font-mono text-[0.65rem] font-bold text-slate-500">{label.tagCode}</p>
+                                {label.isReturned ? (
+                                  <p className="mt-1 text-[0.65rem] leading-relaxed text-slate-600">Returned {label.returnedAt ? formatLabelDateTime(label.returnedAt) : ''} &middot; {label.returnCondition || 'Condition not recorded'}{label.returnReason ? ` \u00b7 ${label.returnReason}` : ''}</p>
+                                ) : label.needsPrinting ? (
+                                  <p className="mt-1 text-[0.65rem] font-semibold text-amber-800">New &middot; not printed</p>
+                                ) : (
+                                  <p className="mt-1 text-[0.65rem] text-slate-600">Printed {label.labelPrintedAt ? formatLabelDate(label.labelPrintedAt) : ''}{label.labelPrintedBy ? ` by ${label.labelPrintedBy}` : ''}</p>
+                                )}
+                              </div>
+                              {label.isReturned ? (
+                                <span className="text-[0.65rem] font-bold text-slate-400">Details only</span>
+                              ) : label.needsPrinting ? (
+                                <button type="button" disabled={labelsToPrint.length > 0 || isRecordingPrint} onClick={() => previewBarcodeLabel(toPrintableBarcodeLabel(label))} className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-emerald-800 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50">View one label</button>
+                              ) : (
+                                <button type="button" onClick={() => openReprint(label)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-slate-700 transition hover:bg-slate-100">Reprint label</button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+            {!isLoadingApprovedLabels && !approvedLabelsError && visibleUnitLabelGroups.length === 0 && (
+              <p className="rounded-xl bg-white px-4 py-8 text-center text-xs font-semibold text-slate-400">{labelStatusFilter === 'returned' && !returnedUnitLabels.length
+                ? 'No returned asset labels yet. Returned unit details will appear here and stay out of print actions.'
+                : !activeUnitLabels.length
+                  ? 'No per-unit assets are out right now. A label group appears here once an issuance is confirmed.'
+                  : labelStatusFilter === 'toPrint' && !labelSearchText
+                    ? 'All labels are printed. New groups appear here once an issuance is confirmed.'
+                    : 'No label groups match your search or filter.'}</p>
+            )}
+          </div>
+          <div className="hidden max-h-[42vh] overflow-auto border-t border-slate-100">
             <table className="min-w-190 w-full text-left">
               <thead className="sticky top-0 z-10 bg-slate-50 text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">
                 <tr>
@@ -961,6 +1200,7 @@ export default function MainIssuance() {
           </div>}
         </section>
 
+        {purchaseRequisitionIdFromUrl && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3"><p className="text-xs font-extrabold text-indigo-900">Purchase requisition {purchaseRequisitionReference || purchaseRequisitionIdFromUrl}</p><p className="mt-1 text-[0.68rem] text-indigo-800">Only reserved items of one issuance type are selected. Review the quantities and record the handover here.</p>{purchaseRequisitionOtherTypeCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionOtherTypeCount} reserved item record(s) use another issuance type. Return to Purchase Requisitions after this batch to continue.</p>}</div>}
         <form onSubmit={handleSubmit} className="mt-5 grid gap-5 xl:grid-cols-2" aria-label="Issue, lend, or prepare an asset handover">
           <div className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
             <section aria-labelledby="employee-section-title" className="border-b border-slate-200 p-4 sm:p-5">
@@ -1065,13 +1305,15 @@ export default function MainIssuance() {
                 status={stepStatusFor(2, isItemsStepDone)}
                 titleId="items-section-title"
                 title="Choose items"
-                description="Filter available inventory by category and item type."
+                description={isRequisitionIssuance
+                  ? 'Review the reserved inventory for this purchase requisition.'
+                  : 'Direct issuance is available for consumable and reusable quantity stock.'}
               >
                 <div className="flex rounded-xl border border-slate-300 bg-slate-100 p-1" role="group" aria-label="Issuance selection mode">
                   <button
                     type="button"
                     aria-pressed={selectionMode === 'single'}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || Boolean(purchaseRequisitionIdFromUrl)}
                     onClick={() => changeSelectionMode('single')}
                     className={`rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${selectionMode === 'single' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
                   >
@@ -1080,7 +1322,7 @@ export default function MainIssuance() {
                   <button
                     type="button"
                     aria-pressed={selectionMode === 'multiple'}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || Boolean(purchaseRequisitionIdFromUrl)}
                     onClick={() => changeSelectionMode('multiple')}
                     className={`rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${selectionMode === 'multiple' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
                   >
@@ -1088,6 +1330,17 @@ export default function MainIssuance() {
                   </button>
                 </div>
               </StepHeader>
+
+              {!isRequisitionIssuance && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-3">
+                  <p className="text-xs font-semibold leading-relaxed text-blue-900">
+                    Direct issuance is limited to consumable and reusable quantity stock. Per-unit assets must first go through Purchase Requisitions.
+                  </p>
+                  <a href="/gso/purchase-requisitions" className="shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-blue-800 transition hover:bg-blue-100">
+                    Open Purchase Requisitions
+                  </a>
+                </div>
+              )}
 
               <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(11rem,0.55fr)]">
                 <label className="block">
@@ -1120,8 +1373,8 @@ export default function MainIssuance() {
                 </label>
               </div>
 
-              <div className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-4" role="group" aria-label="Filter by inventory type">
-                {inventoryTypeOptions.map((option) => {
+              <div className={`mt-3 grid gap-2 ${isRequisitionIssuance ? 'grid-cols-2 xl:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`} role="group" aria-label="Filter by inventory type">
+                {visibleInventoryTypeOptions.map((option) => {
                   const isActive = inventoryTypeFilter === option.value
                   return (
                     <button
@@ -1160,7 +1413,7 @@ export default function MainIssuance() {
                         key={item.id}
                         type="button"
                         aria-pressed={isSelected}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || Boolean(purchaseRequisitionIdFromUrl)}
                         onClick={() => toggleItem(item)}
                         className={`rounded-xl border p-3 text-left transition disabled:opacity-60 ${isSelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
                       >
@@ -1187,7 +1440,11 @@ export default function MainIssuance() {
                 </div>
               ) : !loadError ? (
                 <p className="mt-3 grid grow basis-80 place-items-center rounded-xl bg-slate-50 px-4 text-center text-sm font-semibold text-slate-600">
-                  {inventory.length === 0 ? 'No inventory is currently available.' : 'No items match the current search, category, and type filters.'}
+                  {inventory.length === 0
+                    ? isRequisitionIssuance
+                      ? 'No reserved inventory is currently available for this purchase requisition.'
+                      : 'No consumable or reusable quantity stock is currently available for direct issuance.'
+                    : 'No items match the current search, category, and type filters.'}
                 </p>
               ) : null}
               {!isLoading && !loadError && filteredInventory.length > 0 && (
@@ -1252,7 +1509,7 @@ export default function MainIssuance() {
                           <p className="mt-0.5 text-xs font-semibold text-slate-600">{item.itemCode} · {availableUnitConditionSummary(item)} · max {item.availableQuantity} {item.unitOfMeasure}</p>
                           <p className="mt-0.5 text-xs font-bold text-blue-700">
                             {item.trackingMode === 'individual'
-                              ? 'Per-unit asset · awaiting handover acknowledgment'
+                              ? 'Per-unit asset · barcode labels ready for pickup'
                               : item.issueBehavior === 'consumable'
                                 ? 'Consumable stock · issued immediately'
                                 : 'Reusable stock · face-to-face borrowing'}
@@ -1334,14 +1591,14 @@ export default function MainIssuance() {
                   disabled={isLoading || isSubmitting || !selectedEmployee || selectedItems.length === 0 || hasInvalidQuantity || hasMixedItemTypes || hasInvalidBorrowDetails || Boolean(loadError)}
                   className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700 disabled:shadow-none"
                 >
-                  {isSubmitting ? 'Recording...' : `${selectedItems[0]?.item.trackingMode === 'individual' ? 'Reserve per-unit handover' : isReusableBorrow ? 'Record face-to-face borrowing' : 'Issue consumable stock'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
+                  {isSubmitting ? 'Recording...' : `${selectedItems[0]?.item.trackingMode === 'individual' ? 'Prepare per-unit pickup' : isReusableBorrow ? 'Record face-to-face borrowing' : 'Issue consumable stock'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
                 </button>
                 {nextStepHint ? (
                   <p className="mt-2 text-center text-sm font-bold text-blue-800">{nextStepHint}</p>
                 ) : (
                   <p className="mt-2 text-xs leading-relaxed text-slate-600">
                     {selectedItems[0]?.item.trackingMode === 'individual'
-                      ? 'Custody and barcode activate after receipt acknowledgment.'
+                      ? 'Barcode labels are generated now and the request is ready for pickup. No requester confirmation is needed.'
                       : isReusableBorrow
                         ? 'Stock is reserved now; the borrower can view the schedule in the requester dashboard.'
                         : 'Stock is deducted now; employee approval is not required.'}
@@ -1354,8 +1611,8 @@ export default function MainIssuance() {
               <section role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-extrabold uppercase tracking-wide text-emerald-800">{submittedBatch.items.every((item) => item.trackingMode === 'individual') ? 'Per-unit handover' : submittedBatch.items.every((item) => item.issueBehavior === 'returnable') ? 'Reusable stock borrowing' : 'Consumable distribution'} · {submittedBatch.status}</p>
-                    <h3 className="mt-1 text-sm font-black text-emerald-950">{submittedBatch.status === 'Pending' ? `Reserved for ${submittedBatch.employeeName} · awaiting receipt` : submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'individual') ? `Custody acknowledged by ${submittedBatch.employeeName}` : submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.issueBehavior === 'returnable') ? `Borrowing recorded for ${submittedBatch.employeeName}` : submittedBatch.status === 'Issued' ? `Consumables issued to ${submittedBatch.employeeName}` : `Issuance ${submittedBatch.status.toLowerCase()}`}</h3>
+                    <p className="text-xs font-extrabold uppercase tracking-wide text-emerald-800">{submittedBatch.items.every((item) => item.trackingMode === 'individual') ? 'Per-unit pickup' : submittedBatch.items.every((item) => item.issueBehavior === 'returnable') ? 'Reusable stock borrowing' : 'Consumable distribution'} · {submittedBatch.status}</p>
+                    <h3 className="mt-1 text-sm font-black text-emerald-950">{submittedBatch.status === 'Pending' ? `Reserved for ${submittedBatch.employeeName} · awaiting receipt` : submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'individual') ? `Ready for pickup for ${submittedBatch.employeeName}` : submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.issueBehavior === 'returnable') ? `Borrowing recorded for ${submittedBatch.employeeName}` : submittedBatch.status === 'Issued' ? `Consumables issued to ${submittedBatch.employeeName}` : `Issuance ${submittedBatch.status.toLowerCase()}`}</h3>
                   </div>
                   <button type="button" disabled={isRefreshingBatch} onClick={() => void refreshSubmittedBatch()} className="rounded-lg border border-emerald-400 bg-white px-3 py-2 text-xs font-extrabold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50">
                     {isRefreshingBatch ? 'Checking...' : 'Refresh status'}
@@ -1384,6 +1641,7 @@ export default function MainIssuance() {
                 {submittedBatch.status === 'Pending' && <p className="mt-3 text-xs leading-relaxed text-emerald-900">Naka-reserve ang unit hanggang makumpirma ang aktuwal na handover. {submittedBatch.requesterAccountLinked ? 'Employee: confirm receipt in the Requester account.' : 'GSO: record the signed receipt or authorized handover after pickup.'} Email {submittedBatch.emailSent ? 'sent' : 'unavailable, issuance recorded'}. Batch #{submittedBatch.id}</p>}
                 {submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'returnable') && <p className="mt-3 text-xs leading-relaxed text-emerald-900">Borrowing saved and stock reserved until return. {submittedBatch.requesterAccountLinked ? 'A notice is available in the employee’s requester dashboard.' : 'No verified requester account is linked; use the employee email for the schedule.'} Email {submittedBatch.emailSent ? 'sent' : 'unavailable'}.</p>}
                 {submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'consumable') && <p className="mt-3 text-xs leading-relaxed text-emerald-900">Stock deducted and account updated. No employee action or unit barcode is needed. Email {submittedBatch.emailSent ? 'sent' : 'unavailable, account updated'}.</p>}
+                {submittedBatch.status === 'Issued' && submittedBatch.items.every((item) => item.trackingMode === 'individual') && <p className="mt-3 text-xs leading-relaxed text-emerald-900">Barcode labels are ready. Ask {submittedBatch.employeeName} to coordinate pickup with GSO; no requester confirmation is needed. Email {submittedBatch.emailSent ? 'sent' : 'unavailable, pickup record updated'}.</p>}
                 {submittedBatch.status === 'Pending' && !submittedBatch.requesterAccountLinked && submittedBatch.items.every((item) => item.trackingMode === 'individual') && <fieldset className="mt-4 rounded-xl border border-blue-200 bg-white p-3.5">
                   <legend className="px-1 text-xs font-extrabold uppercase tracking-wide text-blue-900">Record signed handover</legend>
                   <p className="text-xs leading-relaxed text-slate-600">Use after the employee or authorized recipient physically receives the unit.</p>
@@ -1399,6 +1657,10 @@ export default function MainIssuance() {
                 {generatedLabels.length > 0 && <>
                   <p className="mt-3 text-xs font-bold text-emerald-950">{generatedLabels.length} unique per-unit barcode label{generatedLabels.length === 1 ? '' : 's'} linked to this issuance.</p>
                   <p className="mt-1 text-xs leading-relaxed text-emerald-900">The full AST tag stays printed below the barcode. The barcode carries its shorter unique suffix so the bars can print wider; the GSO return scanner resolves it to the full tag automatically.</p>
+                  {printableSubmittedBarcodeLabels.length > 0 && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-white/80 px-3 py-2.5">
+                    <p className="text-xs font-semibold text-emerald-950">{printableSubmittedBarcodeLabels.length} label{printableSubmittedBarcodeLabels.length === 1 ? '' : 's'} ready to print for this issuance.</p>
+                    <button type="button" disabled={!hasCompleteLabelSet || labelsToPrint.length > 0 || isRecordingPrint} onClick={() => previewBarcodeLabels(printableSubmittedBarcodeLabels)} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">View all barcode labels</button>
+                  </div>}
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {submittedBarcodeLabels.map((label) => <article key={label.tagCode} className="asset-barcode-label rounded-lg border border-emerald-200 bg-white p-3 text-center">
                       <div className="barcode-preview"><BarcodeSvg value={label.tagCode} /></div>
@@ -1411,11 +1673,11 @@ export default function MainIssuance() {
                           <span className="mt-0.5 block text-[0.65rem] font-semibold text-slate-500">Need another? Use Reprint in Asset Labels.</span>
                         </p>
                       ) : (
-                        <button type="button" disabled={!hasCompleteLabelSet} onClick={() => previewBarcodeLabel(label)} className="mt-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">Print label</button>
+                        <button type="button" disabled={!hasCompleteLabelSet || labelsToPrint.length > 0 || isRecordingPrint} onClick={() => previewBarcodeLabel(label)} className="mt-2 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">View one label</button>
                       )}
                     </article>)}
                   </div>
-                  <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-relaxed text-emerald-950">Bawat label ay may sariling preview. Sa Windows print dialog para sa CLabel-CT221B, piliin ang driver Paper size na 50*30 (huwag 40*60) at Layout na Landscape. Itakda ang Scale sa Actual size (100%), Margins: None, Headers and footers: Off, at Copies: 1. Suriin ang preview bago pindutin ang Print.</div>
+                  <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs leading-relaxed text-emerald-950">Use View all barcode labels to preview the whole issuance together. Each 50 x 30 mm label prints on its own page; check the preview before printing.</div>
                 </>}
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button type="button" onClick={clearSubmittedBatch} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800">
@@ -1497,41 +1759,50 @@ export default function MainIssuance() {
           </section>
         </div>
       )}
-      {labelToPrint && !shouldOpenPrintDialog && (
+      {labelsToPrint.length > 0 && !shouldOpenPrintDialog && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-slate-950/70 p-4" role="dialog" aria-modal="true" aria-labelledby="barcode-preview-title">
-          <section className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+          <section className="w-full max-w-4xl rounded-2xl bg-white p-5 shadow-2xl">
             <div className="flex items-center justify-between gap-3">
-              <h2 id="barcode-preview-title" className="text-sm font-black text-slate-900">Barcode label preview</h2>
+              <div>
+                <h2 id="barcode-preview-title" className="text-sm font-black text-slate-900">Barcode label preview</h2>
+                <p className="mt-0.5 text-xs font-semibold text-slate-500">{labelsToPrint.length} label{labelsToPrint.length === 1 ? '' : 's'} ready to print</p>
+              </div>
               <button type="button" disabled={isRecordingPrint} onClick={closeLabelPreview} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
             </div>
-            <div className="my-4 overflow-auto rounded-xl bg-slate-100 p-4">
-              <article className="mx-auto flex h-[30mm] w-[50mm] box-border flex-col items-center justify-start gap-[0.2mm] bg-white px-[0.5mm] pb-0 pt-[0.3mm] text-center shadow-md">
-                <div className="w-[49mm] flex-none"><BarcodeSvg value={labelToPrint.tagCode} height={64} className="mx-auto h-auto w-full max-h-[19mm] max-w-full object-contain" /></div>
-                <p className="max-w-[49mm] flex-none whitespace-nowrap text-[4mm] font-extrabold leading-none text-black">{labelToPrint.tagCode}</p>
-                <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">PROPERTY OF DYCI-DO NOT REMOVE</p>
-                <p className="label-item-details flex-none whitespace-nowrap text-[1.7mm] font-bold leading-none text-black"><span className="label-item-name inline-block max-w-[32mm] truncate align-bottom">{labelToPrint.itemName}</span> - {labelToPrint.itemCode}</p>
-              </article>
+            <div className="my-4 max-h-[56vh] overflow-auto rounded-xl bg-slate-100 p-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {labelsToPrint.map((label) => (
+                  <article key={label.tagCode} className="mx-auto flex h-[30mm] w-[50mm] box-border flex-col items-center justify-start gap-[0.2mm] bg-white px-[0.5mm] pb-0 pt-[0.3mm] text-center shadow-md">
+                    <div className="w-[49mm] flex-none"><BarcodeSvg value={label.tagCode} height={64} className="mx-auto h-auto w-full max-h-[19mm] max-w-full object-contain" /></div>
+                    <p className="max-w-[49mm] flex-none whitespace-nowrap text-[4mm] font-extrabold leading-none text-black">{label.tagCode}</p>
+                    <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">PROPERTY OF DYCI-DO NOT REMOVE</p>
+                    <p className="label-item-details flex-none whitespace-nowrap text-[1.7mm] font-bold leading-none text-black"><span className="label-item-name inline-block max-w-[32mm] truncate align-bottom">{label.itemName}</span> - {label.itemCode}</p>
+                  </article>
+                ))}
+              </div>
             </div>
-            <p className="text-xs leading-relaxed text-slate-600">Isang label lang ang ipi-preview sa sukat na 50 x 30 mm. Sa Windows print dialog para sa CLabel-CT221B, piliin ang driver Paper size na 50*30 (huwag 40*60) at Layout na Landscape. Piliin ang Actual size (100%), Margins: None, Headers and footers: Off, at Copies: 1. Ikaw ang pipindot ng Print pagkatapos suriin ang preview.</p>
-            <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">Each label prints once. Make sure the printer is ready; printing it again later gives the unit a new barcode.</p>
+            <p className="text-xs leading-relaxed text-slate-600">Each barcode label is 50 x 30 mm and prints on its own page. In the Windows dialog for CLabel-CT221B, use Paper size 50*30, Landscape, Actual size (100%), no margins, headers, or footers, and one copy.</p>
+            <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">All {labelsToPrint.length} label{labelsToPrint.length === 1 ? '' : 's'} will be marked as printed before the print dialog opens. Check that the printer is ready; a later replacement requires Reprint and creates a new barcode.</p>
             {printError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{printError}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" disabled={isRecordingPrint} onClick={closeLabelPreview} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
-              <button type="button" disabled={isRecordingPrint} onClick={() => void handleConfirmPrint()} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{isRecordingPrint ? 'Saving…' : 'Print label'}</button>
+              <button type="button" disabled={isRecordingPrint} onClick={() => void handleConfirmPrint()} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-extrabold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{isRecordingPrint ? 'Saving…' : `Print ${labelsToPrint.length} label${labelsToPrint.length === 1 ? '' : 's'}`}</button>
             </div>
           </section>
         </div>
       )}
 
     </GsoPageFrame>
-    {labelToPrint && createPortal(
+    {labelsToPrint.length > 0 && createPortal(
       <div id="asset-barcode-labels" aria-hidden="true" className="fixed left-[-10000px] top-0">
-        <article className="asset-barcode-label bg-white text-center">
-          <div className="barcode-preview"><BarcodeSvg value={labelToPrint.tagCode} height={64} /></div>
-          <p className="label-barcode-value">{labelToPrint.tagCode}</p>
-          <p className="label-removal-warning">PROPERTY OF DYCI-DO NOT REMOVE</p>
-          <p className="label-item-details"><span className="label-item-name">{labelToPrint.itemName}</span> - {labelToPrint.itemCode}</p>
-        </article>
+        {labelsToPrint.map((label) => (
+          <article key={label.tagCode} className="asset-barcode-label bg-white text-center">
+            <div className="barcode-preview"><BarcodeSvg value={label.tagCode} height={64} /></div>
+            <p className="label-barcode-value">{label.tagCode}</p>
+            <p className="label-removal-warning">PROPERTY OF DYCI-DO NOT REMOVE</p>
+            <p className="label-item-details"><span className="label-item-name">{label.itemName}</span> - {label.itemCode}</p>
+          </article>
+        ))}
       </div>,
       document.body,
     )}
