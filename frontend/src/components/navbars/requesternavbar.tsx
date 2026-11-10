@@ -48,7 +48,7 @@ export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { cur
       <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
       <nav className="mt-3 space-y-1.5" aria-label="Primary navigation">
         {navigation.map((item) => {
-          const active = currentPage === item.name || (item.name === 'My Requests' && currentPath.startsWith('/requester/requests/'))
+          const active = currentPage === item.name || (item.name === 'My Requests' && currentPath.startsWith('/requester/requests/') && currentPath !== '/requester/requests/new')
           return <a key={item.name} href={item.href} onClick={onClose} aria-current={active ? 'page' : undefined} className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-bold transition ${active ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35' : 'text-slate-300 hover:bg-white/8 hover:text-white'}`}>
             <Icon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${active ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} /><span className="flex-1">{item.label}</span>
           </a>

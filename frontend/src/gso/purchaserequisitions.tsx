@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import type { PurchaseRequisitionLine, PurchaseRequisitionStockCheck, ServiceRequest, StaffRoute } from '../requesters/requesterApi'
 import { formatDate, formatDateTime } from '../requesters/requesterrequestutils'
-import { DeliveryChecklist } from './deliveryLink'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
+import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
 import {
   listAwaitingDeliveries,
   listStaffPurchaseRequisitions,
@@ -28,14 +28,11 @@ import {
 } from './requisitionFlow'
 import { Banner, DeliveryRecords, EmptyState, HistoryList, LineStatusBadge, QuantityChips, RequestSummary, RoutePill, fieldInput, fieldLabel } from './requisitionParts'
 
-type Tab = 'review' | 'link' | 'issue' | 'waiting'
+type Tab = 'review' | 'waiting'
 type StepStatus = 'current' | 'upcoming' | 'done'
 
-// `link` is a worklist of items, not of requests: bought items already in Item Master Data that requests are waiting for.
 const TABS: Record<Tab, { label: string; hint: string; empty: string; unit: string }> = {
   review: { label: 'To check', hint: 'New requests. Check each item, then confirm its route.', empty: 'No new requests to check.', unit: 'request' },
-  link: { label: 'Ready to link', hint: 'Bought items are in Item Master Data. Link them to the requests waiting for them, many at once.', empty: 'Nothing is ready to link.', unit: 'item' },
-  issue: { label: 'Ready to issue', hint: 'Stock is reserved. Hand it over in Main Issuance.', empty: 'Nothing is waiting for issuance.', unit: 'request' },
   waiting: { label: 'Waiting', hint: 'With the GSO Head or the requester, or approved for purchase while you buy the items and wait for the delivery.', empty: 'Nothing is waiting.', unit: 'request' },
 }
 const TAB_ORDER = Object.keys(TABS) as Tab[]
@@ -75,7 +72,7 @@ function WorkflowStepHeader({ step, status, titleId, title, description, childre
 }
 
 function QueueStageSelector({ active, counts, onChange }: { active: Tab; counts: Record<Tab, number>; onChange: (tab: Tab) => void }) {
-  return <div className="grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="Filter requisition queue">
+  return <div className="grid grid-cols-2 gap-2 lg:grid-cols-2" role="group" aria-label="Filter requisition queue">
     {TAB_ORDER.map((key) => {
       const selected = key === active
       return <button key={key} type="button" aria-pressed={selected} onClick={() => onChange(key)} className={`rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}>
@@ -89,11 +86,10 @@ function QueueStageSelector({ active, counts, onChange }: { active: Tab; counts:
 function tabsFor(request: ServiceRequest): Tab[] {
   const tabs: Tab[] = []
   if (request.status === 'Submitted' && countLines(request, ['WAITING_STAFF_REVIEW'])) tabs.push('review')
-  if (countLines(request, ISSUABLE_STATUSES)) tabs.push('issue')
   if (deliveryOpen(request) && linesOf(request).some(canRecordDelivery)) tabs.push('waiting')
   // Once GSO has prepared every per-unit asset, the requisition leaves this
   // checking workspace. Its pickup status and barcode labels live in Main Issuance.
-  if (!tabs.length && !['Completed', 'Rejected', 'Ready for Pickup'].includes(request.status)) tabs.push('waiting')
+  if (!tabs.length && !['Completed', 'Rejected', 'Ready for Pickup'].includes(request.status) && countLines(request, ISSUABLE_STATUSES) === 0) tabs.push('waiting')
   return tabs
 }
 
@@ -101,7 +97,7 @@ function tabsFor(request: ServiceRequest): Tab[] {
 function waitingOn(request: ServiceRequest) {
   if (request.status === 'Under Review') return { label: 'With GSO Head', tone: 'bg-amber-50 text-amber-800', detail: `The GSO Head is deciding ${countLines(request, ['WAITING_GSO_HEAD'])} item(s). Approved stock comes back to "Ready to issue".` }
   if (request.status === 'Needs Information') return { label: 'With requester', tone: 'bg-amber-50 text-amber-800', detail: 'Waiting for the requester to answer. Their reply brings the request back to "To check".' }
-  if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `The GSO Head sent the purchase to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Buy the items, add them in Item Master Data, then link the delivery.` }
+  if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `The GSO Head sent the purchase to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Buy the items, add them in Item Master Data, then record the delivery here.` }
   if (FINANCE_STATUSES.includes(request.status)) return { label: 'Purchase approved', tone: 'bg-indigo-50 text-indigo-700', detail: 'The GSO Head approved the purchase and will send it to Finance. You can buy the items after that.' }
   if (request.status === 'Completed') return { label: 'Completed', tone: 'bg-slate-100 text-slate-600', detail: 'Every approved item was issued.' }
   if (request.status === 'Rejected') return { label: 'Declined', tone: 'bg-rose-50 text-rose-700', detail: 'The GSO Head declined every item.' }
@@ -110,7 +106,6 @@ function waitingOn(request: ServiceRequest) {
 
 function chipFor(request: ServiceRequest, tab: Tab) {
   if (tab === 'review') return { label: `${countLines(request, ['WAITING_STAFF_REVIEW'])} to check`, tone: 'bg-blue-50 text-blue-700' }
-  if (tab === 'issue') return { label: `${countLines(request, ISSUABLE_STATUSES)} to issue`, tone: 'bg-emerald-50 text-emerald-700' }
   if (deliveryOpen(request) && linesOf(request).some(canRecordDelivery)) return { label: 'Awaiting delivery', tone: 'bg-indigo-50 text-indigo-700' }
   return waitingOn(request)
 }
@@ -217,15 +212,14 @@ function recentReceiptReference(item: InventoryItemRecord) {
 }
 
 // After the GSO Head sends the purchase to Finance and GSO Staff buy the item: put it in Item Master Data,
-// then link what arrived to this requisition item so it can be issued. (Several requests at once: the "Ready to link" tab.)
-function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRefreshInventory, onOpenLinkTab, onReceived }: {
+// then record what arrived on this requisition item so it can be issued.
+function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRefreshInventory, onReceived }: {
   request: ServiceRequest
   line: PurchaseRequisitionLine
   inventory: InventoryItemRecord[]
   refreshing: boolean
   similarOffer?: AwaitingDeliveryLine
   onRefreshInventory: () => void
-  onOpenLinkTab: () => void
   onReceived: (message: string) => void
 }) {
   const [itemId, setItemId] = useState('')
@@ -300,10 +294,7 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
         <div className="min-w-0 flex-1">
           <p className="text-xs font-extrabold text-slate-900">Link what arrived to this request</p>
           {matches.length === 0 && <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">No “{line.itemName}” with available stock in Item Master Data yet. Finish step 1, then come back.</p>}
-          {matches.length === 0 && similarOffer && <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
-            <p className="min-w-0 text-xs leading-relaxed text-blue-900">Item Master Data has a similar item, <span className="font-extrabold">{similarOffer.candidates[0]?.name}</span>. Confirm it is the same in “Ready to link”.</p>
-            <button type="button" onClick={onOpenLinkTab} className="shrink-0 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white transition hover:bg-blue-700">Open Ready to link</button>
-          </div>}
+          {matches.length === 0 && similarOffer && <p className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-900">Item Master Data has a similar item, <span className="font-extrabold">{similarOffer.candidates[0]?.name}</span>. Check the item details and refresh the selector above after confirming the correct stock record.</p>}
           <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
             <label className="block sm:col-span-2"><span className={fieldLabel}>Item in Item Master Data</span>
               <select value={itemId} onChange={(event) => chooseItem(event.target.value)} disabled={matches.length === 0} className={`${fieldInput} disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400`}>
@@ -330,28 +321,9 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
   </section>
 }
 
-function IssuePanel({ request }: { request: ServiceRequest }) {
-  const issueLines = linesOf(request).filter((line) => ISSUABLE_STATUSES.includes(line.routeStatus))
-  const pending = issueLines.find((line) => line.routeStatus === 'HANDOVER_PENDING' && line.pendingBatchId)
-  const employeeCode = formText(request.formData.requesterEmployeeCode)
-  const href = pending?.pendingBatchId
-    ? `/gso/main-issuance?batchId=${encodeURIComponent(pending.pendingBatchId)}`
-    : employeeCode
-      ? `/gso/main-issuance?employeeCode=${encodeURIComponent(employeeCode)}&purchaseRequisitionId=${encodeURIComponent(request.id)}`
-      : ''
-
-  return <section className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4" aria-label="Main Issuance handover">
-    <p className="text-sm font-extrabold text-emerald-950">{issueLines.length} item(s) ready in Main Issuance</p>
-    <p className="mt-1 text-xs leading-relaxed text-emerald-800">Open Main Issuance to complete the handover for this request.</p>
-    {href ? <a href={href} className="mt-3 inline-flex rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-emerald-800">{pending ? 'Record pending handover' : 'Open Main Issuance'}</a>
-      : <p className="mt-3 text-[0.65rem] font-semibold text-amber-800">No employee code is linked to this request, so Main Issuance cannot open it.</p>}
-  </section>
-}
-
 function routedMessage(request: ServiceRequest) {
-  const ready = countLines(request, ['READY_FOR_STAFF'])
   const toHead = countLines(request, ['WAITING_GSO_HEAD'])
-  return `${request.referenceNo} routed. ${[ready && `${ready} item(s) moved to "Ready to issue"`, toHead && `${toHead} item(s) sent to the GSO Head`].filter(Boolean).join('; ')}.`
+  return `${request.referenceNo} routed. ${toHead ? `${toHead} item(s) sent to the GSO Head.` : 'Approved stock is now available in Main Issuance.'}`
 }
 
 function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest; onSaved: (message: string) => void; onRefresh: () => void }) {
@@ -449,6 +421,7 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
   </section>
 }
 
+/* Legacy bulk delivery panel removed from the visible requisition workflow.
 // Bought items already in Item Master Data, with the requests waiting for them: check the requests and link them all at once.
 function ReadyToLinkPanel({ lines, loading, onLinked, onRefresh }: {
   lines: AwaitingDeliveryLine[]
@@ -483,6 +456,7 @@ function ReadyToLinkPanel({ lines, loading, onLinked, onRefresh }: {
     </div>
   </section>
 }
+*/
 
 const linkedRequestId = new URLSearchParams(window.location.search).get('request') || ''
 
@@ -499,7 +473,6 @@ export default function GsoPurchaseRequisitions() {
   const [inventory, setInventory] = useState<InventoryItemRecord[]>([])
   const [refreshingInventory, setRefreshingInventory] = useState(false)
   const [awaiting, setAwaiting] = useState<AwaitingDeliveryLine[]>([])
-  const [awaitingLoading, setAwaitingLoading] = useState(true)
 
   // State is set in promise callbacks, so the first load can start from an effect.
   const loadQueue = useCallback(() => listStaffPurchaseRequisitions()
@@ -513,11 +486,13 @@ export default function GsoPurchaseRequisitions() {
     .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Unable to load purchase requisitions.'))
     .finally(() => setLoading(false)), [setChosenTab])
 
-  // Items GSO Staff can link a delivery to now: the purchase is with Finance and Item Master Data has stock for it.
-  const loadAwaiting = useCallback(() => listAwaitingDeliveries()
-    .then(setAwaiting)
-    .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Unable to check Item Master Data for deliveries.'))
-    .finally(() => setAwaitingLoading(false)), [])
+  // Find possible matching stock for delivery records shown inside the request details.
+  const loadAwaiting = useCallback(
+    () => listAwaitingDeliveries()
+      .then(setAwaiting)
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Unable to check Item Master Data for deliveries.')),
+    [],
+  )
 
   useEffect(() => { void loadQueue() }, [loadQueue])
   useEffect(() => { void loadAwaiting() }, [loadAwaiting])
@@ -537,10 +512,10 @@ export default function GsoPurchaseRequisitions() {
   }
 
   const counts = useMemo(() => {
-    const totals: Record<Tab, number> = { review: 0, link: awaiting.length, issue: 0, waiting: 0 }
+    const totals: Record<Tab, number> = { review: 0, waiting: 0 }
     for (const request of requests) for (const tab of tabsFor(request)) totals[tab] += 1
     return totals
-  }, [requests, awaiting])
+  }, [requests])
   // Open the first tab that needs action until the staff member picks one.
   const tab: Tab = chosenTab ?? TAB_ORDER.find((key) => counts[key] > 0) ?? 'review'
   const visible = useMemo(() => {
@@ -558,7 +533,7 @@ export default function GsoPurchaseRequisitions() {
   const deliveryVisible = Boolean(selected && deliveryOpen(selected) && linesOf(selected).some(canRecordDelivery))
 
   // Coming back from the Item Master Data tab shows the new or restocked item without a manual refresh.
-  const watchesInventory = deliveryVisible || tab === 'link'
+  const watchesInventory = deliveryVisible
   useEffect(() => {
     if (!watchesInventory) return
     const reload = () => {
@@ -581,7 +556,7 @@ export default function GsoPurchaseRequisitions() {
 
   async function undoDelivery(request: ServiceRequest, receiptId: string) {
     await undoPurchaseDelivery(request.id, receiptId)
-    await afterChange(`Delivery undone for ${request.referenceNo}. The item is waiting for purchase again; link it when it is ready.`)
+    await afterChange(`Delivery undone for ${request.referenceNo}. The item is waiting for purchase again; record it here when it is ready.`)
   }
 
   return <GsoPageFrame activePage="Purchase Requisitions" searchPlaceholder="Search reference, requester, item...">
@@ -592,10 +567,7 @@ export default function GsoPurchaseRequisitions() {
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff checks first</span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Purchase Requisitions</h1>
             <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">Check stock, then route each item.</p>
-            <nav className="mt-5 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Purchase requisition shortcuts">
-              <button type="button" aria-pressed={tab === 'review'} onClick={() => chooseTab('review')} className={`rounded-xl border px-4 py-2 text-xs font-extrabold transition ${tab === 'review' ? 'border-white bg-white text-blue-950 shadow-md' : 'border-white/15 bg-white/5 text-blue-100 hover:bg-white/12'}`}>To check</button>
-              <button type="button" aria-pressed={tab === 'waiting'} onClick={() => chooseTab('waiting')} className={`rounded-xl border px-4 py-2 text-xs font-extrabold transition ${tab === 'waiting' ? 'border-white bg-white text-blue-950 shadow-md' : 'border-white/15 bg-white/5 text-blue-100 hover:bg-white/12'}`}>With GSO Head</button>
-            </nav>
+            <RequisitionIssuanceShortcuts active="requisitions" />
           </div>
         </section>
 
@@ -606,9 +578,7 @@ export default function GsoPurchaseRequisitions() {
           {notice && <Banner tone="success">{notice}</Banner>}
         </section>
 
-        {tab === 'link' && <ReadyToLinkPanel lines={awaiting} loading={awaitingLoading} onLinked={(message) => void afterChange(message)} onRefresh={() => { setAwaitingLoading(true); void loadAwaiting() }} />}
-
-        {tab !== 'link' && <section className="grid gap-5 xl:grid-cols-2" aria-label="Purchase requisition workflow">
+        <section className="grid gap-5 xl:grid-cols-2" aria-label="Purchase requisition workflow">
           <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
             <div className="p-4 sm:p-5">
               <WorkflowStepHeader
@@ -659,18 +629,17 @@ export default function GsoPurchaseRequisitions() {
                   <div className="mt-4 flex items-end justify-between gap-2"><h4 className="text-xs font-extrabold text-slate-800">{selectedTabs.includes('review') ? 'Other items in this request' : 'Requested items'}</h4><span className="text-[0.62rem] font-semibold text-slate-400">Each item follows its own route</span></div>
                   <div className="mt-2 space-y-2">
                     {otherLines.map((line) => <LineCard key={line.id} line={line} onUndo={(receiptId) => undoDelivery(selected, receiptId)}>
-                      {deliveryOpen(selected) && canRecordDelivery(line) && <DeliveryForm request={selected} line={line} inventory={inventory} refreshing={refreshingInventory} similarOffer={awaiting.find((entry) => entry.lineId === line.id && entry.candidates.every((candidate) => candidate.match === 'SIMILAR'))} onRefreshInventory={() => void refreshInventory()} onOpenLinkTab={() => chooseTab('link')} onReceived={(message) => void afterChange(message)} />}
+                      {deliveryOpen(selected) && canRecordDelivery(line) && <DeliveryForm request={selected} line={line} inventory={inventory} refreshing={refreshingInventory} similarOffer={awaiting.find((entry) => entry.lineId === line.id && entry.candidates.every((candidate) => candidate.match === 'SIMILAR'))} onRefreshInventory={() => void refreshInventory()} onReceived={(message) => void afterChange(message)} />}
                     </LineCard>)}
                   </div>
                 </>}
 
-                {selectedTabs.includes('issue') && <IssuePanel request={selected} />}
                 {selectedTabs.includes('waiting') && !(deliveryOpen(selected) && linesOf(selected).some(canRecordDelivery)) && <div className="mt-4"><Banner tone={selected.status === 'Rejected' ? 'warning' : 'info'}>{waitingOn(selected).detail}</Banner></div>}
 
                 <HistoryList request={selected} />
               </>}
           </section>
-        </section>}
+        </section>
       </div>
   </GsoPageFrame>
 }

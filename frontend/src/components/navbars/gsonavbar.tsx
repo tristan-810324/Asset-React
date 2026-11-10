@@ -7,7 +7,7 @@ export type GsoNavigationItem =
   | 'Overview'
   | 'Item Master Data'
   | 'Employees & Requesters'
-  | 'Issuance & Borrowing'
+  | 'Requisition and Issuances'
   | 'Main Issuance'
   | 'Purchase Requisitions'
   | 'Request & Borrowing'
@@ -17,13 +17,13 @@ export type GsoNavigationItem =
   | 'Repair & Maintenance'
   | 'Notifications'
 
-type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Issuance & Borrowing' | 'Returns & Records'>
+type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Returns & Records'>
 type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
 
-type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string }
+type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string; activePages?: GsoNavigationItem[] }
 type NavigationGroup = {
   kind: 'group'
-  name: 'Issuance & Borrowing' | 'Returns & Records'
+  name: 'Returns & Records'
   icon: NavigationIconName
   href: string
   activePages: GsoNavigationItem[]
@@ -144,14 +144,7 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Overview', icon: 'grid', href: '/gso' },
   { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
-  { kind: 'link', name: 'Purchase Requisitions', icon: 'clipboard-check', href: '/gso/purchase-requisitions' },
-  {
-    kind: 'group',
-    name: 'Issuance & Borrowing',
-    icon: 'clipboard-plus',
-    href: '/gso/main-issuance',
-    activePages: ['Main Issuance', 'Request & Borrowing'],
-  },
+  { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/main-issuance', activePages: ['Purchase Requisitions', 'Main Issuance'] },
   {
     kind: 'group',
     name: 'Returns & Records',
@@ -206,7 +199,7 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoN
           {navigation.map((item) => {
             const isActive = item.kind === 'group'
               ? item.activePages.includes(currentPage)
-              : currentPage === item.name
+              : item.activePages?.includes(currentPage) ?? currentPage === item.name
             return (
               <a
                 key={item.name}

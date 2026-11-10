@@ -16,17 +16,19 @@ import {
 } from './issuancesApi'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
-import { getStaffPurchaseRequisition } from './purchaseRequisitionsApi'
+import { getStaffPurchaseRequisition, listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
+import { linesOf, formText } from './requisitionFlow'
+import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
+import type { ServiceRequest } from '../requesters/requesterApi'
 
-type SelectionMode = 'single' | 'multiple'
-type InventoryTypeFilter = 'all' | 'individual' | 'consumable' | 'reusable'
+type InventoryFlow = 'individual' | 'consumable' | 'reusable'
+type InventoryTypeFilter = 'all' | 'individual' | 'consumable'
 
 const INVENTORY_PAGE_SIZE = 50
 const inventoryTypeOptions: Array<{ value: InventoryTypeFilter; label: string }> = [
-  { value: 'all', label: 'All available items' },
+  { value: 'all', label: 'All requisition items' },
   { value: 'individual', label: 'Per-unit assets' },
   { value: 'consumable', label: 'Consumable stock' },
-  { value: 'reusable', label: 'Reusable quantity stock' },
 ]
 
 type SubmittedBatch = {
@@ -110,10 +112,10 @@ function employeeName(employee: EmployeeProfile) {
 }
 
 function isReusableQuantityStock(item: InventoryItemRecord) {
-  return item.trackingMode === 'quantity' && item.issueBehavior === 'returnable'
+  return item.trackingMode === 'quantity' && item.issueBehavior !== 'consumable'
 }
 
-function inventoryTypeFor(item: InventoryItemRecord): Exclude<InventoryTypeFilter, 'all'> {
+function inventoryTypeFor(item: InventoryItemRecord): InventoryFlow {
   if (item.trackingMode === 'individual') return 'individual'
   return item.issueBehavior === 'consumable' ? 'consumable' : 'reusable'
 }
@@ -140,10 +142,6 @@ function isCompactAssetTagCode(tagCode: string) {
   return /^AST-[A-Z0-9]{13}$/i.test(tagCode)
 }
 
-function localDateTimeInputValue(date = new Date()) {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
-}
-
 function formatBorrowDateTime(value: string) {
   const isLocalDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)
   const date = new Date(isLocalDateTime ? `${value}:00+08:00` : `${value}T00:00:00+08:00`)
@@ -158,6 +156,13 @@ function barcodePayload(tagCode: string) {
   // The GSO scan API restores AST- for these compact unique tag suffixes.
   const match = tagCode.match(/^AST-([A-Z0-9]{13}|[A-F0-9]{20})$/i)
   return match?.[1] ?? tagCode
+}
+
+const MAIN_ISSUANCE_READY_STATUSES = ['READY_FOR_STAFF', 'PARTIAL_STOCK', 'PARTIALLY_ISSUED']
+
+function isReadyPurchaseRequisition(request: ServiceRequest) {
+  return request.requestType === 'PURCHASE_REQUISITION'
+    && linesOf(request).some((line) => MAIN_ISSUANCE_READY_STATUSES.includes(line.routeStatus))
 }
 
 function submittedBatchFromDetails(batch: EmployeeIssuanceBatchDetails): SubmittedBatch {
@@ -219,8 +224,9 @@ const stepStyles: Record<StepStatus, { badge: string; label: string; suffix: str
   upcoming: { badge: 'bg-slate-200 text-slate-700', label: 'text-slate-600', suffix: '' },
 }
 
-function StepHeader({ step, status, titleId, title, description, children }: {
-  step: 1 | 2 | 3
+function StepHeader({ step, totalSteps = 3, status, titleId, title, description, children }: {
+  step: number
+  totalSteps?: number
   status: StepStatus
   titleId: string
   title: string
@@ -240,7 +246,7 @@ function StepHeader({ step, status, titleId, title, description, children }: {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div className="min-w-0">
-            <p className={`text-xs font-extrabold uppercase tracking-wide ${styles.label}`}>Step {step} of 3{styles.suffix}</p>
+            <p className={`text-xs font-extrabold uppercase tracking-wide ${styles.label}`}>Step {step} of {totalSteps}{styles.suffix}</p>
             <h2 id={titleId} className="mt-0.5 text-base font-black leading-tight text-slate-900">{title}</h2>
           </div>
           {children}
@@ -252,12 +258,13 @@ function StepHeader({ step, status, titleId, title, description, children }: {
 }
 
 export default function MainIssuance() {
-  const isRequisitionIssuance = Boolean(purchaseRequisitionIdFromUrl)
+  const [selectedPurchaseRequisitionId, setSelectedPurchaseRequisitionId] = useState(purchaseRequisitionIdFromUrl)
+  const [readyRequisitions, setReadyRequisitions] = useState<ServiceRequest[]>([])
+  const isRequisitionIssuance = Boolean(selectedPurchaseRequisitionId)
+  const showRequisitionStep = !batchIdFromUrl && (readyRequisitions.length > 0 || isRequisitionIssuance)
   const visibleInventoryTypeOptions = isRequisitionIssuance
     ? inventoryTypeOptions
-    : inventoryTypeOptions
-      .filter((option) => option.value !== 'individual')
-      .map((option) => option.value === 'all' ? { ...option, label: 'Directly issuable stock' } : option)
+    : [{ value: 'consumable' as const, label: 'Consumable stock' }]
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [inventory, setInventory] = useState<InventoryItemRecord[]>([])
   const [selectedEmployeeCode, setSelectedEmployeeCode] = useState(employeeCodeFromUrl)
@@ -265,20 +272,16 @@ export default function MainIssuance() {
   const [isLoadingEmployeeItems, setIsLoadingEmployeeItems] = useState(Boolean(employeeCodeFromUrl))
   const [employeeItemsError, setEmployeeItemsError] = useState('')
   const [showEmployeeItems, setShowEmployeeItems] = useState(false)
-  const [selectionMode, setSelectionMode] = useState<SelectionMode>('single')
   const [selectedQuantities, setSelectedQuantities] = useState<Record<string, string>>({})
   const [purchaseRequisitionLineIds, setPurchaseRequisitionLineIds] = useState<Record<string, string>>({})
   const [purchaseRequisitionReference, setPurchaseRequisitionReference] = useState('')
   const [purchaseRequisitionOtherTypeCount, setPurchaseRequisitionOtherTypeCount] = useState(0)
+  const [purchaseRequisitionReusableCount, setPurchaseRequisitionReusableCount] = useState(0)
   const [itemSearch, setItemSearch] = useState('')
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState('all')
-  const [inventoryTypeFilter, setInventoryTypeFilter] = useState<InventoryTypeFilter>('all')
+  const [inventoryTypeFilter, setInventoryTypeFilter] = useState<InventoryTypeFilter>(isRequisitionIssuance ? 'all' : 'consumable')
   const [inventoryPage, setInventoryPage] = useState(1)
   const [notes, setNotes] = useState('')
-  const [borrowUseAt, setBorrowUseAt] = useState('')
-  const [expectedReturnAt, setExpectedReturnAt] = useState('')
-  const [borrowUseLocation, setBorrowUseLocation] = useState('')
-  const [borrowPurpose, setBorrowPurpose] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -318,15 +321,32 @@ export default function MainIssuance() {
     Promise.all([
       listEmployees(),
       listInventoryItems(),
-      purchaseRequisitionIdFromUrl ? getStaffPurchaseRequisition(purchaseRequisitionIdFromUrl) : Promise.resolve(null),
+      listStaffPurchaseRequisitions().catch(() => []),
+      selectedPurchaseRequisitionId ? getStaffPurchaseRequisition(selectedPurchaseRequisitionId) : Promise.resolve(null),
     ])
-      .then(([employeeResult, inventoryResult, purchaseRequisition]) => {
+      .then(([employeeResult, inventoryResult, requisitionQueue, purchaseRequisition]) => {
         if (!active) return
         setEmployees(employeeResult.employees)
+        setReadyRequisitions(requisitionQueue.filter(isReadyPurchaseRequisition))
+        const requestEmployeeCode = purchaseRequisition
+          ? formText(purchaseRequisition.formData.requesterEmployeeCode) || employeeCodeFromUrl
+          : employeeCodeFromUrl
+        setSelectedEmployeeCode(requestEmployeeCode)
+        setIsLoadingEmployeeItems(Boolean(requestEmployeeCode))
+        setEmployeeIssuedItems([])
+        setEmployeeItemsError('')
+        setShowEmployeeItems(false)
+        setSelectedQuantities({})
+        setPurchaseRequisitionLineIds({})
+        setPurchaseRequisitionOtherTypeCount(0)
+        setPurchaseRequisitionReusableCount(0)
+        setItemSearch('')
+        setInventoryCategoryFilter('all')
+        setInventoryPage(1)
         if (purchaseRequisition) {
           const reservedByItem = new Map<string, { quantity: number; lineId: string }>()
           for (const line of purchaseRequisition.purchaseLines || []) {
-            if (!['READY_FOR_STAFF', 'PARTIAL_STOCK', 'PARTIALLY_ISSUED'].includes(line.routeStatus)) continue
+            if (!MAIN_ISSUANCE_READY_STATUSES.includes(line.routeStatus)) continue
             for (const allocation of line.allocations || []) {
               if (allocation.status !== 'Reserved') continue
               const remaining = Number(allocation.quantity) - Number(allocation.fulfilledQuantity || 0)
@@ -334,12 +354,14 @@ export default function MainIssuance() {
               reservedByItem.set(allocation.itemId, { quantity: remaining, lineId: line.id })
             }
           }
-          const reservedItems = inventoryResult
+          const allReservedItems = inventoryResult
             .filter((item) => reservedByItem.has(item.id))
             .map((item) => {
               const reservation = reservedByItem.get(item.id)
               return reservation ? { ...item, availableQuantity: reservation.quantity } : item
             })
+          const reusableItems = allReservedItems.filter(isReusableQuantityStock)
+          const reservedItems = allReservedItems.filter((item) => !isReusableQuantityStock(item))
           const firstFlow = reservedItems[0] ? inventoryTypeFor(reservedItems[0]) : null
           const items = firstFlow ? reservedItems.filter((item) => inventoryTypeFor(item) === firstFlow) : []
           const itemIds = new Set(items.map((item) => item.id))
@@ -352,18 +374,23 @@ export default function MainIssuance() {
             .filter(([itemId]) => itemIds.has(itemId))
             .map(([itemId, reservation]) => [itemId, reservation.lineId])))
           setPurchaseRequisitionOtherTypeCount(reservedItems.length - items.length)
-          setSelectionMode('multiple')
+          setPurchaseRequisitionReusableCount(reusableItems.length)
           setPurchaseRequisitionReference(purchaseRequisition.referenceNo)
           setNotes(`GSO issuance for ${purchaseRequisition.referenceNo}`)
+          setInventoryTypeFilter('all')
         } else {
           setInventory(inventoryResult.filter((item) => (
             item.status.toLowerCase() === 'available'
             && item.availableQuantity > 0
             && item.trackingMode === 'quantity'
+            && item.issueBehavior === 'consumable'
           )))
           setPurchaseRequisitionLineIds({})
           setPurchaseRequisitionReference('')
           setPurchaseRequisitionOtherTypeCount(0)
+          setPurchaseRequisitionReusableCount(0)
+          setInventoryTypeFilter('consumable')
+          setNotes('')
         }
         setLoadError('')
       })
@@ -376,7 +403,7 @@ export default function MainIssuance() {
       })
 
     return () => { active = false }
-  }, [])
+  }, [selectedPurchaseRequisitionId])
 
   useEffect(() => {
     if (!selectedEmployeeCode) return
@@ -491,7 +518,7 @@ export default function MainIssuance() {
     })
   }, [inventory, inventoryCategoryFilter, itemSearch])
   const inventoryTypeCounts = useMemo(() => {
-    const counts: Record<InventoryTypeFilter, number> = {
+    const counts: Record<'all' | InventoryFlow, number> = {
       all: categoryAndSearchInventory.length,
       individual: 0,
       consumable: 0,
@@ -518,15 +545,8 @@ export default function MainIssuance() {
   })
   const selectedUnitCount = selectedItems.reduce((total, selection) => total + selection.quantity, 0)
   const hasMixedItemTypes = selectedItems.some(({ item }) => inventoryTypeFor(item) !== inventoryTypeFor(selectedItems[0]?.item))
-  const isReusableBorrow = selectedItems.length > 0 && selectedItems.every(({ item }) => isReusableQuantityStock(item))
-  const hasInvalidBorrowDetails = isReusableBorrow && (
-    !borrowUseAt
-    || borrowUseAt < localDateTimeInputValue()
-    || !expectedReturnAt
-    || expectedReturnAt <= borrowUseAt
-    || !borrowUseLocation.trim()
-    || !borrowPurpose.trim()
-  )
+  const isConsumableIssue = selectedItems.length > 0 && selectedItems.every(({ item }) => item.trackingMode === 'quantity' && item.issueBehavior === 'consumable')
+  const isPerUnitPickup = selectedItems.length > 0 && selectedItems.every(({ item }) => item.trackingMode === 'individual')
   const hasInvalidQuantity = selectedItems.some(({ item, quantity }) =>
     !Number.isInteger(quantity) || quantity < 1 || quantity > item.availableQuantity
   )
@@ -593,19 +613,21 @@ export default function MainIssuance() {
   const isShowingSentBatch = Boolean(submittedBatch) && selectedItems.length === 0
   const isEmployeeStepDone = Boolean(selectedEmployee)
   const isItemsStepDone = selectedItems.length > 0 && !hasInvalidQuantity && !hasMixedItemTypes
-  const currentStep = !isEmployeeStepDone ? 1 : !isItemsStepDone ? 2 : 3
-  const stepStatusFor = (step: 1 | 2 | 3, isDone: boolean): StepStatus => {
+  const stepTotal = showRequisitionStep ? 4 : 3
+  const employeeStepNumber = showRequisitionStep ? 2 : 1
+  const itemsStepNumber = employeeStepNumber + 1
+  const reviewStepNumber = itemsStepNumber + 1
+  const currentStep = !isEmployeeStepDone ? employeeStepNumber : !isItemsStepDone ? itemsStepNumber : reviewStepNumber
+  const stepStatusFor = (step: number, isDone: boolean): StepStatus => {
     if (isDone) return 'done'
     return currentStep === step ? 'current' : 'upcoming'
   }
   const nextStepHint = !selectedEmployee
-    ? 'Next: choose the employee in Step 1.'
+    ? `Next: choose the employee in Step ${employeeStepNumber}.`
     : selectedItems.length === 0
-      ? 'Next: choose at least one item in Step 2.'
+      ? `Next: choose at least one item in Step ${itemsStepNumber}.`
       : hasMixedItemTypes
         ? 'Process one inventory type at a time.'
-        : hasInvalidBorrowDetails
-          ? 'Complete the borrowing dates, times, event, and location below.'
         : ''
   const submitErrorAlert = submitError
     ? <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm font-semibold text-rose-800">{submitError}</p>
@@ -622,6 +644,21 @@ export default function MainIssuance() {
     setHandoverReference('')
     const currentUrl = new URL(window.location.href)
     currentUrl.searchParams.delete('batchId')
+    window.history.replaceState({}, '', currentUrl)
+  }
+
+  function selectPurchaseRequisition(requestId: string) {
+    setSelectedPurchaseRequisitionId(requestId)
+    setIsLoading(true)
+    setLoadError('')
+    setSelectedEmployeeCode('')
+    setSelectedQuantities({})
+    setSubmitError('')
+    setSubmittedBatch(null)
+    setBatchDetailsError('')
+    const currentUrl = new URL(window.location.href)
+    if (requestId) currentUrl.searchParams.set('purchaseRequisitionId', requestId)
+    else currentUrl.searchParams.delete('purchaseRequisitionId')
     window.history.replaceState({}, '', currentUrl)
   }
 
@@ -642,7 +679,11 @@ export default function MainIssuance() {
     if (!item) {
       setSubmitError(isRequisitionIssuance
         ? `No available item matches barcode ${value.trim()}.`
-        : `No directly issuable item matches barcode ${value.trim()}. Per-unit assets must be processed through Purchase Requisitions.`)
+        : `No directly issuable consumable matches barcode ${value.trim()}. Per-unit assets must be processed through Purchase Requisitions.`)
+      return
+    }
+    if (isReusableQuantityStock(item)) {
+      setSubmitError('Reusable stock is handled through the separate Request & Borrowing workflow.')
       return
     }
     if (!isRequisitionIssuance && requiresPurchaseRequisition(item)) {
@@ -657,24 +698,26 @@ export default function MainIssuance() {
       setSubmitError('Process one inventory type at a time.')
       return
     }
-    if (selectionMode === 'multiple' && Object.keys(selectedQuantities).length >= 100) {
+    if (Object.keys(selectedQuantities).length >= 100) {
       setSubmitError('Select up to 100 items for one approval email.')
       return
     }
 
     clearSubmittedBatch()
     setSubmitError('')
-    const nextQuantities = selectionMode === 'single'
-      ? { [item.id]: '1' }
-      : { ...selectedQuantities, [item.id]: '1' }
+    const nextQuantities = { ...selectedQuantities, [item.id]: '1' }
     updateSelectedQuantities(nextQuantities)
     setItemSearch('')
     setInventoryPage(1)
   }
 
   function toggleItem(item: InventoryItemRecord) {
-    if (purchaseRequisitionIdFromUrl) {
+    if (isRequisitionIssuance) {
       setSubmitError('Ang item at quantity ay nakatali sa purchase requisition na ito. Bumalik sa Request Requisitions kung kailangang baguhin ang request.')
+      return
+    }
+    if (isReusableQuantityStock(item)) {
+      setSubmitError('Reusable stock is handled through the separate Request & Borrowing workflow.')
       return
     }
     if (requiresPurchaseRequisition(item)) {
@@ -686,8 +729,6 @@ export default function MainIssuance() {
     if (selectedQuantities[item.id] !== undefined) {
       nextQuantities = { ...selectedQuantities }
       delete nextQuantities[item.id]
-    } else if (selectionMode === 'single') {
-      nextQuantities = { [item.id]: '1' }
     } else if (Object.keys(selectedQuantities).length >= 100) {
       setSubmitError('Select up to 100 items for one approval email.')
       return
@@ -698,16 +739,6 @@ export default function MainIssuance() {
       nextQuantities = { ...selectedQuantities, [item.id]: '1' }
     }
     updateSelectedQuantities(nextQuantities)
-    setSubmitError('')
-  }
-
-  function changeSelectionMode(mode: SelectionMode) {
-    setSelectionMode(mode)
-    clearSubmittedBatch()
-    if (mode === 'single') {
-      const firstEntry = Object.entries(selectedQuantities)[0]
-      updateSelectedQuantities(firstEntry ? { [firstEntry[0]]: firstEntry[1] } : {})
-    }
     setSubmitError('')
   }
 
@@ -831,6 +862,10 @@ export default function MainIssuance() {
       setSubmitError('Select at least one available item.')
       return
     }
+    if (selectedItems.some(({ item }) => isReusableQuantityStock(item))) {
+      setSubmitError('Reusable stock must be handled through the separate Request & Borrowing workflow.')
+      return
+    }
     if (!isRequisitionIssuance && selectedItems.some(({ item }) => requiresPurchaseRequisition(item))) {
       setSubmitError('Per-unit assets must be processed through Purchase Requisitions before they can be issued.')
       return
@@ -843,11 +878,6 @@ export default function MainIssuance() {
       setSubmitError('Process one inventory type at a time.')
       return
     }
-    if (hasInvalidBorrowDetails) {
-      setSubmitError('Ilagay ang petsa at oras ng hiraman at pagsoli, event, at location.')
-      return
-    }
-
     setIsSubmitting(true)
     setSubmitError('')
     clearSubmittedBatch()
@@ -857,18 +887,11 @@ export default function MainIssuance() {
         selectedItems.map(({ item, quantity }) => ({
           itemId: item.id,
           quantity,
-          ...(purchaseRequisitionIdFromUrl ? { purchaseRequisitionLineId: purchaseRequisitionLineIds[item.id] } : {}),
+          ...(isRequisitionIssuance ? { purchaseRequisitionLineId: purchaseRequisitionLineIds[item.id] } : {}),
         })),
         notes,
-        isReusableBorrow ? {
-          useAt: borrowUseAt,
-          expectedReturnAt,
-          useDate: borrowUseAt.slice(0, 10),
-          expectedReturnDate: expectedReturnAt.slice(0, 10),
-          useLocation: borrowUseLocation.trim(),
-          purpose: borrowPurpose.trim(),
-        } : null,
-        purchaseRequisitionIdFromUrl || undefined,
+        null,
+        selectedPurchaseRequisitionId || undefined,
       )
       setSubmittedBatch({
         id: batch.id,
@@ -952,13 +975,10 @@ export default function MainIssuance() {
       `}</style>
       <div className="mx-auto max-w-7xl pb-8">
         <section className="rounded-3xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-6 text-white shadow-xl shadow-blue-950/15 sm:p-8">
-          <span className="inline-flex rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
-            Asset custody &amp; tracking
-          </span>
+          <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff issuance</span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Main Issuance</h1>
-          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-            Issue consumables, record reusable-stock borrowing, or complete a requisition-based per-unit handover.
-          </p>
+          <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">Issue items from an approved requisition or distribute consumable stock directly to an employee.</p>
+          <RequisitionIssuanceShortcuts active="issuance" />
         </section>
 
         <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm" aria-labelledby="approved-labels-title">
@@ -1200,13 +1220,43 @@ export default function MainIssuance() {
           </div>}
         </section>
 
-        {purchaseRequisitionIdFromUrl && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3"><p className="text-xs font-extrabold text-indigo-900">Purchase requisition {purchaseRequisitionReference || purchaseRequisitionIdFromUrl}</p><p className="mt-1 text-[0.68rem] text-indigo-800">Only reserved items of one issuance type are selected. Review the quantities and record the handover here.</p>{purchaseRequisitionOtherTypeCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionOtherTypeCount} reserved item record(s) use another issuance type. Return to Purchase Requisitions after this batch to continue.</p>}</div>}
-        <form onSubmit={handleSubmit} className="mt-5 grid gap-5 xl:grid-cols-2" aria-label="Issue, lend, or prepare an asset handover">
+        {selectedPurchaseRequisitionId && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3"><p className="text-xs font-extrabold text-indigo-900">Purchase requisition {purchaseRequisitionReference || selectedPurchaseRequisitionId}</p><p className="mt-1 text-[0.68rem] text-indigo-800">Only approved, reserved items are available here. Review the quantities and record the handover.</p>{purchaseRequisitionReusableCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionReusableCount} reusable item record(s) are handled through the separate Borrowing workflow.</p>}{purchaseRequisitionOtherTypeCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionOtherTypeCount} other reserved item record(s) use another issuance type. Return to Purchase Requisitions after this batch.</p>}</div>}
+        {showRequisitionStep && <section className="mt-5 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5" aria-labelledby="issuance-source-title">
+          <StepHeader
+            step={1}
+            totalSteps={stepTotal}
+            status="done"
+            titleId="issuance-source-title"
+            title="Choose issuance source"
+            description="Select a ready requisition or issue consumable stock directly."
+          />
+          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+            <button
+              type="button"
+              aria-pressed={!isRequisitionIssuance}
+              disabled={isSubmitting}
+              onClick={() => selectPurchaseRequisition('')}
+              className={`rounded-xl border p-3 text-left transition disabled:opacity-60 ${!isRequisitionIssuance ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-100' : 'border-slate-200 bg-white hover:border-emerald-300 hover:bg-emerald-50/40'}`}
+            >
+              <span className="block text-xs font-extrabold text-slate-900">Direct consumables</span>
+              <span className="mt-1 block text-[0.68rem] leading-relaxed text-slate-600">Issue quantity stock without a requisition.</span>
+            </button>
+            <label className="block">
+              <span className={fieldLabelClass}>Approved requisition</span>
+              <select value={selectedPurchaseRequisitionId} onChange={(event) => selectPurchaseRequisition(event.target.value)} disabled={isSubmitting} className={fieldControlClass}>
+                <option value="">Select a ready requisition</option>
+                {readyRequisitions.map((request) => <option key={request.id} value={request.id}>{request.referenceNo} · {formText(request.formData.requesterName) || request.requesterName}</option>)}
+              </select>
+            </label>
+          </div>
+        </section>}
+        <form onSubmit={handleSubmit} className="mt-5 grid gap-5 xl:grid-cols-2" aria-label="Issue consumables or prepare approved per-unit handovers">
           <div className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
             <section aria-labelledby="employee-section-title" className="border-b border-slate-200 p-4 sm:p-5">
               <StepHeader
-                step={1}
-                status={stepStatusFor(1, isEmployeeStepDone)}
+                step={employeeStepNumber}
+                totalSteps={stepTotal}
+                status={stepStatusFor(employeeStepNumber, isEmployeeStepDone)}
                 titleId="employee-section-title"
                 title="Choose employee"
                 description="Who will receive the selected items?"
@@ -1279,7 +1329,7 @@ export default function MainIssuance() {
                               <p className="truncate text-sm font-extrabold text-slate-900">{item.name}</p>
                               <p className="mt-0.5 text-xs font-semibold text-slate-600">{item.code} · {item.condition} · {item.assignedOn}</p>
                               <span className="mt-1 inline-flex rounded-md bg-blue-100 px-2 py-0.5 text-xs font-extrabold text-blue-800">
-                                {item.trackingMode === 'individual' ? 'Per-unit asset' : item.issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock'}
+                                {item.trackingMode === 'individual' ? 'Per-unit asset' : item.issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable item · Borrowing workflow'}
                               </span>
                             </div>
                             <span className="shrink-0 text-sm font-extrabold text-slate-800">{item.quantity} {item.unitOfMeasure}</span>
@@ -1301,46 +1351,15 @@ export default function MainIssuance() {
 
             <section aria-labelledby="items-section-title" className="flex min-h-0 grow flex-col p-4 sm:p-5">
               <StepHeader
-                step={2}
-                status={stepStatusFor(2, isItemsStepDone)}
+                step={itemsStepNumber}
+                totalSteps={stepTotal}
+                status={stepStatusFor(itemsStepNumber, isItemsStepDone)}
                 titleId="items-section-title"
                 title="Choose items"
                 description={isRequisitionIssuance
-                  ? 'Review the reserved inventory for this purchase requisition.'
-                  : 'Direct issuance is available for consumable and reusable quantity stock.'}
-              >
-                <div className="flex rounded-xl border border-slate-300 bg-slate-100 p-1" role="group" aria-label="Issuance selection mode">
-                  <button
-                    type="button"
-                    aria-pressed={selectionMode === 'single'}
-                    disabled={isSubmitting || Boolean(purchaseRequisitionIdFromUrl)}
-                    onClick={() => changeSelectionMode('single')}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${selectionMode === 'single' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
-                  >
-                    One item
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={selectionMode === 'multiple'}
-                    disabled={isSubmitting || Boolean(purchaseRequisitionIdFromUrl)}
-                    onClick={() => changeSelectionMode('multiple')}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${selectionMode === 'multiple' ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
-                  >
-                    Multiple items
-                  </button>
-                </div>
-              </StepHeader>
-
-              {!isRequisitionIssuance && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-3">
-                  <p className="text-xs font-semibold leading-relaxed text-blue-900">
-                    Direct issuance is limited to consumable and reusable quantity stock. Per-unit assets must first go through Purchase Requisitions.
-                  </p>
-                  <a href="/gso/purchase-requisitions" className="shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-blue-800 transition hover:bg-blue-100">
-                    Open Purchase Requisitions
-                  </a>
-                </div>
-              )}
+                  ? 'Review reserved items from the approved purchase requisition.'
+                  : 'Choose consumable stock to issue directly to the selected employee.'}
+              />
 
               <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(11rem,0.55fr)]">
                 <label className="block">
@@ -1373,7 +1392,7 @@ export default function MainIssuance() {
                 </label>
               </div>
 
-              <div className={`mt-3 grid gap-2 ${isRequisitionIssuance ? 'grid-cols-2 xl:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`} role="group" aria-label="Filter by inventory type">
+              {isRequisitionIssuance && <div className="mt-3 grid gap-2 grid-cols-2 xl:grid-cols-3" role="group" aria-label="Filter by inventory type">
                 {visibleInventoryTypeOptions.map((option) => {
                   const isActive = inventoryTypeFilter === option.value
                   return (
@@ -1390,8 +1409,8 @@ export default function MainIssuance() {
                     </button>
                   )
                 })}
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-slate-600">Consumables issue immediately; reusable stock records a face-to-face borrowing schedule.</p>
+              </div>}
+              {!isRequisitionIssuance && <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold leading-relaxed text-emerald-900">Consumable stock is issued directly to the selected employee and deducted immediately. No requisition approval is needed.</p>}
 
               {loadError && (
                 <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm font-semibold text-rose-800">{loadError}</p>
@@ -1403,17 +1422,13 @@ export default function MainIssuance() {
                   {visibleInventory.map((item) => {
                     const isSelected = selectedQuantities[item.id] !== undefined
                     const itemType = inventoryTypeFor(item)
-                    const itemTypeLabel = itemType === 'individual'
-                      ? 'Per-unit asset'
-                      : itemType === 'consumable'
-                        ? 'Consumable stock'
-                        : 'Reusable quantity stock'
+                    const itemTypeLabel = itemType === 'individual' ? 'Per-unit asset' : 'Consumable stock'
                     return (
                       <button
                         key={item.id}
                         type="button"
                         aria-pressed={isSelected}
-                        disabled={isSubmitting || Boolean(purchaseRequisitionIdFromUrl)}
+                        disabled={isSubmitting || isRequisitionIssuance}
                         onClick={() => toggleItem(item)}
                         className={`rounded-xl border p-3 text-left transition disabled:opacity-60 ${isSelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
                       >
@@ -1428,7 +1443,7 @@ export default function MainIssuance() {
                           </span>
                         </span>
                         <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold text-slate-700">
-                          <span className={`rounded-md px-1.5 py-0.5 font-extrabold ${itemType === 'individual' ? 'bg-blue-100 text-blue-800' : itemType === 'consumable' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
+                          <span className={`rounded-md px-1.5 py-0.5 font-extrabold ${itemType === 'individual' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}`}>
                             {itemTypeLabel}
                           </span>
                           <span>{availableUnitConditionSummary(item)}</span>
@@ -1443,7 +1458,7 @@ export default function MainIssuance() {
                   {inventory.length === 0
                     ? isRequisitionIssuance
                       ? 'No reserved inventory is currently available for this purchase requisition.'
-                      : 'No consumable or reusable quantity stock is currently available for direct issuance.'
+                      : 'No consumable stock is currently available for direct issuance.'
                     : 'No items match the current search, category, and type filters.'}
                 </p>
               ) : null}
@@ -1478,11 +1493,12 @@ export default function MainIssuance() {
 
           <section aria-labelledby="review-section-title" className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5">
             <StepHeader
-              step={3}
-              status={stepStatusFor(3, isShowingSentBatch)}
+              step={reviewStepNumber}
+              totalSteps={stepTotal}
+              status={stepStatusFor(reviewStepNumber, isShowingSentBatch)}
               titleId="review-section-title"
-              title={isShowingSentBatch ? 'Issuance recorded' : isReusableBorrow ? 'Review borrowing' : 'Review issuance'}
-              description={isShowingSentBatch ? 'Track the record or start another transaction.' : isReusableBorrow ? 'Confirm the borrower, quantity, and schedule.' : 'Confirm the employee, items, and quantities.'}
+              title={isShowingSentBatch ? 'Issuance recorded' : 'Review issuance'}
+              description={isShowingSentBatch ? 'Track the record or start another transaction.' : isConsumableIssue ? 'Confirm the employee and consumable quantities.' : 'Confirm the employee, approved items, and quantities.'}
             >
               {!isShowingSentBatch && (
                 <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold text-blue-800">
@@ -1507,13 +1523,7 @@ export default function MainIssuance() {
                         <div className="min-w-0">
                           <p className="truncate text-sm font-extrabold text-slate-900">{item.itemName || item.description}</p>
                           <p className="mt-0.5 text-xs font-semibold text-slate-600">{item.itemCode} · {availableUnitConditionSummary(item)} · max {item.availableQuantity} {item.unitOfMeasure}</p>
-                          <p className="mt-0.5 text-xs font-bold text-blue-700">
-                            {item.trackingMode === 'individual'
-                              ? 'Per-unit asset · barcode labels ready for pickup'
-                              : item.issueBehavior === 'consumable'
-                                ? 'Consumable stock · issued immediately'
-                                : 'Reusable stock · face-to-face borrowing'}
-                          </p>
+                          <p className="mt-0.5 text-xs font-bold text-blue-700">{item.trackingMode === 'individual' ? 'Per-unit asset · approved requisition · barcode labels ready' : 'Consumable stock · issued immediately'}</p>
                         </div>
                         <label className="w-20 shrink-0">
                           <span aria-hidden="true" className="mb-1 block text-xs font-bold text-slate-700">Qty</span>
@@ -1546,40 +1556,15 @@ export default function MainIssuance() {
                   </p>
                 )}
 
-                {isReusableBorrow && <fieldset className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5">
-                  <legend className="px-1 text-xs font-extrabold uppercase tracking-wide text-amber-950">Face-to-face borrowing details</legend>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block">
-                      <span className={fieldLabelClass}>Borrow date and time *</span>
-                      <input type="datetime-local" value={borrowUseAt} min={localDateTimeInputValue()} required disabled={isSubmitting} onChange={(event) => setBorrowUseAt(event.target.value)} className={fieldControlClass} />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Expected return date and time *</span>
-                      <input type="datetime-local" value={expectedReturnAt} min={borrowUseAt || localDateTimeInputValue()} required disabled={isSubmitting} onChange={(event) => setExpectedReturnAt(event.target.value)} className={fieldControlClass} />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Event or purpose *</span>
-                      <input type="text" value={borrowPurpose} onChange={(event) => setBorrowPurpose(event.target.value)} maxLength={500} required disabled={isSubmitting} placeholder="e.g. Faculty seminar" className={fieldControlClass} />
-                    </label>
-                    <label className="block">
-                      <span className={fieldLabelClass}>Location *</span>
-                      <input type="text" value={borrowUseLocation} onChange={(event) => setBorrowUseLocation(event.target.value)} maxLength={200} required disabled={isSubmitting} placeholder="e.g. Covered court" className={fieldControlClass} />
-                    </label>
-                  </div>
-                  <p role="note" className="mt-3 rounded-lg border border-amber-300 bg-white/70 px-3 py-2 text-xs font-semibold leading-relaxed text-amber-950">
-                    Important: Return borrowed items by the scheduled return date and time.
-                  </p>
-                </fieldset>}
-
                 <label className="mt-3 block border-t border-slate-200 pt-3">
-                  <span className={fieldLabelClass}>{selectedItems[0]?.item.trackingMode === 'individual' ? 'Accessories and handover notes' : isReusableBorrow ? 'Borrowing notes' : 'Distribution notes'}</span>
+                  <span className={fieldLabelClass}>{selectedItems[0]?.item.trackingMode === 'individual' ? 'Accessories and handover notes' : 'Distribution notes'}</span>
                   <input
                     type="text"
                     value={notes}
                     onChange={(event) => setNotes(event.target.value)}
                     maxLength={1000}
                     disabled={isSubmitting}
-                    placeholder={selectedItems[0]?.item.trackingMode === 'individual' ? 'e.g. charger, bag, or other included accessories' : isReusableBorrow ? 'Optional note for this borrowing' : 'Optional distribution note'}
+                    placeholder={selectedItems[0]?.item.trackingMode === 'individual' ? 'e.g. charger, bag, or other included accessories' : 'Optional distribution note'}
                     className={fieldControlClass}
                   />
                 </label>
@@ -1588,20 +1573,18 @@ export default function MainIssuance() {
 
                 <button
                   type="submit"
-                  disabled={isLoading || isSubmitting || !selectedEmployee || selectedItems.length === 0 || hasInvalidQuantity || hasMixedItemTypes || hasInvalidBorrowDetails || Boolean(loadError)}
+                  disabled={isLoading || isSubmitting || !selectedEmployee || selectedItems.length === 0 || hasInvalidQuantity || hasMixedItemTypes || Boolean(loadError)}
                   className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700 disabled:shadow-none"
                 >
-                  {isSubmitting ? 'Recording...' : `${selectedItems[0]?.item.trackingMode === 'individual' ? 'Prepare per-unit pickup' : isReusableBorrow ? 'Record face-to-face borrowing' : 'Issue consumable stock'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
+                  {isSubmitting ? 'Recording...' : `${isPerUnitPickup ? 'Record approved per-unit handover' : 'Issue consumable stock'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
                 </button>
                 {nextStepHint ? (
                   <p className="mt-2 text-center text-sm font-bold text-blue-800">{nextStepHint}</p>
                 ) : (
                   <p className="mt-2 text-xs leading-relaxed text-slate-600">
-                    {selectedItems[0]?.item.trackingMode === 'individual'
-                      ? 'Barcode labels are generated now and the request is ready for pickup. No requester confirmation is needed.'
-                      : isReusableBorrow
-                        ? 'Stock is reserved now; the borrower can view the schedule in the requester dashboard.'
-                        : 'Stock is deducted now; employee approval is not required.'}
+                    {isPerUnitPickup
+                      ? 'This handover is linked to an approved Purchase Requisition. Barcode labels are ready for pickup.'
+                      : 'Consumable stock is deducted immediately. No employee approval is required.'}
                   </p>
                 )}
               </>

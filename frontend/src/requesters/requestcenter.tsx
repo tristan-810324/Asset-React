@@ -56,14 +56,14 @@ function RequestCenterContent() {
             <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:gap-4 sm:px-6 sm:py-5">
               <span className={cardIconClass}><Icon name="clipboard" className="h-5 w-5" /></span>
               <div className="min-w-0">
-                <span className="block text-sm font-black tracking-tight text-slate-900 sm:text-base">Request items</span>
+                <span className="block text-sm font-black tracking-tight text-slate-900 sm:text-base">Request for Issuance</span>
                 <span className="mt-1 block text-[0.68rem] font-medium leading-relaxed text-slate-500">Tell GSO what your department needs.</span>
               </div>
             </div>
             <div className="divide-y divide-blue-100 p-2 sm:p-3">
               <a href="/requester/requests/new?type=ITEM_REQUEST" className="group flex items-center gap-3 rounded-xl bg-linear-to-r from-blue-50/50 to-white p-3 transition hover:from-blue-50/70 hover:to-white focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700"><Icon name="package" /></span>
-                <span className="min-w-0 flex-1"><span className="block text-sm font-black leading-tight tracking-tight text-slate-900">Request an item</span><span className="mt-0.5 hidden text-[0.68rem] font-medium text-slate-500 lg:block">Choose a catalog item or type a general item.</span></span>
+                <span className="min-w-0 flex-1"><span className="block text-sm font-black leading-tight tracking-tight text-slate-900">Request an item</span><span className="mt-0.5 hidden text-[0.68rem] font-medium text-slate-500 lg:block">Choose a catalog item or describe what you need.</span></span>
                 <Icon name="arrow" className="h-4 w-4 shrink-0 text-blue-700 transition group-hover:translate-x-1" />
               </a>
             </div>
@@ -72,7 +72,7 @@ function RequestCenterContent() {
           <a href={newRequestHref('BORROWING')} className={cardClass}>
             <span className={cardIconClass}><Icon name="package" /></span>
             <span className="mt-3 text-base font-black tracking-tight text-slate-900">Borrow equipment</span>
-            <span className="mt-1.5 flex-1 text-xs font-medium leading-relaxed text-slate-500">Borrow reusable equipment.</span>
+            <span className="mt-1.5 flex-1 text-xs font-medium leading-relaxed text-slate-500">Borrow reusable items with a return date.</span>
             <StartLabel>Browse inventory</StartLabel>
           </a>
         </div>

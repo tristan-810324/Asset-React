@@ -318,6 +318,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       );
       requisition = requisitionResult.rows[0];
       if (!requisition || requisition.request_type !== 'PURCHASE_REQUISITION') throw notFound('Hindi makita ang purchase requisition.');
+      if (requisition.status !== 'Approved') throw conflict('Only approved purchase requisitions can be issued through Main Issuance.');
       if (String(requisition.form_data?.requesterEmployeeCode || '').trim().toLowerCase() !== employee.employee_code.trim().toLowerCase()) {
         throw conflict('Hindi tugma ang employee sa purchase requisition. Piliin ang tamang recipient.');
       }
@@ -362,28 +363,25 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       ? 'per-unit'
       : item.issue_behavior === 'consumable' ? 'consumable' : 'reusable';
     const selectedFlows = new Set(items.map(itemFlow));
+    if (selectedFlows.has('reusable')) {
+      throw conflict('Reusable stock must be handled through the separate Borrowing workflow, not Main Issuance.');
+    }
     if (!purchaseRequisitionId && selectedFlows.has('per-unit')) {
-      throw conflict('Ang per-unit asset ay dapat dumaan muna sa Purchase Requisition bago ma-issue. Consumable at reusable quantity stock lamang ang puwedeng direct issuance.');
+      throw conflict('Per-unit assets must go through an approved Purchase Requisition before issuance. Consumable stock may be issued directly.');
     }
     if (selectedFlows.size > 1) {
-      throw conflict('Isang uri lang ng inventory ang iproseso sa bawat issuance.');
+      throw conflict('Process one inventory type per issuance.');
     }
-    const isReusableBorrow = selectedFlows.has('reusable');
-    if (isReusableBorrow && (!borrowDetails?.useAt || !borrowDetails?.expectedReturnAt)) {
-      throw conflict('Kailangan ang petsa at oras ng hiraman at pagsoli para sa reusable stock.');
-    }
-    if (!isReusableBorrow && borrowDetails) throw conflict('Reusable quantity stock lamang ang nangangailangan ng borrowing schedule.');
+    if (borrowDetails) throw conflict('Borrowing schedules are handled through the separate Borrowing workflow.');
     const isConsumableIssue = selectedFlows.has('consumable');
     // Per-unit assets may only enter this flow from an approved purchase requisition.
     // GSO prepares them for pickup immediately, including their barcode labels; the
     // requester no longer needs to acknowledge a separate handover step.
     const isPerUnitPickup = selectedFlows.has('per-unit');
-    const initialStatus = isConsumableIssue || isReusableBorrow || isPerUnitPickup ? 'Issued' : 'Pending';
+    const initialStatus = isConsumableIssue || isPerUnitPickup ? 'Issued' : 'Pending';
     const initialDecisionNote = isConsumableIssue
       ? 'Released by GSO. No employee approval is required for consumable stock.'
-      : isReusableBorrow
-        ? 'Face-to-face reusable-stock borrowing recorded by GSO; return is due at the scheduled date and time.'
-        : 'GSO prepared the per-unit asset for pickup. Barcode labels are ready; no requester confirmation is required.';
+      : 'GSO prepared the per-unit asset for pickup. Barcode labels are ready; no requester confirmation is required.';
     for (const item of items) {
       if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
       if (item.purchaseRequisitionLine) {
@@ -499,24 +497,16 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         changedByUserId: requestedByUserId,
         reason: isConsumableIssue
           ? `GSO issued ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} to ${employee.employee_code}; no employee approval is required for consumable stock.`
-          : isReusableBorrow
-            ? `GSO recorded a face-to-face borrowing of ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} for ${employee.employee_code}.`
-            : `GSO prepared per-unit asset ${issuance.description} for pickup by ${employee.employee_code}; barcode labels are ready and no requester confirmation is required.`,
+          : `GSO prepared per-unit asset ${issuance.description} for pickup by ${employee.employee_code}; barcode labels are ready and no requester confirmation is required.`,
         oldValues: { inventoryStatus: item.inventory_status, availableQuantity: item.availableQuantityBefore },
         newValues: {
           inventoryStatus: item.requestedQuantity === item.availableQuantityBefore
-            ? isReusableBorrow ? 'Borrowed' : isConsumableIssue || isPerUnitPickup ? 'Issued' : 'Reserved'
+            ? isConsumableIssue || isPerUnitPickup ? 'Issued' : 'Reserved'
             : 'Available',
           reservedQuantity: initialStatus === 'Pending' ? item.requestedQuantity : 0,
           issuedQuantity: initialStatus === 'Issued' ? item.requestedQuantity : 0,
           issuanceStatus: initialStatus,
           barcodeCount: tags.length,
-          borrowingSchedule: isReusableBorrow ? {
-            useAt: batch.borrowUseAt,
-            expectedReturnAt: batch.expectedReturnAt,
-            useLocation: batch.useLocation,
-            purpose: batch.usePurpose,
-          } : null,
           issuanceBatchId: batch.id,
           employeeCode: employee.employee_code,
           employeeEmail: employee.requester_email,

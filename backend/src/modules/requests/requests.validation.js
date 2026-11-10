@@ -86,13 +86,24 @@ function validateCreateRequest(input) {
     const neededDate = date(data.neededDate, 'needed date', { notPast: true });
     const returnDate = date(data.returnDate, 'expected return date', { notPast: true });
     if (returnDate < neededDate) invalid('Ang return date ay dapat kapareho o lampas sa needed date.');
+    const purposeOption = text(data.purpose, 'purpose', 100);
+    const purpose = purposeOption === 'Other' ? `Other: ${text(data.otherPurpose, 'specific purpose', 1900)}` : purposeOption;
+    const useLocation = data.specificLocation !== undefined
+      ? `${text(data.useLocation, 'place of use', 60)} — ${text(data.specificLocation, 'specific room or location', 210)}`
+      : text(data.useLocation, 'place of use', 250);
+    const returnResponsibleContact = text(data.returnResponsibleContact, 'return contact number', 40);
+    if (!/^[+0-9().\s-]+$/.test(returnResponsibleContact) || returnResponsibleContact.replace(/\D/g, '').length < 7) {
+      invalid('Enter a valid return contact number.');
+    }
     return {
       requestType,
       formData: {
-        purpose: text(data.purpose, 'purpose', 2000),
+        purpose,
         neededDate,
         returnDate,
-        useLocation: text(data.useLocation, 'place of use', 250),
+        useLocation,
+        returnResponsibleName: text(data.returnResponsibleName, 'return responsible person', 200),
+        returnResponsibleContact,
         remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
         items,
       },
