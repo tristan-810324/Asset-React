@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import { getRequesterIdentityPicture, listRequesterIdentityReviews, reviewRequesterIdentity, type RequesterIdentity, type RequesterIdentityStatus } from '../requesters/requesterApi'
+import { getRequesterIdentityPicture, listRequesterDepartments, listRequesterIdentityReviews, listRequesterPositions, reviewRequesterIdentity, type RequesterIdentity, type RequesterIdentityStatus } from '../requesters/requesterApi'
 
 const statuses: Array<'all' | RequesterIdentityStatus> = ['all', 'Pending', 'Needs Correction', 'Verified']
 const statusStyle: Record<RequesterIdentityStatus, string> = {
@@ -13,6 +13,12 @@ const statusStyle: Record<RequesterIdentityStatus, string> = {
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—'
 
 const profileFullName = (profile: RequesterIdentity) => [profile.firstName, profile.middleName, profile.lastName, profile.suffix].filter(Boolean).join(' ') || profile.accountName
+const ADD_PROPOSED_VALUE = '__add_requester_proposal__'
+
+function masterChoice(value: string, options: string[], selected?: string) {
+  if (selected === ADD_PROPOSED_VALUE || (selected && options.includes(selected))) return selected
+  return options.find((option) => option.trim().toLowerCase() === value.trim().toLowerCase()) || ADD_PROPOSED_VALUE
+}
 
 export default function RequesterVerification() {
   const [profiles, setProfiles] = useState<RequesterIdentity[]>([])
@@ -25,6 +31,11 @@ export default function RequesterVerification() {
   const [notice, setNotice] = useState('')
   const [retryDecision, setRetryDecision] = useState<{ profile: RequesterIdentity; status: 'Verified' | 'Needs Correction' } | null>(null)
   const [pictures, setPictures] = useState<Record<string, string>>({})
+  const [masterDepartments, setMasterDepartments] = useState<string[]>([])
+  const [masterPositions, setMasterPositions] = useState<string[]>([])
+  const [departmentChoices, setDepartmentChoices] = useState<Record<string, string>>({})
+  const [positionChoices, setPositionChoices] = useState<Record<string, string>>({})
+  const [masterDataError, setMasterDataError] = useState('')
   const requestedPictures = useRef(new Set<string>())
 
   const loadProfiles = useCallback(async () => {
@@ -44,6 +55,17 @@ export default function RequesterVerification() {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadProfiles() }, [loadProfiles])
+
+  useEffect(() => {
+    let active = true
+    void listRequesterDepartments()
+      .then(({ departments }) => { if (active) setMasterDepartments(departments.map((department) => department.name)) })
+      .catch(() => { if (active) setMasterDataError((current) => current || 'Could not load all saved department and position options. GSO can still approve a proposal; duplicate names are checked when saved.') })
+    void listRequesterPositions()
+      .then((positions) => { if (active) setMasterPositions(positions.map((position) => position.name)) })
+      .catch(() => { if (active) setMasterDataError((current) => current || 'Could not load all saved department and position options. GSO can still approve a proposal; duplicate names are checked when saved.') })
+    return () => { active = false }
+  }, [])
 
   const filteredProfiles = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -91,12 +113,20 @@ export default function RequesterVerification() {
     setError('')
     setNotice('')
     try {
-      const reviewedIdentity = await reviewRequesterIdentity(profile.userId, { status, note })
+      const departmentChoice = masterChoice(profile.department, masterDepartments, departmentChoices[String(profile.userId)])
+      const positionChoice = masterChoice(profile.position, masterPositions, positionChoices[String(profile.userId)])
+      const masterDataDecision = status === 'Verified' && !profile.matchedEmployeeCode ? {
+        department: departmentChoice === ADD_PROPOSED_VALUE ? profile.department : departmentChoice,
+        position: positionChoice === ADD_PROPOSED_VALUE ? profile.position : positionChoice,
+        addDepartment: departmentChoice === ADD_PROPOSED_VALUE,
+        addPosition: positionChoice === ADD_PROPOSED_VALUE,
+      } : {}
+      const reviewedIdentity = await reviewRequesterIdentity(profile.userId, { status, note, ...masterDataDecision })
       setProfiles((current) => current.map((item) => String(item.userId) === String(reviewedIdentity.userId) ? reviewedIdentity : item))
       setNotice(status === 'Verified'
         ? profile.matchedEmployeeCode
           ? `${profile.accountName} — verified against the existing Employee Master Data record.`
-          : `${profile.accountName} — verified and added to Employee Master Data.`
+          : `${profile.accountName} — verified and added to Employee Master Data${masterDataDecision.addDepartment || masterDataDecision.addPosition ? ', including approved master data suggestions' : ''}.`
         : `${profile.accountName} — sent back for correction.`)
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Unable to save the GSO review.'
@@ -112,7 +142,7 @@ export default function RequesterVerification() {
   return (
     <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search requester identity">
       <div className="mx-auto max-w-7xl space-y-5 pb-8">
-        <section className="rounded-3xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-6 text-white shadow-xl shadow-blue-950/15 sm:p-8">
+        <section className="rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
           <span className="inline-flex rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
             GSO identity checks
           </span>
@@ -143,7 +173,7 @@ export default function RequesterVerification() {
           { title: 'Corrections Needed', value: counts.corrections, badge: 'Action required', caption: 'requester updates', icon: 'alert', tone: 'border-rose-100 bg-rose-50 text-rose-700 shadow-rose-900/5', badgeTone: 'bg-rose-50 text-rose-700' },
           { title: 'Verified Staff', value: counts.verified, badge: 'GSO approved', caption: 'requester accounts', icon: 'check', tone: 'border-emerald-100 bg-emerald-50 text-emerald-700 shadow-emerald-900/5', badgeTone: 'bg-emerald-50 text-emerald-700' },
         ].map((item) => (
-          <article key={item.title} className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55">
+          <article key={item.title} className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-bold text-slate-500">{item.title}</p>
@@ -163,7 +193,7 @@ export default function RequesterVerification() {
         ))}
       </section>
 
-      <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+      <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Staff Identity Queue</h2>
@@ -221,6 +251,12 @@ export default function RequesterVerification() {
                   {profile.matchedEmployeeCode && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-700">Record: {profile.matchedEmployeeCode} · {profile.matchedDepartment || 'No department'} · {profile.matchedPosition || 'No position'} · {profile.matchedEmail || 'No email'} · {profile.matchedEmployeeStatus || 'No status'}</p>}
                   {!profile.matchedEmployeeCode && <p className="mt-1 text-[0.68rem] leading-relaxed text-amber-900">No existing employee code matched. If approved, the system will create an employee profile using the verified requester details.</p>}
                 </div>
+                {profile.status !== 'Verified' && !profile.matchedEmployeeCode && <section className="mt-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3.5">
+                  <div className="mb-3"><p className="text-xs font-extrabold text-blue-950">Department and position master data</p><p className="mt-1 text-[0.68rem] leading-relaxed text-blue-800">Use a saved option, or approve the requester’s suggestion and add it to the shared list.</p></div>
+                  {masterDataError && <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[0.65rem] font-semibold leading-relaxed text-amber-800">{masterDataError}</p>}
+                  <label className="mb-3 block"><span className="mb-1.5 block text-[0.65rem] font-extrabold text-slate-700">Department / office</span><select value={masterChoice(profile.department, masterDepartments, departmentChoices[key])} onChange={(event) => setDepartmentChoices((current) => ({ ...current, [key]: event.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"><option value={ADD_PROPOSED_VALUE}>Approve as new: {profile.department}</option>{masterDepartments.map((department) => <option key={department} value={department}>{department}{department.trim().toLowerCase() === profile.department.trim().toLowerCase() ? ' (matches request)' : ''}</option>)}</select></label>
+                  <label className="block"><span className="mb-1.5 block text-[0.65rem] font-extrabold text-slate-700">Position</span><select value={masterChoice(profile.position, masterPositions, positionChoices[key])} onChange={(event) => setPositionChoices((current) => ({ ...current, [key]: event.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"><option value={ADD_PROPOSED_VALUE}>Approve as new: {profile.position}</option>{masterPositions.map((position) => <option key={position} value={position}>{position}{position.trim().toLowerCase() === profile.position.trim().toLowerCase() ? ' (matches request)' : ''}</option>)}</select></label>
+                </section>}
                 <p className="mt-2 text-[0.65rem] text-slate-400">Submitted {formatDate(profile.submittedAt)}{profile.reviewedAt ? ` · Last reviewed ${formatDate(profile.reviewedAt)}` : ''}</p>
                 {profile.reviewNote && <p className="mt-2 text-xs font-semibold text-rose-700">Previous GSO note: {profile.reviewNote}</p>}
               </div>

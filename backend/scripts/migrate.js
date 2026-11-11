@@ -10,7 +10,8 @@
 //
 // A ledger written before the migrations were consolidated lists the files now kept in
 // database/migrations_archive. Such a database is finished with the archived files it is
-// missing, and the current files are then recorded as already included.
+// missing. Only current migrations 001 through 010 represent that archived history;
+// later current migrations must still be applied normally.
 //
 // This script never reads backend/.env, so it cannot touch the local database by accident.
 const fs = require('node:fs');
@@ -19,6 +20,7 @@ const { Client } = require('pg');
 
 const migrationsDir = path.resolve(__dirname, '../database/migrations');
 const archiveDir = path.resolve(__dirname, '../database/migrations_archive');
+const ARCHIVED_CONSOLIDATED_VERSION = 10;
 
 function migrationVersion(fileName) {
   return Number(fileName.match(/^(\d+)_/)[1]);
@@ -112,14 +114,16 @@ async function migrate() {
     const applied = new Set(rows.map((row) => row.file_name));
 
     if (applied.size > 0 && !files.some((fileName) => applied.has(fileName))) {
-      // The full archive builds exactly the schema the current files build.
+      // The full archive builds the schema represented by consolidated migrations
+      // 001 through 010. Newer current migrations are intentionally left pending.
       const archived = listMigrations(archiveDir).filter((fileName) => !applied.has(fileName));
       for (const fileName of archived) {
         await applyFile(client, archiveDir, fileName);
       }
-      await client.query('INSERT INTO schema_migrations (file_name, baselined) SELECT unnest($1::TEXT[]), TRUE', [files]);
-      files.forEach((fileName) => applied.add(fileName));
-      console.log(`Applied ${archived.length} archived migrations and recorded ${files.length} current migrations as already included.`);
+      const consolidated = files.filter((fileName) => migrationVersion(fileName) <= ARCHIVED_CONSOLIDATED_VERSION);
+      await client.query('INSERT INTO schema_migrations (file_name, baselined) SELECT unnest($1::TEXT[]), TRUE', [consolidated]);
+      consolidated.forEach((fileName) => applied.add(fileName));
+      console.log(`Applied ${archived.length} archived migrations and recorded ${consolidated.length} consolidated migrations as already included.`);
     }
 
     const pending = files.filter((fileName) => !applied.has(fileName));

@@ -4,7 +4,17 @@ function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
+const refreshIntervalMs = 60 * 1000;
+let lastRefreshAt = 0;
+
 const listMine = asyncHandler(async (req, res) => {
+  // Overdue reminders are computed from request data; refresh them at most once a minute per instance.
+  if (Date.now() - lastRefreshAt >= refreshIntervalMs) {
+    lastRefreshAt = Date.now();
+    await repository.refreshOperationalNotifications().catch((error) => {
+      console.error('Could not refresh the overdue notifications.', { code: error.code });
+    });
+  }
   const notifications = await repository.listForUser(req.user);
   res.json({ success: true, data: { notifications } });
 });

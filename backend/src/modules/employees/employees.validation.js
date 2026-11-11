@@ -55,4 +55,36 @@ function validateUpdateEmployee(input) {
   return employee;
 }
 
-module.exports = { validateEmployee, validateUpdateEmployee };
+function validateMasterDataId(value, label) {
+  const id = String(value ?? '').trim();
+  if (!/^\d{1,20}$/.test(id) || id === '0') invalid(`Hindi valid ang ${label} reference.`);
+  return id;
+}
+
+function validatePosition(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang position details.');
+  return { name: requiredText(input.name, 'position name', 120) };
+}
+
+function validatePositionRename(input) {
+  return {
+    ...validatePosition(input),
+    reason: requiredText(input?.reason, 'reason for changing this position', 500),
+  };
+}
+
+function validatePositionDeletion(input) {
+  return {
+    replacementPositionId: validateMasterDataId(input?.replacementPositionId, 'replacement position'),
+    reason: requiredText(input?.reason, 'reason for deleting this position', 500),
+  };
+}
+
+module.exports = {
+  validateEmployee,
+  validateUpdateEmployee,
+  validateMasterDataId,
+  validatePosition,
+  validatePositionRename,
+  validatePositionDeletion,
+};

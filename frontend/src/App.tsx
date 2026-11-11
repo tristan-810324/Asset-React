@@ -21,14 +21,22 @@ import GsoHeadDashboard from './gsohead/gsoheaddashboard'
 import HeadApproval from './gso/headapproval'
 import EmployeeMasterData from './gso/employemasterdata'
 import MainIssuance from './gso/mainissuance'
+import AssetLabels from './gso/assetlabels'
 import GsoPurchaseRequisitions from './gso/purchaserequisitions'
+import BorrowingPage from './gso/borrowing'
 import IssuanceRecord from './gso/issuancerecord'
+import GsoHeadIssuanceRecord from './gsohead/issuancerecord'
 import ReturnItems from './gso/returnitems'
+import BorrowingReturns from './gso/borrowingreturns'
 import ToRepaired from './gso/torepaired'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
-import Notifications from './gso/notifications' 
+import Notifications from './gso/notifications'
+import GsoHeadNotifications from './gsohead/gsoheadnotifications'
+import GsoHeadProfile from './gsohead/gsoheadprofile'
 import RequesterVerification from './gso/requesterverification'
+import GsoAuditLogs from './gso/auditlogs'
+import GsoProfile from './gso/profilesettings'
 
 
 
@@ -135,6 +143,18 @@ export default function App() {
   if (path === '/gso-head/items') {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadDashboard /></ProtectedDashboard>
   }
+  if (path === '/gso-head/issuance-history') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadIssuanceRecord /></ProtectedDashboard>
+  }
+  if (path === '/gso-head/notifications') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadNotifications /></ProtectedDashboard>
+  }
+  if (path === '/gso-head/profile') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadProfile /></ProtectedDashboard>
+  }
+  if (path === '/gso-head/audit-logs') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoAuditLogs /></ProtectedDashboard>
+  }
   if (path === '/gso-head/requests') {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><HeadApproval /></ProtectedDashboard>
   }
@@ -143,6 +163,12 @@ export default function App() {
   }
   if (path === '/gso/notifications') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><Notifications /></ProtectedDashboard>
+  }
+  if (path === '/gso/profile') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoProfile /></ProtectedDashboard>
+  }
+  if (path === '/gso/audit-logs') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoAuditLogs /></ProtectedDashboard>
   }
   if (path === '/gso/requester-verification') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><RequesterVerification /></ProtectedDashboard>
@@ -156,17 +182,23 @@ export default function App() {
   if (path === '/gso/main-issuance') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><MainIssuance /></ProtectedDashboard>
   }
+  if (path === '/gso/asset-labels') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><AssetLabels /></ProtectedDashboard>
+  }
   if (path === '/gso/purchase-requisitions') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoPurchaseRequisitions /></ProtectedDashboard>
   }
   if (path === '/gso/return-items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ReturnItems /></ProtectedDashboard>
   }
+  if (path === '/gso/borrowing-returns') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><BorrowingReturns /></ProtectedDashboard>
+  }
   if (path === '/gso/to-be-repaired') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ToRepaired /></ProtectedDashboard>
   }
-  if (path === '/gso/requests-borrowing') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><MainIssuance /></ProtectedDashboard>
+  if (path === '/gso/borrowing-requests' || path === '/gso/requests-borrowing') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><BorrowingPage /></ProtectedDashboard>
   }
   if (path === '/gso' || path === '/gso/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoDashboard /></ProtectedDashboard>

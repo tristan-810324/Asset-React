@@ -293,11 +293,12 @@ export default function IssuanceRecord() {
         ['Quantity', [`${selectedRecord.quantity} ${selectedRecord.unitOfMeasure}`, quantityBreakdown(selectedRecord)].filter(Boolean).join(' · ')],
         ['Due back', selectedRecord.dueAt ? formatDue(selectedRecord.dueAt) : ''],
         ['Purpose', [selectedRecord.purpose, selectedRecord.useLocation].filter(Boolean).join(' · ')],
+        ['Actual use', [selectedRecord.recipientLocation, selectedRecord.recipientPurpose].filter(Boolean).join(' · ')],
       ] as [string, string][]).filter(([, value]) => value)
     : []
 
   return (
-    <GsoPageFrame activePage="Issuances Records" searchPlaceholder="Search item code, employee, or department...">
+    <GsoPageFrame activePage="Issuance History" searchPlaceholder="Search item code, employee, or department...">
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
         <div className="relative">
@@ -314,7 +315,10 @@ export default function IssuanceRecord() {
             + Return Items
           </a>
           <a href="/gso/issuance" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
-            + Issuances Records
+            + Issuance History
+          </a>
+          <a href="/gso/borrowing-returns" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+            + Borrowing Returns
           </a>
         </nav>
       </section>
@@ -326,7 +330,7 @@ export default function IssuanceRecord() {
             type="button"
             onClick={() => setStatusFilter(card.key)}
             aria-pressed={statusFilter === card.key}
-            className={`rounded-2xl border bg-white p-4 text-left shadow-sm shadow-slate-200/55 transition hover:border-blue-200 ${statusFilter === card.key ? 'border-blue-400 ring-4 ring-blue-100' : 'border-slate-200/80'}`}
+            className={`rounded-2xl border-2 bg-white p-4 text-left shadow-md shadow-slate-300/35 transition hover:-translate-y-0.5 hover:border-blue-200 ${statusFilter === card.key ? 'border-blue-500 ring-4 ring-blue-100' : 'border-slate-300/80 ring-1 ring-slate-900/5'}`}
           >
             <span className="block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">{card.label}</span>
             <span className={`mt-1 block text-2xl font-black ${card.tone}`}>{isLoading ? '—' : card.value}</span>
@@ -334,7 +338,7 @@ export default function IssuanceRecord() {
         ))}
       </section>
 
-      <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+      <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <label className="block">
             <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Search</span>
@@ -398,7 +402,7 @@ export default function IssuanceRecord() {
         </div>
       </section>
 
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Issuance records</h2>

@@ -39,7 +39,7 @@ export default function HoldingsClearance() {
   const overdueCount = holdings.filter((entry) => entry.isOverdue).length
 
   return (
-    <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6" aria-labelledby="holdings-title">
+    <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="holdings-title">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="holdings-title" className="text-base font-black tracking-tight text-slate-900">Still with employees &amp; clearance</h2>
@@ -87,7 +87,7 @@ export default function HoldingsClearance() {
                 <td className="px-3 py-2.5">
                   {entry.source === 'GSO issuance'
                     ? <a href="/gso/return-items" className="text-[0.62rem] font-extrabold text-blue-700 hover:underline">Return Items</a>
-                    : <a href="/gso/requests-borrowing" className="text-[0.62rem] font-extrabold text-blue-700 hover:underline">Request &amp; Borrowing</a>}
+                    : <a href="/gso/borrowing-requests" className="text-[0.62rem] font-extrabold text-blue-700 hover:underline">Borrowing Requests</a>}
                 </td>
               </tr>
             ))}

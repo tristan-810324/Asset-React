@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AuthUser } from '../../auth/authApi'
+import { listServerNotifications, onNotificationsChanged } from '../../auth/notificationsApi'
 
 export type RequesterPage = 'Home' | 'Request Center' | 'My Requests' | 'My Issued Items' | 'Notifications' | 'Return Items' | 'Profile'
 
@@ -68,7 +69,19 @@ export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { cur
 export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignOut }: { pageName: RequesterPage; today: string; user: AuthUser | null; onOpenMenu: () => void; onSignOut: () => void }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const accountMenuRef = useRef<HTMLDivElement>(null)
+  const [unreadCount, setUnreadCount] = useState(0)
   const initials = user?.name?.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase() || 'BR'
+
+  useEffect(() => {
+    let active = true
+    const refresh = () => listServerNotifications()
+      .then((rows) => { if (active) setUnreadCount(rows.filter((row) => !row.readAt).length) })
+      .catch(() => undefined)
+    void refresh()
+    const interval = window.setInterval(() => void refresh(), 60_000)
+    const stopListening = onNotificationsChanged(() => void refresh())
+    return () => { active = false; window.clearInterval(interval); stopListening() }
+  }, [])
 
   useEffect(() => {
     if (!accountMenuOpen) return
@@ -86,7 +99,7 @@ export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignO
         <div className="min-w-0"><p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">Requester Portal / <span className="text-slate-700">{pageName}</span></p><p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p></div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
-        <a href="/requester/notifications" className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label="Open notifications" aria-current={pageName === 'Notifications' ? 'page' : undefined}><Icon name="bell" className="h-[1.1rem] w-[1.1rem]" />{pageName === 'Notifications' && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-600" />}</a>
+        <a href="/requester/notifications" className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label={unreadCount > 0 ? `Open notifications, ${unreadCount} unread` : 'Open notifications'} aria-current={pageName === 'Notifications' ? 'page' : undefined}><Icon name="bell" className="h-[1.1rem] w-[1.1rem]" />{unreadCount > 0 ? <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[0.55rem] font-black text-white ring-2 ring-[#f4f7fb]">{unreadCount > 9 ? '9+' : unreadCount}</span> : pageName === 'Notifications' && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-600" />}</a>
         <div ref={accountMenuRef} className="relative">
           <button type="button" onClick={() => setAccountMenuOpen((open) => !open)} className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition hover:border-blue-200 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label="Open account menu" aria-haspopup="menu" aria-expanded={accountMenuOpen}>
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span>

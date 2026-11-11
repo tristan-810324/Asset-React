@@ -14,4 +14,14 @@ const createDepartment = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: { department } });
 });
 
-module.exports = { listDepartments, createDepartment };
+const renameDepartment = asyncHandler(async (req, res) => {
+  const result = await departmentsService.renameDepartment(req.params.departmentId, req.body, req.user);
+  res.json({ success: true, data: result });
+});
+
+const deleteDepartment = asyncHandler(async (req, res) => {
+  const result = await departmentsService.deleteDepartment(req.params.departmentId, req.body, req.user);
+  res.json({ success: true, data: result });
+});
+
+module.exports = { listDepartments, createDepartment, renameDepartment, deleteDepartment };

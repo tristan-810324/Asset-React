@@ -170,10 +170,62 @@ async function getPicture(userId) {
   return result.rows[0]?.picture_data || null;
 }
 
-async function review(userId, { status, note, reviewedByUserId }) {
+async function resolveApprovedDepartment(client, name, addIfMissing, createdByUserId) {
+  const existing = await client.query(
+    `SELECT name FROM departments WHERE lower(name) = lower($1) ORDER BY id LIMIT 1 FOR UPDATE`,
+    [name],
+  );
+  if (existing.rows[0]) return existing.rows[0].name;
+  if (!addIfMissing) {
+    throw Object.assign(new Error('Napili na department / office ay wala na sa master data. I-refresh ang page at pumili ulit.'), { status: 409 });
+  }
+  const inserted = await client.query(
+    `INSERT INTO departments (name, created_by_user_id)
+     VALUES ($1, $2)
+     ON CONFLICT (lower(name)) DO NOTHING
+     RETURNING name`,
+    [name.trim(), createdByUserId],
+  );
+  if (inserted.rows[0]) return inserted.rows[0].name;
+  const concurrent = await client.query(
+    `SELECT name FROM departments WHERE lower(name) = lower($1) ORDER BY id LIMIT 1`,
+    [name],
+  );
+  if (concurrent.rows[0]) return concurrent.rows[0].name;
+  throw Object.assign(new Error('Hindi naidagdag ang department / office. I-refresh at subukan ulit.'), { status: 409 });
+}
+
+async function resolveApprovedPosition(client, name, addIfMissing, createdByUserId) {
+  const existing = await client.query(
+    `SELECT name FROM employee_positions WHERE lower(name) = lower($1) ORDER BY id LIMIT 1 FOR UPDATE`,
+    [name],
+  );
+  if (existing.rows[0]) return existing.rows[0].name;
+  if (!addIfMissing) {
+    throw Object.assign(new Error('Napiling position ay wala na sa master data. I-refresh ang page at pumili ulit.'), { status: 409 });
+  }
+  const inserted = await client.query(
+    `INSERT INTO employee_positions (name, created_by_user_id)
+     VALUES ($1, $2)
+     ON CONFLICT (lower(name)) DO NOTHING
+     RETURNING name`,
+    [name.trim(), createdByUserId],
+  );
+  if (inserted.rows[0]) return inserted.rows[0].name;
+  const concurrent = await client.query(
+    `SELECT name FROM employee_positions WHERE lower(name) = lower($1) ORDER BY id LIMIT 1`,
+    [name],
+  );
+  if (concurrent.rows[0]) return concurrent.rows[0].name;
+  throw Object.assign(new Error('Hindi naidagdag ang position. I-refresh at subukan ulit.'), { status: 409 });
+}
+
+async function review(userId, { status, note, department, position, addDepartment, addPosition, reviewedByUserId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    let approvedDepartment = null;
+    let approvedPosition = null;
     const identityResult = await client.query(
       `SELECT profile.user_id, profile.employee_code, profile.first_name,
               profile.middle_name, profile.last_name, profile.suffix,
@@ -239,6 +291,8 @@ async function review(userId, { status, note, reviewedByUserId }) {
             { status: 400 },
           );
         }
+        approvedDepartment = existingEmployee.department;
+        approvedPosition = existingEmployee.position;
       }
 
       // Keep an existing Employee Master Data record as the source of truth.
@@ -258,6 +312,19 @@ async function review(userId, { status, note, reviewedByUserId }) {
           );
         }
 
+        approvedDepartment = await resolveApprovedDepartment(
+          client,
+          department || identity.department,
+          Boolean(addDepartment),
+          reviewedByUserId,
+        );
+        approvedPosition = await resolveApprovedPosition(
+          client,
+          position || identity.position,
+          Boolean(addPosition),
+          reviewedByUserId,
+        );
+
         const createdResult = await client.query(
           `INSERT INTO employees (
              employee_code, first_name, middle_name, last_name, suffix,
@@ -271,8 +338,8 @@ async function review(userId, { status, note, reviewedByUserId }) {
             employeeName.middleName,
             employeeName.lastName,
             employeeName.suffix,
-            identity.department,
-            identity.position,
+            approvedDepartment,
+            approvedPosition,
             identity.account_email,
             identity.picture_data,
             reviewedByUserId,
@@ -304,17 +371,24 @@ async function review(userId, { status, note, reviewedByUserId }) {
           ],
         );
       }
+
+      await client.query(
+        `UPDATE users SET position = $2, updated_at = NOW() WHERE id = $1`,
+        [userId, approvedPosition],
+      );
     }
 
     await client.query(
       `UPDATE requester_identity_profiles
           SET verification_status = $2,
+              department = COALESCE($5, department),
+              position = COALESCE($6, position),
               review_note = $3,
               reviewed_at = NOW(),
               reviewed_by_user_id = $4,
               updated_at = NOW()
         WHERE user_id = $1`,
-      [userId, status, note, reviewedByUserId],
+      [userId, status, note, reviewedByUserId, approvedDepartment, approvedPosition],
     );
     const reviewedProfile = await client.query(
       `${IDENTITY_SELECT} WHERE requester.id = $1 AND profile.user_id IS NOT NULL`,

@@ -2,9 +2,12 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { clearAuthSession, getCurrentUser, type AuthUser } from '../auth/authApi'
 import { RequesterPageHeader, RequesterSidebar, type RequesterPage } from '../components/navbars/requesternavbar'
 import { RequesterIdentityContext, type RequesterIdentityContextValue } from './requesteridentitycontext'
-import { getMyRequesterIdentity, listRequesterDepartments, submitRequesterIdentity, type RequesterIdentity, type RequesterIdentityInput } from './requesterApi'
+import { getMyRequesterIdentity, listRequesterDepartments, listRequesterPositions, submitRequesterIdentity, type RequesterIdentity, type RequesterIdentityInput } from './requesterApi'
 
 const identityInputClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
+const OTHER_MASTER_VALUE = '__requester_master_data_other__'
+
+const findMasterValue = (values: string[], value: string) => values.find((item) => item.trim().toLowerCase() === value.trim().toLowerCase())
 
 export function RequesterIdentityForm({ profile, onSaved, onCancel, accountEmail = '' }: {
   profile: RequesterIdentity | null
@@ -27,7 +30,11 @@ export function RequesterIdentityForm({ profile, onSaved, onCancel, accountEmail
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [departments, setDepartments] = useState<string[]>([])
+  const [positions, setPositions] = useState<string[]>([])
+  const [departmentOtherSelected, setDepartmentOtherSelected] = useState(false)
+  const [positionOtherSelected, setPositionOtherSelected] = useState(false)
   const [departmentLoadError, setDepartmentLoadError] = useState('')
+  const [positionLoadError, setPositionLoadError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -36,12 +43,23 @@ export function RequesterIdentityForm({ profile, onSaved, onCancel, accountEmail
         if (active) setDepartments(records.map((department) => department.name))
       })
       .catch(() => {
-        if (active) setDepartmentLoadError('Unable to load departments. Enter the official department or office name.')
+        if (active) setDepartmentLoadError('Could not load saved departments. You can suggest the official name for GSO to review.')
+      })
+    void listRequesterPositions()
+      .then((records) => {
+        if (active) setPositions(records.map((position) => position.name))
+      })
+      .catch(() => {
+        if (active) setPositionLoadError('Could not load saved positions. You can suggest the official title for GSO to review.')
       })
     return () => { active = false }
   }, [])
 
   const setField = (key: keyof RequesterIdentityInput, value: string) => setForm((current) => ({ ...current, [key]: value }))
+  const savedDepartment = findMasterValue(departments, form.department)
+  const savedPosition = findMasterValue(positions, form.position)
+  const departmentChoice = savedDepartment || (departmentOtherSelected || form.department ? OTHER_MASTER_VALUE : '')
+  const positionChoice = savedPosition || (positionOtherSelected || form.position ? OTHER_MASTER_VALUE : '')
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -64,12 +82,12 @@ export function RequesterIdentityForm({ profile, onSaved, onCancel, accountEmail
       <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Middle name <span className="font-medium text-slate-500">(optional)</span></span><input className={identityInputClass} autoComplete="additional-name" value={form.middleName} onChange={(event) => setField('middleName', event.target.value)} placeholder="Enter middle name" maxLength={100} /></label>
       <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Suffix <span className="font-medium text-slate-500">(optional)</span></span><input className={identityInputClass} value={form.suffix} onChange={(event) => setField('suffix', event.target.value)} placeholder="e.g. Jr., III" maxLength={40} /></label>
       <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Employee code</span><input className={identityInputClass} autoComplete="off" value={form.employeeCode} onChange={(event) => setField('employeeCode', event.target.value)} placeholder="e.g. 2024-00123" required maxLength={40} /></label>
-      <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Department / office</span>{departments.length > 0 ? <select className={identityInputClass} value={form.department} onChange={(event) => setField('department', event.target.value)} required><option value="" disabled>Select department / office</option>{form.department && !departments.includes(form.department) && <option value={form.department}>{form.department} (current)</option>}{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select> : <input className={identityInputClass} value={form.department} onChange={(event) => setField('department', event.target.value)} placeholder="e.g. Information Technology" required maxLength={120} />}{departmentLoadError && <span className="mt-1 block text-xs text-amber-700">{departmentLoadError}</span>}</label>
-      <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Position</span><input className={identityInputClass} value={form.position} onChange={(event) => setField('position', event.target.value)} placeholder="e.g. Administrative Assistant" required maxLength={120} /></label>
+      <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Department / office</span><select className={identityInputClass} value={departmentChoice} onChange={(event) => { const value = event.target.value; setDepartmentOtherSelected(value === OTHER_MASTER_VALUE); setField('department', value === OTHER_MASTER_VALUE ? (savedDepartment ? '' : form.department) : value) }} required><option value="" disabled>Select department / office</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}<option value={OTHER_MASTER_VALUE}>Wala sa listahan — suggest a department / office</option></select>{departmentChoice === OTHER_MASTER_VALUE && <input className={`${identityInputClass} mt-2`} value={form.department} onChange={(event) => setField('department', event.target.value)} placeholder="Enter the official department / office name" required maxLength={120} />}{departmentLoadError && <span className="mt-1 block text-xs text-amber-700">{departmentLoadError}</span>}{departmentChoice === OTHER_MASTER_VALUE && !departmentLoadError && <span className="mt-1 block text-xs text-slate-500">GSO will review this suggestion before adding it to the list.</span>}</label>
+      <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Position</span><select className={identityInputClass} value={positionChoice} onChange={(event) => { const value = event.target.value; setPositionOtherSelected(value === OTHER_MASTER_VALUE); setField('position', value === OTHER_MASTER_VALUE ? (savedPosition ? '' : form.position) : value) }} required><option value="" disabled>Select position</option>{positions.map((position) => <option key={position} value={position}>{position}</option>)}<option value={OTHER_MASTER_VALUE}>Wala sa listahan — suggest a position</option></select>{positionChoice === OTHER_MASTER_VALUE && <input className={`${identityInputClass} mt-2`} value={form.position} onChange={(event) => setField('position', event.target.value)} placeholder="Enter your official position / title" required maxLength={120} />}{positionLoadError && <span className="mt-1 block text-xs text-amber-700">{positionLoadError}</span>}{positionChoice === OTHER_MASTER_VALUE && !positionLoadError && <span className="mt-1 block text-xs text-slate-500">GSO will review this suggestion before adding it to the list.</span>}</label>
       <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Contact number</span><input className={identityInputClass} type="tel" autoComplete="tel" value={form.contactNumber} onChange={(event) => setField('contactNumber', event.target.value)} placeholder="e.g. 09XX XXX XXXX" required maxLength={30} /></label>
       <label className="block sm:col-span-2"><span className="mb-2 block text-sm font-extrabold text-slate-900">Account email</span><input className={`${identityInputClass} cursor-not-allowed bg-slate-100 text-slate-700`} type="email" value={profile?.accountEmail || accountEmail} readOnly aria-readonly="true" /><span className="mt-1.5 block text-xs text-slate-500">This email is used for login and employee records.</span></label>
     </div>
-    <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3.5 text-sm leading-relaxed text-blue-900"><p>GSO will verify these details against Employee Master Data.</p><p className="mt-1.5 font-semibold">If your employee code is new, GSO can add it after verification.</p></div>
+    <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3.5 text-sm leading-relaxed text-blue-900"><p>GSO will verify these details against Employee Master Data.</p><p className="mt-1.5 font-semibold">A suggested department or position is added to the shared list only after GSO approves it. GSO can also match it to an existing option.</p><p className="mt-1.5 font-semibold">If your employee code is new, GSO can add it after verification.</p></div>
     {error && <p role="alert" className="rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
     <div className="flex flex-wrap justify-end gap-2 pt-1">
       {onCancel && <button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>}

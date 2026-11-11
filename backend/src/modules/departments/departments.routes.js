@@ -8,5 +8,7 @@ const router = express.Router();
 router.use(authenticate);
 router.get('/', requireRole('GSO_STAFF', 'BORROWER'), departmentsController.listDepartments);
 router.post('/', requireRole('GSO_STAFF'), departmentsController.createDepartment);
+router.put('/:departmentId', requireRole('GSO_STAFF'), departmentsController.renameDepartment);
+router.delete('/:departmentId', requireRole('GSO_STAFF'), departmentsController.deleteDepartment);
 
 module.exports = router;

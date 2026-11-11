@@ -83,12 +83,27 @@ async function review(userIdValue, input, reviewer) {
   const note = typeof input.note === 'string' ? input.note.trim() : '';
   if (note.length > 1000) invalid('Ang review note ay hindi dapat lumampas sa 1000 characters.');
   if (status === 'Needs Correction' && !note) invalid('Maglagay ng note para malaman ng requester kung ano ang dapat ayusin.');
+  const department = input.department === undefined ? undefined : requiredText(input.department, 'Department / office', 120);
+  const position = input.position === undefined ? undefined : requiredText(input.position, 'Position', 120);
+  const addDepartment = input.addDepartment === undefined ? false : input.addDepartment;
+  const addPosition = input.addPosition === undefined ? false : input.addPosition;
+  if (typeof addDepartment !== 'boolean' || typeof addPosition !== 'boolean') invalid('Hindi valid ang master data decision.');
+  if (addDepartment && !department) invalid('Pumili o maglagay ng department / office bago mag-approve.');
+  if (addPosition && !position) invalid('Pumili o maglagay ng position bago mag-approve.');
   const current = await repository.listReviewByUserId(userId);
   if (!current) invalid('Hindi makita ang requester identity na rerepasuhin.', 404);
   if (status === 'Verified' && current.matchedEmployeeCode && !current.employeeRecordMatch && !note) {
     invalid('Maglagay ng review note kung mano-manong ive-verify ang profile na hindi eksaktong tumugma sa Employee Master Data.');
   }
-  const profile = await repository.review(userId, { status, note, reviewedByUserId: reviewer.id });
+  const profile = await repository.review(userId, {
+    status,
+    note,
+    department,
+    position,
+    addDepartment,
+    addPosition,
+    reviewedByUserId: reviewer.id,
+  });
   if (!profile) invalid('Hindi makita ang requester identity na rerepasuhin.', 404);
   return profile;
 }

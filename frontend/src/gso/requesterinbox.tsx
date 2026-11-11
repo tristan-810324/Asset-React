@@ -173,7 +173,7 @@ export default function RequesterRequestInbox() {
   ]
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55" aria-label="Requester submissions">
+    <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-label="Requester submissions">
       <div className="border-b border-slate-100 bg-slate-50/60 px-5 py-5 sm:px-6">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>

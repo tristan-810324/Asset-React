@@ -111,7 +111,7 @@ function validateUpdateInventoryItem(input) {
 
 function validateRestockInventoryItem(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    invalid('Hindi valid ang bulk stock receipt details.');
+    invalid('Hindi valid ang quantity-tracked stock receipt details.');
   }
   const quantity = nonnegativeInteger(input.quantity, 'Restock quantity', 0);
   if (quantity < 1) invalid('Ang restock quantity ay dapat whole number na hindi bababa sa 1.');
@@ -162,7 +162,7 @@ function validateInventoryItem(input, includeReason) {
     invalid('Pumili kung consumable o ibinabalik ang stock kapag iniisyu.');
   }
   if (trackingMode === 'individual' && issueBehavior === 'consumable') {
-    invalid('Ang per-unit asset ay dapat ibalik at subaybayan bilang individual unit.');
+    invalid('Ang item na tina-track nang paisa-isa ay dapat ibalik at subaybayan bawat unit.');
   }
   const serialNumber = optionalText(input.serialNumber, 'Manufacturer serial number', 120);
   const receiptReference = optionalText(input.receiptReference, 'Receipt reference', 120);
@@ -170,10 +170,10 @@ function validateInventoryItem(input, includeReason) {
     ? undefined
     : optionalText(input.storageLocation, 'Storage location', 160);
   if (serialNumber && trackingMode !== 'individual') {
-    invalid('Manufacturer serial number ay para lamang sa per-unit assets.');
+    invalid('Manufacturer serial number ay para lamang sa mga item na tina-track nang paisa-isa.');
   }
   if (serialNumber && quantity !== 1) {
-    invalid('Isang manufacturer serial number lamang ang maaaring ilagay sa bawat per-unit record.');
+    invalid('Isang manufacturer serial number lamang ang maaaring ilagay sa bawat individually tracked item record.');
   }
 
   if (!includeReason && currentValue !== null && currentValue > acquisitionCost) {

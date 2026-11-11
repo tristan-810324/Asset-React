@@ -28,7 +28,7 @@ router.post('/mine/:batchId/decision', authenticate, requireRole('BORROWER'), is
 router.post('/batch/:batchId/handover', authenticate, requireRole('GSO_STAFF'), issuancesController.recordIssuanceHandover);
 router.get('/employee/:employeeCode', authenticate, requireRole('GSO_STAFF'), issuancesController.listEmployeeIssuances);
 router.get('/holdings', authenticate, requireRole('GSO_STAFF', 'IT_ADMIN'), returnsController.listHoldings);
-router.get('/records', authenticate, requireRole('GSO_STAFF', 'IT_ADMIN'), returnsController.listIssuanceRecords);
+router.get('/records', authenticate, requireRole('GSO_STAFF', 'GSO_HEAD', 'IT_ADMIN'), returnsController.listIssuanceRecords);
 router.get('/returns/approval-requests', authenticate, requireRole('GSO_STAFF', 'IT_ADMIN'), returnsController.listApprovalRequests);
 router.post('/returns/:returnId/repair', authenticate, requireRole('GSO_STAFF'), returnsController.resolveReturnRepair);
 router.patch('/returns/:returnId/settlement', authenticate, requireRole('IT_ADMIN'), returnsController.updateReturnSettlement);

@@ -1,10 +1,40 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { ApiError } from '../auth/authApi'
-import { createDepartment, createEmployee, listDepartments, listEmployees, updateEmployee, type EmployeeProfile, type EmployeeProfileInput } from './employeesApi'
+import {
+  createDepartment,
+  createEmployee,
+  createEmployeePosition,
+  deleteDepartment,
+  deleteEmployeePosition,
+  listDepartments,
+  listEmployeePositions,
+  listEmployees,
+  renameDepartment,
+  renameEmployeePosition,
+  updateEmployee,
+  type EmployeePositionProfile,
+  type EmployeeProfile,
+  type EmployeeProfileInput,
+} from './employeesApi'
 import { listEmployeeIssuances, type EmployeeIssuanceRecord } from './issuancesApi'
 
 interface DepartmentItem {
+  id: string
+  name: string
+}
+
+type MasterDataKind = 'department' | 'position'
+
+type MasterDataEdit = {
+  kind: MasterDataKind
+  id: string
+  name: string
+  reason: string
+}
+
+type MasterDataDeleteTarget = {
+  kind: MasterDataKind
   id: string
   name: string
 }
@@ -135,16 +165,22 @@ export default function EmployeeMasterData() {
     const params = new URLSearchParams(window.location.search)
     return { employeeCode: params.get('employeeCode'), showHistory: params.get('view') === 'history' }
   })
-  // Dynamic departments state
+  // Department and position records are managed by GSO.
   const [departments, setDepartments] = useState<DepartmentItem[]>(initialDepartments)
+  const [positions, setPositions] = useState<EmployeePositionProfile[]>([])
   const [showDepartmentModal, setShowDepartmentModal] = useState(false)
+  const [masterDataTab, setMasterDataTab] = useState<'departments' | 'positions'>('departments')
   const [newDepartmentName, setNewDepartmentName] = useState('')
-  const [editingDeptId, setEditingDeptId] = useState<string | null>(null)
-  const [editingDeptName, setEditingDeptName] = useState('')
-  const [editingDeptReason, setEditingDeptReason] = useState('')
-  const [deptToDelete, setDeptToDelete] = useState<DepartmentItem | null>(null)
-  const [deptDeleteReason, setDeptDeleteReason] = useState('')
-  const [departmentManagerError, setDepartmentManagerError] = useState('')
+  const [newPositionName, setNewPositionName] = useState('')
+  const [editingMasterEntry, setEditingMasterEntry] = useState<MasterDataEdit | null>(null)
+  const [masterEntryToDelete, setMasterEntryToDelete] = useState<MasterDataDeleteTarget | null>(null)
+  const [replacementEntryId, setReplacementEntryId] = useState('')
+  const [deletionReason, setDeletionReason] = useState('')
+  const [masterDataError, setMasterDataError] = useState('')
+  const [masterDataNotice, setMasterDataNotice] = useState('')
+  const [isLoadingMasterData, setIsLoadingMasterData] = useState(true)
+  const [isSavingMasterData, setIsSavingMasterData] = useState(false)
+  const [isDeletingMasterData, setIsDeletingMasterData] = useState(false)
 
   // Search and Filter states
   const [searchQuery, setSearchQuery] = useState('')
@@ -183,14 +219,19 @@ export default function EmployeeMasterData() {
   useEffect(() => {
     let active = true
 
-    void listDepartments()
-      .then(({ departments: records }) => {
-        if (!active || records.length === 0) return
-        setDepartments(records.map((department) => ({ id: department.id, name: department.name })))
+    void Promise.all([listDepartments(), listEmployeePositions()])
+      .then(([departmentResult, positionResult]) => {
+        if (!active) return
+        if (departmentResult.departments.length > 0) {
+          setDepartments(departmentResult.departments.map((department) => ({ id: department.id, name: department.name })))
+        }
+        setPositions(positionResult.positions)
+        setMasterDataError('')
       })
       .catch((error: unknown) => {
-        if (active) setDepartmentManagerError(error instanceof Error ? error.message : 'Unable to load departments.')
+        if (active) setMasterDataError(error instanceof Error ? error.message : 'Unable to load department and position master data.')
       })
+      .finally(() => { if (active) setIsLoadingMasterData(false) })
 
     void listEmployees()
       .then(({ employees: profiles }) => {
@@ -231,81 +272,172 @@ export default function EmployeeMasterData() {
     e.preventDefault()
     const trimmed = newDepartmentName.trim()
     if (!trimmed) {
-      setDepartmentManagerError('Please enter a department name.')
+      setMasterDataError('Please enter a department name.')
+      setMasterDataNotice('')
       return
     }
-
     const existing = departments.find((department) => department.name.toLowerCase() === trimmed.toLowerCase())
     if (existing) {
-      setDepartmentManagerError('That department already exists.')
+      setMasterDataError('That department already exists.')
+      setMasterDataNotice('')
       return
     }
-
-    setDepartmentManagerError('')
+    setIsSavingMasterData(true)
+    setMasterDataError('')
+    setMasterDataNotice('')
     try {
       const { department } = await createDepartment(trimmed)
       const newDepartment = { id: department.id, name: department.name }
       setDepartments((current) => {
         const alreadyAdded = current.some((item) => item.name.toLowerCase() === department.name.toLowerCase())
-        return alreadyAdded ? current : [...current, newDepartment]
+        return alreadyAdded ? current : [...current, newDepartment].sort((left, right) => left.name.localeCompare(right.name))
       })
       setNewDepartmentName('')
-      alert('The new department was added successfully!')
+      setMasterDataNotice('Department "' + department.name + '" was added. It is now available in employee profiles and filters.')
     } catch (error) {
-      setDepartmentManagerError(error instanceof Error ? error.message : 'Unable to save the department.')
+      setMasterDataError(error instanceof Error ? error.message : 'Unable to save the department.')
+    } finally {
+      setIsSavingMasterData(false)
     }
   }
 
-  const handleRenameDepartment = (e: React.FormEvent, dept: DepartmentItem) => {
+  const handleAddPosition = async (e: React.FormEvent) => {
     e.preventDefault()
-    const name = editingDeptName.trim()
-    const reason = editingDeptReason.trim()
+    const trimmed = newPositionName.trim()
+    if (!trimmed) {
+      setMasterDataError('Please enter a position name.')
+      setMasterDataNotice('')
+      return
+    }
+    if (positions.some((position) => position.name.toLowerCase() === trimmed.toLowerCase())) {
+      setMasterDataError('That position already exists.')
+      setMasterDataNotice('')
+      return
+    }
+    setIsSavingMasterData(true)
+    setMasterDataError('')
+    setMasterDataNotice('')
+    try {
+      const { position } = await createEmployeePosition(trimmed)
+      setPositions((current) => current.some((entry) => entry.id === position.id)
+        ? current
+        : [...current, position].sort((left, right) => left.name.localeCompare(right.name)))
+      setNewPositionName('')
+      setMasterDataNotice('Position "' + position.name + '" was added. It is now available when editing employee profiles.')
+    } catch (error) {
+      setMasterDataError(error instanceof Error ? error.message : 'Unable to save the position.')
+    } finally {
+      setIsSavingMasterData(false)
+    }
+  }
+
+  const updateLocalMasterDataReferences = (kind: MasterDataKind, currentName: string, nextName: string) => {
+    if (kind === 'department') {
+      setEmployees((current) => current.map((employee) => employee.department === currentName ? { ...employee, department: nextName } : employee))
+      setSelectedEmployee((current) => current?.department === currentName ? { ...current, department: nextName } : current)
+      setEditEmployeeData((current) => current.department === currentName ? { ...current, department: nextName } : current)
+      setSelectedDeptFilter((current) => current === currentName ? nextName : current)
+      return
+    }
+    setEmployees((current) => current.map((employee) => employee.position === currentName ? { ...employee, position: nextName } : employee))
+    setSelectedEmployee((current) => current?.position === currentName ? { ...current, position: nextName } : current)
+    setEditEmployeeData((current) => current.position === currentName ? { ...current, position: nextName } : current)
+  }
+
+  const beginRenameMasterEntry = (kind: MasterDataKind, entry: { id: string; name: string }) => {
+    setEditingMasterEntry({ kind, id: entry.id, name: entry.name, reason: '' })
+    setMasterDataError('')
+    setMasterDataNotice('')
+  }
+
+  const handleRenameMasterEntry = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingMasterEntry) return
+    const name = editingMasterEntry.name.trim()
+    const reason = editingMasterEntry.reason.trim()
     if (!name || !reason) {
-      setDepartmentManagerError('Please enter a new name and the reason for changing it.')
+      setMasterDataError('Enter a name and the reason for this change.')
       return
     }
-
-    setDepartments((current) =>
-      current.map((item) => (item.id === dept.id ? { ...item, name } : item))
-    )
-    setEmployees((current) =>
-      current.map((emp) => (emp.department === dept.name ? { ...emp, department: name } : emp))
-    )
-    setSelectedEmployee((current) =>
-      current?.department === dept.name ? { ...current, department: name } : current
-    )
-    setSelectedDeptFilter((current) => (current === dept.name ? name : current))
-
-    setEditingDeptId(null)
-    setEditingDeptName('')
-    setEditingDeptReason('')
-    setDepartmentManagerError('')
+    const existing = editingMasterEntry.kind === 'department' ? departments : positions
+    if (existing.some((entry) => entry.id !== editingMasterEntry.id && entry.name.toLowerCase() === name.toLowerCase())) {
+      setMasterDataError('That ' + editingMasterEntry.kind + ' already exists.')
+      return
+    }
+    const previousName = (existing.find((entry) => entry.id === editingMasterEntry.id)?.name || '').trim()
+    if (!previousName) {
+      setMasterDataError('This ' + editingMasterEntry.kind + ' no longer exists. Refresh the page and try again.')
+      return
+    }
+    setIsSavingMasterData(true)
+    setMasterDataError('')
+    setMasterDataNotice('')
+    try {
+      if (editingMasterEntry.kind === 'department') {
+        const result = await renameDepartment(editingMasterEntry.id, { name, reason })
+        setDepartments((current) => current.map((entry) => entry.id === result.department.id ? result.department : entry).sort((left, right) => left.name.localeCompare(right.name)))
+        updateLocalMasterDataReferences('department', previousName, result.department.name)
+        setMasterDataNotice('Department renamed to "' + result.department.name + '". ' + result.renamedEmployeeCount + ' employee profile' + (result.renamedEmployeeCount === 1 ? '' : 's') + ' updated.')
+      } else {
+        const result = await renameEmployeePosition(editingMasterEntry.id, { name, reason })
+        setPositions((current) => current.map((entry) => entry.id === result.position.id ? result.position : entry).sort((left, right) => left.name.localeCompare(right.name)))
+        updateLocalMasterDataReferences('position', previousName, result.position.name)
+        setMasterDataNotice('Position renamed to "' + result.position.name + '". ' + result.renamedEmployeeCount + ' employee profile' + (result.renamedEmployeeCount === 1 ? '' : 's') + ' updated.')
+      }
+      setEditingMasterEntry(null)
+    } catch (error) {
+      setMasterDataError(error instanceof Error ? error.message : 'Unable to rename the ' + editingMasterEntry.kind + '.')
+    } finally {
+      setIsSavingMasterData(false)
+    }
   }
 
-  const handleDeleteDepartment = (e: React.FormEvent) => {
+  const beginDeleteMasterEntry = (kind: MasterDataKind, entry: { id: string; name: string }) => {
+    setMasterEntryToDelete({ kind, id: entry.id, name: entry.name })
+    setReplacementEntryId('')
+    setDeletionReason('')
+    setMasterDataError('')
+    setMasterDataNotice('')
+  }
+
+  const handleDeleteMasterEntry = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!deptToDelete || !deptDeleteReason.trim()) {
-      setDepartmentManagerError('Please specify the reason for deleting this department.')
+    if (!masterEntryToDelete || !replacementEntryId) {
+      setMasterDataError('Choose a replacement before removing this entry.')
       return
     }
-
-    const remaining = departments.filter((d) => d.id !== deptToDelete.id)
-    const fallbackDept = remaining[0]?.name || 'General'
-
-    setDepartments(remaining)
-    setEmployees((current) =>
-      current.map((emp) =>
-        emp.department === deptToDelete.name ? { ...emp, department: fallbackDept } : emp
-      )
-    )
-    setSelectedEmployee((current) =>
-      current?.department === deptToDelete.name ? { ...current, department: fallbackDept } : current
-    )
-    setSelectedDeptFilter((current) => (current === deptToDelete.name ? 'all' : current))
-
-    setDeptToDelete(null)
-    setDeptDeleteReason('')
-    setDepartmentManagerError('')
+    if (replacementEntryId === masterEntryToDelete.id) {
+      setMasterDataError('Choose a different replacement.')
+      return
+    }
+    const reason = deletionReason.trim()
+    if (!reason) {
+      setMasterDataError('Enter the reason for removing this entry.')
+      return
+    }
+    setIsDeletingMasterData(true)
+    setMasterDataError('')
+    setMasterDataNotice('')
+    try {
+      if (masterEntryToDelete.kind === 'department') {
+        const result = await deleteDepartment(masterEntryToDelete.id, { replacementDepartmentId: replacementEntryId, reason })
+        setDepartments((current) => current.filter((entry) => entry.id !== masterEntryToDelete.id))
+        updateLocalMasterDataReferences('department', masterEntryToDelete.name, result.replacementDepartment.name)
+        setMasterDataNotice('Department removed. ' + result.reassignedEmployeeCount + ' employee profile' + (result.reassignedEmployeeCount === 1 ? '' : 's') + ' reassigned to "' + result.replacementDepartment.name + '".')
+      } else {
+        const result = await deleteEmployeePosition(masterEntryToDelete.id, { replacementPositionId: replacementEntryId, reason })
+        setPositions((current) => current.filter((entry) => entry.id !== masterEntryToDelete.id))
+        updateLocalMasterDataReferences('position', masterEntryToDelete.name, result.replacementPosition.name)
+        setMasterDataNotice('Position removed. ' + result.reassignedEmployeeCount + ' employee profile' + (result.reassignedEmployeeCount === 1 ? '' : 's') + ' reassigned to "' + result.replacementPosition.name + '".')
+      }
+      setMasterEntryToDelete(null)
+      setReplacementEntryId('')
+      setDeletionReason('')
+    } catch (error) {
+      setMasterDataError(error instanceof Error ? error.message : 'Unable to remove the ' + masterEntryToDelete.kind + '.')
+    } finally {
+      setIsDeletingMasterData(false)
+    }
   }
 
   // Open Edit Employee Modal
@@ -339,8 +471,8 @@ export default function EmployeeMasterData() {
     e.preventDefault()
     if (!selectedEmployee) return
 
-    if (!editEmployeeData.empCode.trim() || !editEmployeeData.firstName.trim() || !editEmployeeData.lastName.trim() || !editEmployeeData.reason.trim()) {
-      setEmployeeEditError('Please enter the employee code, first name, last name, and reason for changing this information.')
+    if (!editEmployeeData.empCode.trim() || !editEmployeeData.firstName.trim() || !editEmployeeData.lastName.trim() || !editEmployeeData.position.trim() || !editEmployeeData.reason.trim()) {
+      setEmployeeEditError('Please enter the employee code, first name, last name, position, and reason for changing this information.')
       return
     }
 
@@ -363,7 +495,7 @@ export default function EmployeeMasterData() {
       suffix: editEmployeeData.suffix.trim(),
       initials: `${editEmployeeData.firstName[0] || ''}${editEmployeeData.lastName[0] || ''}`.toUpperCase() || 'EM',
       department: editEmployeeData.department,
-      position: editEmployeeData.position.trim() || 'Employee',
+      position: editEmployeeData.position.trim(),
       email: editEmployeeData.email.trim(),
       status: editEmployeeData.status,
       statusTone: editEmployeeData.status === 'Active' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600',
@@ -420,6 +552,16 @@ export default function EmployeeMasterData() {
       })
   }
 
+  const editablePositionOptions = useMemo(() => {
+    const legacyPosition = editEmployeeData.position.trim()
+    if (!legacyPosition || positions.some((position) => position.name === legacyPosition)) return positions
+    return [{ id: `legacy-${legacyPosition}`, name: legacyPosition }, ...positions]
+  }, [editEmployeeData.position, positions])
+
+  const activeMasterEntries = masterDataTab === 'departments' ? departments : positions
+  const replacementEntries = masterEntryToDelete
+    ? (masterEntryToDelete.kind === 'department' ? departments : positions).filter((entry) => entry.id !== masterEntryToDelete.id)
+    : []
 
   // Filtered employee list
   const filteredEmployees = employees.filter((emp) => {
@@ -437,7 +579,7 @@ export default function EmployeeMasterData() {
   return (
     <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search employees...">
       {/* HEADER SECTION */}
-      <section className="rounded-3xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-6 text-white shadow-xl shadow-blue-950/15 sm:p-8">
+      <section className="rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <span className="inline-flex rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
           People Directory Workspace
         </span>
@@ -468,202 +610,184 @@ export default function EmployeeMasterData() {
         </p>
       )}
 
-      {/* MODAL FOR CREATING & MANAGING DEPARTMENTS (EDITABLE LIKE ITEMS MASTER DATA) */}
+      {/* EMPLOYEE MASTER DATA MANAGER */}
       {showDepartmentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-            <h3 className="text-sm font-black text-slate-900">Manage Departments</h3>
-            <p className="mt-1 text-xs text-slate-500">
-              Add new department profiles, rename existing ones with a reason, or delete unused entries.
-            </p>
-            <form onSubmit={handleAddDepartment} className="mt-4">
-              <label className="block">
-                <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">Department Name</span>
-                <input
-                  type="text"
-                  required
-                  value={newDepartmentName}
-                  onChange={(e) => setNewDepartmentName(e.target.value)}
-                  placeholder="e.g. Guidance & Counseling"
-                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
-              <div className="mt-3 flex justify-end">
-                <button
-                  type="submit"
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-extrabold text-white hover:bg-blue-700"
-                >
-                  Add Department
-                </button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="people-master-data-title" className="flex max-h-[94vh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30">
+            <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-7">
+              <div>
+                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee master data</p>
+                <h2 id="people-master-data-title" className="mt-1 text-base font-black text-slate-900 sm:text-lg">Manage Departments, Offices &amp; Positions</h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">Keep the choices in employee profiles clear, current, and consistent.</p>
               </div>
-            </form>
-
-            {departmentManagerError && (
-              <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                {departmentManagerError}
-              </p>
-            )}
-
-            <div className="mt-5 border-t border-slate-100 pt-4">
-              <h4 className="text-xs font-extrabold uppercase tracking-wide text-slate-500">Existing Departments</h4>
-              <div className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1">
-                {departments.map((dept) => (
-                  <div key={dept.id} className="rounded-xl border border-slate-100 p-3">
-                    {editingDeptId === dept.id ? (
-                      <form onSubmit={(e) => handleRenameDepartment(e, dept)} className="space-y-2">
-                        <label className="block">
-                          <span className="mb-1 block text-[0.62rem] font-bold text-slate-500">Updated department name</span>
-                          <input
-                            type="text"
-                            required
-                            value={editingDeptName}
-                            onChange={(e) => setEditingDeptName(e.target.value)}
-                            className="h-9 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="mb-1 block text-[0.62rem] font-bold text-slate-500">
-                            Why are you changing this information? (Required)
-                          </span>
-                          <textarea
-                            required
-                            value={editingDeptReason}
-                            onChange={(e) => setEditingDeptReason(e.target.value)}
-                            placeholder="Why does this department name need to change?"
-                            className="min-h-16 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                          />
-                        </label>
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingDeptId(null)
-                              setDepartmentManagerError('')
-                            }}
-                            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="submit"
-                            className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-extrabold text-white"
-                          >
-                            Save Name
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-slate-700">{dept.name}</span>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingDeptId(dept.id)
-                              setEditingDeptName(dept.name)
-                              setEditingDeptReason('')
-                              setDepartmentManagerError('')
-                            }}
-                            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[0.65rem] font-bold text-blue-700"
-                          >
-                            Rename
-                          </button>
-                          <button
-                            type="button"
-                            disabled={departments.length <= 1}
-                            onClick={() => {
-                              setDeptToDelete(dept)
-                              setDeptDeleteReason('')
-                              setDepartmentManagerError('')
-                            }}
-                            className="rounded-lg border border-rose-100 px-2.5 py-1.5 text-[0.65rem] font-bold text-rose-600 disabled:opacity-40"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => {
                   setShowDepartmentModal(false)
-                  setDepartmentManagerError('')
-                  setEditingDeptId(null)
+                  setEditingMasterEntry(null)
+                  setMasterDataError('')
+                  setMasterDataNotice('')
                 }}
-                className="rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100"
               >
-                Done
+                Close
+              </button>
+            </header>
+
+            <div role="tablist" aria-label="Employee master data sections" className="grid grid-cols-2 gap-2 border-b border-slate-100 bg-slate-50/80 px-5 py-3 sm:px-7">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={masterDataTab === 'departments'}
+                onClick={() => { setMasterDataTab('departments'); setEditingMasterEntry(null); setMasterDataError(''); setMasterDataNotice('') }}
+                className={masterDataTab === 'departments' ? 'rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition' : 'rounded-xl px-4 py-2.5 text-xs font-extrabold text-slate-600 transition hover:bg-white hover:text-blue-700'}
+              >
+                Departments
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={masterDataTab === 'positions'}
+                onClick={() => { setMasterDataTab('positions'); setEditingMasterEntry(null); setMasterDataError(''); setMasterDataNotice('') }}
+                className={masterDataTab === 'positions' ? 'rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition' : 'rounded-xl px-4 py-2.5 text-xs font-extrabold text-slate-600 transition hover:bg-white hover:text-blue-700'}
+              >
+                Positions
               </button>
             </div>
-          </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/50 p-4 sm:p-7">
+              <div role="tabpanel" className="mx-auto max-w-3xl space-y-5">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <div className="border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Add a {masterDataTab === 'departments' ? 'department' : 'position'}</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-slate-600">{masterDataTab === 'departments' ? 'New departments appear in employee profiles and directory filters.' : 'New positions appear in the employee profile editor.'}</p>
+                  </div>
+                  <form onSubmit={masterDataTab === 'departments' ? handleAddDepartment : handleAddPosition} className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-700">{masterDataTab === 'departments' ? 'Department' : 'Position'} name</span>
+                      <input
+                        type="text"
+                        required
+                        maxLength={120}
+                        value={masterDataTab === 'departments' ? newDepartmentName : newPositionName}
+                        onChange={(event) => {
+                          if (masterDataTab === 'departments') setNewDepartmentName(event.target.value)
+                          else setNewPositionName(event.target.value)
+                        }}
+                        placeholder={masterDataTab === 'departments' ? 'e.g. Guidance & Counseling' : 'e.g. Administrative Assistant'}
+                        className="h-11 w-full rounded-xl border-2 border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
+                      />
+                    </label>
+                    <button type="submit" disabled={isSavingMasterData || isLoadingMasterData} className="h-11 rounded-xl bg-blue-600 px-5 text-sm font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-wait disabled:opacity-60">
+                      {isSavingMasterData ? 'Saving...' : 'Add ' + (masterDataTab === 'departments' ? 'department' : 'position')}
+                    </button>
+                  </form>
+                  {masterDataError && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{masterDataError}</p>}
+                  {masterDataNotice && <p role="status" className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-semibold text-emerald-800">{masterDataNotice}</p>}
+                </section>
+
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <div className="flex flex-wrap items-end justify-between gap-2 border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-slate-900">Saved {masterDataTab === 'departments' ? 'departments' : 'positions'}</h3>
+                      <p className="mt-1 text-sm text-slate-600">{activeMasterEntries.length} option{activeMasterEntries.length === 1 ? '' : 's'} available.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 max-h-[48vh] space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-3 pr-3.5">
+                    {isLoadingMasterData ? <p className="grid min-h-32 place-items-center rounded-xl border border-dashed border-slate-300 bg-white px-4 text-sm font-semibold text-slate-500">Loading master data...</p>
+                      : activeMasterEntries.length === 0 ? <p className="grid min-h-32 place-items-center rounded-xl border border-dashed border-slate-300 bg-white px-4 text-center text-sm font-semibold text-slate-500">No {masterDataTab === 'departments' ? 'departments' : 'positions'} saved yet.</p>
+                        : activeMasterEntries.map((entry) => {
+                          const editing = editingMasterEntry?.kind === (masterDataTab === 'departments' ? 'department' : 'position') && editingMasterEntry.id === entry.id
+                          const assignedEmployeeCount = masterDataTab === 'departments'
+                            ? employees.filter((employee) => employee.department === entry.name).length
+                            : employees.filter((employee) => employee.position === entry.name).length
+                          return <div key={entry.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-900/5">
+                            {editing && editingMasterEntry ? <form onSubmit={handleRenameMasterEntry} className="space-y-3">
+                              <label className="block">
+                                <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-700">Updated {editingMasterEntry.kind} name</span>
+                                <input type="text" required maxLength={120} value={editingMasterEntry.name} onChange={(event) => setEditingMasterEntry((current) => current ? { ...current, name: event.target.value } : current)} className="h-11 w-full rounded-xl border-2 border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-900 shadow-sm outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-700">Reason for renaming</span>
+                                <textarea required maxLength={1000} value={editingMasterEntry.reason} onChange={(event) => setEditingMasterEntry((current) => current ? { ...current, reason: event.target.value } : current)} placeholder="Explain why this label needs to change." className="min-h-24 w-full rounded-xl border-2 border-slate-300 bg-white p-3.5 text-sm font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+                              </label>
+                              <div className="flex flex-wrap justify-end gap-2">
+                                <button type="button" onClick={() => { setEditingMasterEntry(null); setMasterDataError('') }} disabled={isSavingMasterData} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+                                <button type="submit" disabled={isSavingMasterData} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{isSavingMasterData ? 'Saving...' : 'Save name'}</button>
+                              </div>
+                            </form> : <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-extrabold text-slate-800">{entry.name}</p>
+                                <p className="mt-1 text-[0.68rem] font-semibold text-slate-500">{assignedEmployeeCount} employee profile{assignedEmployeeCount === 1 ? '' : 's'} using this {masterDataTab === 'departments' ? 'department' : 'position'}</p>
+                              </div>
+                              <div className="flex shrink-0 gap-2">
+                                <button type="button" onClick={() => beginRenameMasterEntry(masterDataTab === 'departments' ? 'department' : 'position', entry)} className="rounded-xl border border-blue-200 bg-white px-3.5 py-2 text-xs font-bold text-blue-800 transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">Rename</button>
+                                <button type="button" disabled={activeMasterEntries.length <= 1} onClick={() => beginDeleteMasterEntry(masterDataTab === 'departments' ? 'department' : 'position', entry)} className="rounded-xl border border-rose-200 bg-white px-3.5 py-2 text-xs font-bold text-rose-700 transition hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-rose-100 disabled:cursor-not-allowed disabled:opacity-50">Remove</button>
+                              </div>
+                            </div>}
+                          </div>
+                        })}
+                  </div>
+                </section>
+              </div>
+            </div>
+          </section>
         </div>
       )}
 
-      {/* MODAL FOR CONFIRMING DEPARTMENT DELETION */}
-      {deptToDelete && (
+      {masterEntryToDelete && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-          <form onSubmit={handleDeleteDepartment} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <h3 className="text-sm font-black text-slate-900">Delete “{deptToDelete.name}”?</h3>
-            <p className="mt-1 text-xs text-slate-500">
-              Employees assigned to this department will be moved to a default department profile.
-            </p>
+          <form onSubmit={handleDeleteMasterEntry} className="w-full max-w-lg rounded-2xl border border-white/70 bg-white p-5 shadow-2xl sm:p-6">
+            <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-rose-600">Confirm removal</p>
+            <h3 className="mt-1 text-base font-black text-slate-900">Remove {masterEntryToDelete.name}?</h3>
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">Choose the replacement that should receive every employee profile using this {masterEntryToDelete.kind}.</p>
             <label className="mt-4 block">
-              <span className="mb-1 block text-[0.65rem] font-bold text-slate-600">
-                Why are you changing this information? (Required)
-              </span>
-              <textarea
-                required
-                value={deptDeleteReason}
-                onChange={(e) => setDeptDeleteReason(e.target.value)}
-                placeholder="Reason for deleting this department"
-                className="min-h-20 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-              />
+              <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-700">Replacement {masterEntryToDelete.kind}</span>
+              <select required value={replacementEntryId} onChange={(event) => setReplacementEntryId(event.target.value)} className="h-11 w-full rounded-xl border-2 border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-900 shadow-sm outline-none transition focus:border-blue-600 focus:ring-4 focus:ring-blue-100">
+                <option value="" disabled>Select replacement</option>
+                {replacementEntries.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+              </select>
             </label>
-            {departmentManagerError && (
-              <p role="alert" className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                {departmentManagerError}
-              </p>
-            )}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setDeptToDelete(null)
-                  setDepartmentManagerError('')
-                }}
-                className="rounded-lg border border-slate-200 px-3.5 py-2 text-xs font-bold text-slate-600"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-extrabold text-white"
-              >
-                Delete Department
-              </button>
+            <label className="mt-4 block">
+              <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-wide text-slate-700">Reason for removing</span>
+              <textarea required maxLength={1000} value={deletionReason} onChange={(event) => setDeletionReason(event.target.value)} placeholder="Explain why this label needs to be removed." className="min-h-24 w-full rounded-xl border-2 border-slate-300 bg-white p-3.5 text-sm font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+            </label>
+            {masterDataError && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{masterDataError}</p>}
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button type="button" disabled={isDeletingMasterData} onClick={() => { setMasterEntryToDelete(null); setReplacementEntryId(''); setDeletionReason(''); setMasterDataError('') }} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+              <button type="submit" disabled={isDeletingMasterData || replacementEntries.length === 0} className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-rose-700 disabled:cursor-wait disabled:opacity-50">{isDeletingMasterData ? 'Removing...' : 'Remove and reassign'}</button>
             </div>
           </form>
         </div>
       )}
 
       {/* EMPLOYEE CARD DIRECTORY */}
-      <section id="employee-directory" className="mt-6 scroll-mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
-        <div className="flex flex-col items-start gap-2 px-5 py-5 sm:px-6">
+      <section id="employee-directory" className="mt-6 scroll-mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+        <div className="flex flex-col items-start justify-between gap-4 px-5 py-5 sm:px-6 lg:flex-row lg:items-end">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Employee Directory</h2>
             <p className="mt-1 text-xs font-medium text-slate-600">
               Select an employee profile to review assigned items and history.
             </p>
           </div>
-          <span className="rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
-            {isLoadingEmployees ? 'Loading employee directory…' : `${filteredEmployees.length} employee(s) found`}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
+              {isLoadingEmployees ? 'Loading employee directory…' : `${filteredEmployees.length} employee(s) found`}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setMasterDataTab('departments')
+                setMasterDataError('')
+                setMasterDataNotice('')
+                setShowDepartmentModal(true)
+              }}
+              className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-white px-3.5 py-2 text-xs font-extrabold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+            >
+              Manage departments, offices &amp; positions
+            </button>
+          </div>
         </div>
 
         <div className="grid gap-4 border-t border-slate-200 bg-slate-50/70 px-5 py-4 sm:grid-cols-2 sm:px-6">
@@ -674,10 +798,15 @@ export default function EmployeeMasterData() {
               </span>
               <button
                 type="button"
-                onClick={() => setShowDepartmentModal(true)}
+                onClick={() => {
+                  setMasterDataTab('departments')
+                  setMasterDataError('')
+                  setMasterDataNotice('')
+                  setShowDepartmentModal(true)
+                }}
                 className="text-[0.65rem] font-extrabold text-blue-600 hover:underline"
               >
-                + Add Department
+                Manage list
               </button>
             </div>
             <select
@@ -845,15 +974,15 @@ export default function EmployeeMasterData() {
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
               <div className="mx-auto max-w-4xl space-y-4">
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="min-w-0 rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+                  <div className="min-w-0 rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                     <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">School email</span>
                     <p className="mt-2 wrap-break-word text-sm font-bold text-slate-900">{selectedEmployee.email}</p>
                   </div>
-                  <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+                  <div className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                     <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Total issued items</span>
                     <p className="mt-2 text-sm font-extrabold text-blue-700">{selectedEmployee.assigned} unit(s) active</p>
                   </div>
-                  <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+                  <div className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                     <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Employment status</span>
                     <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-extrabold ${selectedEmployee.statusTone}`}>
                       {selectedEmployee.status}
@@ -868,7 +997,7 @@ export default function EmployeeMasterData() {
                 )}
 
                 {/* CURRENTLY ISSUED ITEMS SECTION */}
-                <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5">
+                <div className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 flex flex-col gap-3 border-b-2 border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h3 className="text-sm font-extrabold text-slate-900">
@@ -933,7 +1062,7 @@ export default function EmployeeMasterData() {
                 </div>
 
                 {/* ISSUANCE & RETURN HISTORY AUDIT LOGS */}
-                <div className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5">
+                <div className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">
                       Employee History
@@ -1102,7 +1231,7 @@ export default function EmployeeMasterData() {
                 </p>
               )}
               {selectedEmployee.history.some((log) => log.event === 'Returned' || log.event === 'Reported Lost') && (
-                <section className="mt-5 rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5" aria-labelledby="issued-item-return-history-title">
+                <section className="mt-5 rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="issued-item-return-history-title">
                   <div className="border-b border-slate-200 pb-3">
                     <h3 id="issued-item-return-history-title" className="text-base font-black text-slate-900">Returned Item History</h3>
                     <p className="mt-1 text-sm text-slate-600">Returned or lost units are no longer listed as active assignments.</p>
@@ -1185,7 +1314,7 @@ export default function EmployeeMasterData() {
                 selectedEmployee.history.length > 0 ? (
                   <div className="space-y-3">
                     {selectedEmployee.history.map((log, idx) => (
-                      <div key={`${log.code}-${log.date}-${idx}`} className="flex flex-col items-start justify-between gap-3 rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md sm:flex-row sm:gap-4">
+                      <div key={`${log.code}-${log.date}-${idx}`} className="flex flex-col items-start justify-between gap-3 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:flex-row sm:gap-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`rounded-full px-3 py-1.5 text-sm font-extrabold ${
@@ -1225,7 +1354,7 @@ export default function EmployeeMasterData() {
               ) : selectedEmployee.changeHistory && selectedEmployee.changeHistory.length > 0 ? (
                 <div className="space-y-3">
                   {selectedEmployee.changeHistory.map((change, idx) => (
-                    <div key={`${change.changedAt}-${idx}`} className="rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md">
+                    <div key={`${change.changedAt}-${idx}`} className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                       <p className="text-base font-semibold leading-relaxed text-slate-950">{change.reason}</p>
                       <p className="mt-3 text-sm font-bold text-slate-700">
                         By {change.changedBy || 'Unknown user'} · {change.changedAt}
@@ -1286,7 +1415,7 @@ export default function EmployeeMasterData() {
                   </p>
                 )}
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Employee details</h3>
                     <p className="mt-1 text-sm text-slate-600">Fields marked <span className="font-extrabold text-rose-600">*</span> are required.</p>
@@ -1368,14 +1497,19 @@ export default function EmployeeMasterData() {
                     </label>
 
                     <label className="block">
-                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Position</span>
-                      <input
-                        type="text"
+                      <span className="mb-2 block text-sm font-extrabold text-slate-800">Position <span className="text-rose-600">*</span></span>
+                      <select
                         name="position"
+                        required
                         value={editEmployeeData.position}
                         onChange={handleEditEmployeeInputChange}
-                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100"
-                      />
+                        disabled={isLoadingMasterData || editablePositionOptions.length === 0}
+                        className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                      >
+                        <option value="" disabled>{isLoadingMasterData ? 'Loading positions...' : editablePositionOptions.length ? 'Select a position' : 'No managed positions available'}</option>
+                        {editablePositionOptions.map((position) => <option key={position.id} value={position.name}>{position.name}{position.id.startsWith('legacy-') ? ' (current legacy value)' : ''}</option>)}
+                      </select>
+                      <span className="mt-1.5 block text-xs leading-relaxed text-slate-500">Manage position choices from the Employee Directory header.</span>
                     </label>
 
                     <label className="block">

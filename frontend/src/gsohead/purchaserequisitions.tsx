@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { clearAuthSession } from '../auth/authApi'
 import type { PurchaseRequisitionLine, ServiceRequest } from '../requesters/requesterApi'
 import { formatDate, formatDateTime } from '../requesters/requesterrequestutils'
 import { ROUTES, categoryLabel, countLines, formText, headApproval, linesOf } from '../gso/requisitionFlow'
-import { Banner, DeliveryRecords, EmptyState, HistoryList, LineStatusBadge, QuantityChips, RequestSummary, RouteLegend, RoutePill, TabBar } from '../gso/requisitionParts'
-import GsoHeadNavbar from './gsoheadnavbar'
+import { Banner, DeliveryRecords, EmptyState, HistoryList, LineStatusBadge, QuantityChips, RequestSummary, RoutePill, TabBar } from '../gso/requisitionParts'
+import { GsoHeadPageFrame } from './gsoheadnavbar'
 import { listPurchaseRequisitions, reviewPurchaseRequisition, sendPurchaseRequisitionToFinance } from './gsoheadApi'
 
 type Tab = 'approval' | 'finance' | 'staff' | 'closed'
@@ -47,10 +46,6 @@ function staffStageText(request: ServiceRequest) {
   if (request.status === 'Rejected') return 'Every item was declined.'
   if (request.status === 'Cancelled') return 'The requester cancelled this requisition.'
   return 'GSO Staff is handling this requisition.'
-}
-
-function MobileMenuIcon() {
-  return <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
 }
 
 type Choice = { decision: 'APPROVE' | 'DECLINE' | ''; note: string }
@@ -162,7 +157,7 @@ function DecisionPanel({ request, onSaved }: { request: ServiceRequest; onSaved:
       </div>
     </div>}
 
-    <div className="sticky bottom-0 mt-4 rounded-2xl border border-slate-200 bg-white/95 p-3.5 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <div className="sticky bottom-0 mt-4 rounded-2xl border-2 border-slate-300/80 bg-white/95 p-3.5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 backdrop-blur">
       {error && <div className="mb-3"><Banner tone="error">{error}</Banner></div>}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[0.68rem] font-semibold text-slate-600"><span className="font-extrabold text-slate-900">{decidedCount} of {pending.length}</span> decided{approved ? ` · ${approved} approve` : ''}{declined ? ` · ${declined} decline` : ''}{missingReasons > 0 && <span className="text-rose-700"> · {missingReasons} decline{missingReasons === 1 ? ' needs a reason' : 's need reasons'}</span>}</p>
@@ -250,7 +245,6 @@ export default function PurchaseRequisitions() {
   const [selectedId, setSelectedId] = useState(params.get('request') || '')
   const [requests, setRequests] = useState<ServiceRequest[]>([])
   const [search, setSearch] = useState('')
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -288,30 +282,36 @@ export default function PurchaseRequisitions() {
     await loadQueue()
   }
 
-  function signOut() {
-    clearAuthSession()
-    window.location.replace('/login')
-  }
-
   return (
-    <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
-      <GsoHeadNavbar activePage="requests" mobileOpen={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
-      <section className="min-h-screen lg:pl-72">
-        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9"><div className="mx-auto flex max-w-screen-2xl items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><button type="button" onClick={() => setMobileMenuOpen(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm lg:hidden" aria-label="Open navigation menu"><MobileMenuIcon /></button><div className="min-w-0"><p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">General Services Office / <span className="text-slate-700">Request Requisition</span></p><p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">GSO Head workspace</p></div></div><button type="button" onClick={signOut} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-xs font-extrabold text-slate-700 shadow-sm transition hover:border-rose-200 hover:text-rose-700">Sign out</button></div></header>
-
-        <div className="mx-auto max-w-screen-2xl px-4 py-5 sm:px-6 sm:py-7 lg:px-9">
-          <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(129,140,248,0.4),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(59,130,246,0.2),transparent_36%)]" />
-            <div className="relative">
-              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-indigo-100"><span className="h-1.5 w-1.5 rounded-full bg-indigo-300" /> GSO Head approvals</span>
-              <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Request Requisition</h1>
-              <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">GSO Staff checks every item first. You only see items they ask you to check and items that need to be bought. Everything else in stock is issued by GSO Staff.</p>
-              <div className="mt-5"><RouteLegend onDark /></div>
+    <GsoHeadPageFrame activePage="requests" contentWidth="wide">
+      <div className="space-y-6">
+        <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+          <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+            <div className="max-w-2xl">
+              <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Head workflow</span>
+              <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Purchase Requisitions</h1>
+              <p className="mt-2 text-sm font-medium leading-relaxed text-blue-100">Review only the requests that need your decision or a Finance handoff. GSO Staff handles stock checks, deliveries, and issuance.</p>
             </div>
-          </section>
+            <div className="grid w-full gap-2 sm:grid-cols-3 xl:w-auto xl:min-w-120">
+              <button type="button" onClick={() => { setChosenTab('approval'); setNotice('') }} className="rounded-2xl border border-amber-200/20 bg-white/10 px-4 py-3 text-left transition hover:bg-white/16 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/25">
+                <span className="block text-[0.58rem] font-extrabold uppercase tracking-[0.12em] text-blue-100">Needs approval</span>
+                <span className="mt-1 block text-2xl font-black text-white">{counts.approval}</span>
+              </button>
+              <button type="button" onClick={() => { setChosenTab('finance'); setNotice('') }} className="rounded-2xl border border-indigo-200/20 bg-white/10 px-4 py-3 text-left transition hover:bg-white/16 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/25">
+                <span className="block text-[0.58rem] font-extrabold uppercase tracking-[0.12em] text-blue-100">Send to Finance</span>
+                <span className="mt-1 block text-2xl font-black text-white">{counts.finance}</span>
+              </button>
+              <button type="button" onClick={() => { setChosenTab('staff'); setNotice('') }} className="rounded-2xl border border-emerald-200/20 bg-white/10 px-4 py-3 text-left transition hover:bg-white/16 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/25">
+                <span className="block text-[0.58rem] font-extrabold uppercase tracking-[0.12em] text-blue-100">With GSO Staff</span>
+                <span className="mt-1 block text-2xl font-black text-white">{counts.staff}</span>
+              </button>
+            </div>
+          </div>
+        </section>
 
-          <section className="mt-5 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/30 ring-1 ring-slate-900/5" aria-label="Purchase requisition queue">
-            <div className="space-y-3 border-b border-slate-200 p-4 sm:px-5">
+        <section className="space-y-3" aria-label="Requisition stages">
+          <div className="space-y-3 rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
               <TabBar accent="indigo" label="Requisition stages" tabs={TAB_ORDER.map((key) => ({ key, label: TABS[key].label, count: counts[key], needsAction: TABS[key].needsAction }))} active={tab} onChange={(next) => { setChosenTab(next); setNotice('') }} />
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <p className="text-[0.68rem] font-medium text-slate-500">{TABS[tab].hint}</p>
@@ -324,25 +324,44 @@ export default function PurchaseRequisitions() {
               {notice && <Banner tone="success">{notice}</Banner>}
             </div>
 
-            <div className="grid min-w-0 lg:grid-cols-[0.78fr_1.22fr]">
-              <div className="min-w-0 border-b border-slate-200 p-3 sm:p-4 lg:border-b-0 lg:border-r"><div className="max-h-[72vh] overflow-y-auto rounded-xl border border-slate-200">
+            <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(20rem,0.84fr)_minmax(0,1.16fr)]">
+              <section className="flex min-w-0 flex-col rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                <div className="p-4 sm:p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-indigo-600 text-sm font-black text-white shadow-sm shadow-indigo-600/30">1</span>
+                      <div className="min-w-0"><p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-indigo-700">Step 1 of 2</p><h2 className="mt-0.5 text-base font-black leading-tight text-slate-900">Choose a requisition</h2><p className="mt-1 text-xs leading-relaxed text-slate-600">Select a request from the current stage.</p></div>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-indigo-700">{visible.length} request{visible.length === 1 ? '' : 's'}</span>
+                  </div>
+                  <div className="mt-4 max-h-[58vh] space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
                 {loading && requests.length === 0 ? <p className="p-8 text-center text-xs font-semibold text-slate-400">Loading requisitions…</p>
                   : visible.length === 0 ? <p className="p-8 text-center text-xs font-semibold text-slate-500">{search ? 'No requests match your search.' : TABS[tab].empty}</p>
                     : visible.map((request) => {
                       const chip = chipFor(request)
                       const isSelected = selected?.id === request.id
-                      return <button key={request.id} type="button" onClick={() => { setSelectedId(request.id); setNotice('') }} aria-current={isSelected ? 'true' : undefined} className={`block w-full border-b border-l-4 border-b-slate-100 p-3.5 text-left transition last:border-b-0 ${isSelected ? 'border-l-indigo-600 bg-indigo-50/70' : 'border-l-transparent hover:bg-slate-50'}`}>
+                      return <button key={request.id} type="button" onClick={() => { setSelectedId(request.id); setNotice('') }} aria-current={isSelected ? 'true' : undefined} className={`block w-full rounded-xl border p-3.5 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-indigo-100 ${isSelected ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100' : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40'}`}>
                         <span className="flex items-center justify-between gap-2"><span className="text-xs font-black text-slate-800">{request.referenceNo}</span><span className={`shrink-0 rounded-full px-2 py-1 text-[0.56rem] font-extrabold ${chip.tone}`}>{chip.label}</span></span>
                         <span className="mt-1 block truncate text-[0.68rem] font-bold text-slate-600">{formText(request.formData.requesterName) || request.requesterName} · {formText(request.formData.departmentOrganization) || request.requesterEmail}</span>
                         <span className="mt-1 block truncate text-[0.62rem] text-slate-500">{linesOf(request).map((line) => `${line.itemName} × ${line.requestedQuantity}`).join(', ')}</span>
                         <span className="mt-1 flex items-center gap-2 text-[0.6rem] text-slate-400">Submitted {formatDate(request.createdAt)}{request.formData.urgency === 'Urgent' && <span className="rounded bg-rose-50 px-1.5 py-0.5 font-extrabold text-rose-700">Urgent</span>}</span>
                       </button>
                     })}
-              </div></div>
+                  </div>
+                </div>
+              </section>
 
-              <div className="min-w-0 p-4 sm:p-5">
-                {!selected ? <EmptyState title={TABS[tab].empty} detail="Requisitions arrive here after GSO Staff checks stock." /> : <>
-                  <RequestSummary request={selected} statusLabel={chipFor(selected).label} statusTone={chipFor(selected).tone} />
+              <section className="flex min-w-0 flex-col rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 sm:p-5">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-black ${selected ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30' : 'bg-slate-100 text-slate-500'}`}>2</span>
+                    <div className="min-w-0"><p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-indigo-700">Step 2 of 2</p><h2 className="mt-0.5 text-base font-black leading-tight text-slate-900">Review and decide</h2><p className="mt-1 text-xs leading-relaxed text-slate-600">{selected ? 'Review the request, then complete the next action.' : 'Choose a requisition to see its details.'}</p></div>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-indigo-700">{TABS[tab].label}</span>
+                </div>
+                <div className="min-w-0 p-4 sm:p-5">
+                {!selected ? <EmptyState title={TABS[tab].empty} detail="Requisitions appear here after GSO Staff completes the stock check." /> : <>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3.5"><RequestSummary request={selected} statusLabel={chipFor(selected).label} statusTone={chipFor(selected).tone} /></div>
                   {selected.staffReviewedAt && <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2.5">
                     <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-700">Checked by GSO Staff</p>
                     <p className="mt-0.5 text-[0.68rem] font-semibold text-slate-700">{selected.staffReviewedBy || 'GSO Staff'} · {formatDateTime(selected.staffReviewedAt)}</p>
@@ -359,11 +378,11 @@ export default function PurchaseRequisitions() {
                   <FinanceTrail request={selected} />
                   <HistoryList request={selected} />
                 </>}
-              </div>
+                </div>
+              </section>
             </div>
           </section>
-        </div>
-      </section>
-    </main>
+      </div>
+    </GsoHeadPageFrame>
   )
 }

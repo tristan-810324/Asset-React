@@ -119,11 +119,16 @@ async function writeAuditLog(client, issuance, {
   oldValues,
   newValues,
 }) {
+  const status = newValues?.issuanceStatus;
+  const action = status === 'Pending' ? 'requested'
+    : status === 'Issued' && oldValues?.issuanceStatus !== 'Issued' ? 'issued'
+      : status === 'Rejected' ? 'rejected'
+      : ['Expired', 'Email Failed', 'Cancelled'].includes(status) ? 'cancelled' : 'updated';
   await client.query(
     `INSERT INTO inventory_change_logs (
        entity_type, entity_key, entity_name, item_id, employee_id, action, reason,
        old_values, new_values, changed_by_user_id
-     ) VALUES ('item', $1, $2, $3, $4, 'updated', $5, $6::JSONB, $7::JSONB, $8)`,
+     ) VALUES ('item', $1, $2, $3, $4, $9, $5, $6::JSONB, $7::JSONB, $8)`,
     [
       issuance.item_code,
       issuance.description,
@@ -133,6 +138,7 @@ async function writeAuditLog(client, issuance, {
       JSON.stringify(oldValues),
       JSON.stringify(newValues),
       changedByUserId,
+      action,
     ],
   );
 }
@@ -287,8 +293,8 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     await client.query('BEGIN');
 
     const employeeResult = await client.query(
-      `SELECT employee.id, employee.employee_code, employee.first_name, employee.last_name,
-              employee.email, employee.status,
+      `SELECT employee.id, employee.employee_code, employee.first_name, employee.middle_name, employee.last_name, employee.suffix,
+              employee.email, employee.status, employee.department,
               requester.user_id AS requester_user_id,
               COALESCE(requester.email, employee.email) AS requester_email
          FROM employees AS employee
@@ -338,6 +344,44 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       for (const line of lineResult.rows) requisitionLinesById.set(String(line.id), line);
     } else if (requestedItems.some((item) => item.purchaseRequisitionLineId)) {
       throw conflict('May purchase requisition item reference na walang request context. I-refresh ang queue.');
+    } else if (requestedItems.some((item) => item.recipientAllocations.length > 0)) {
+      throw conflict('Recipient allocations are only available for an approved purchase requisition.');
+    }
+
+    const recipientCodes = [...new Set(requestedItems.flatMap((item) => item.recipientAllocations
+      .map((allocation) => allocation.employeeCode.trim())
+      .filter((code) => code.toLowerCase() !== employee.employee_code.trim().toLowerCase())))];
+    const recipientByCode = new Map([[employee.employee_code.trim().toLowerCase(), employee]]);
+    if (recipientCodes.length > 0) {
+      const recipientsResult = await client.query(
+        `SELECT employee.id, employee.employee_code, employee.first_name, employee.middle_name, employee.last_name, employee.suffix,
+                employee.email, employee.status, employee.department,
+                requester.user_id AS requester_user_id,
+                COALESCE(requester.email, employee.email) AS requester_email
+           FROM employees AS employee
+           LEFT JOIN LATERAL (
+             SELECT profile.user_id, account.email
+               FROM requester_identity_profiles AS profile
+               JOIN users AS account ON account.id = profile.user_id
+              WHERE profile.verification_status = 'Verified'
+                AND lower(trim(profile.employee_code)) = lower(trim(employee.employee_code))
+              ORDER BY profile.reviewed_at DESC NULLS LAST, profile.user_id
+              LIMIT 1
+           ) AS requester ON TRUE
+          WHERE lower(trim(employee.employee_code)) = ANY($1::TEXT[])
+          FOR SHARE OF employee`,
+        [recipientCodes.map((code) => code.toLowerCase())],
+      );
+      if (recipientsResult.rows.length !== recipientCodes.length) {
+        throw conflict('May recipient na hindi makita sa Employee Master Data. I-refresh at piliin ulit ang active department staff.');
+      }
+      for (const recipient of recipientsResult.rows) {
+        if (recipient.status !== 'Active'
+          || String(recipient.department || '').trim().toLowerCase() !== String(employee.department || '').trim().toLowerCase()) {
+          throw conflict(`${recipient.employee_code} ay hindi active staff sa department ng requesting head.`);
+        }
+        recipientByCode.set(recipient.employee_code.trim().toLowerCase(), recipient);
+      }
     }
 
     const itemResult = await client.query(
@@ -352,13 +396,26 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
     }
     const itemsById = new Map(itemResult.rows.map((item) => [String(item.id), item]));
-    const items = requestedItems.map((requested) => ({
-      ...itemsById.get(String(requested.itemId)),
-      requestedQuantity: requested.quantity,
-      purchaseRequisitionLine: requested.purchaseRequisitionLineId
-        ? requisitionLinesById.get(String(requested.purchaseRequisitionLineId))
-        : null,
-    }));
+    const items = requestedItems.map((requested) => {
+      const recipientAllocations = requested.recipientAllocations.length > 0
+        ? requested.recipientAllocations.map((allocation) => {
+          const recipient = recipientByCode.get(allocation.employeeCode.trim().toLowerCase());
+          if (!recipient) throw conflict(`Hindi makita ang recipient na ${allocation.employeeCode}.`);
+          return { ...allocation, recipient };
+        })
+        : [{ employeeCode: employee.employee_code, quantity: requested.quantity, location: '', purpose: '', recipient: employee }];
+      if (recipientAllocations.reduce((sum, allocation) => sum + allocation.quantity, 0) !== requested.quantity) {
+        throw conflict('Dapat tumugma ang recipient allocation sa quantity na ini-issue.');
+      }
+      return {
+        ...itemsById.get(String(requested.itemId)),
+        requestedQuantity: requested.quantity,
+        recipientAllocations,
+        purchaseRequisitionLine: requested.purchaseRequisitionLineId
+          ? requisitionLinesById.get(String(requested.purchaseRequisitionLineId))
+          : null,
+      };
+    });
     const itemFlow = (item) => item.tracking_mode === 'individual'
       ? 'per-unit'
       : item.issue_behavior === 'consumable' ? 'consumable' : 'reusable';
@@ -367,21 +424,21 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       throw conflict('Reusable stock must be handled through the separate Borrowing workflow, not Main Issuance.');
     }
     if (!purchaseRequisitionId && selectedFlows.has('per-unit')) {
-      throw conflict('Per-unit assets must go through an approved Purchase Requisition before issuance. Consumable stock may be issued directly.');
+      throw conflict('Individually tracked items must go through an approved Purchase Requisition before issuance. Consumable stock may be issued directly.');
     }
     if (selectedFlows.size > 1) {
       throw conflict('Process one inventory type per issuance.');
     }
     if (borrowDetails) throw conflict('Borrowing schedules are handled through the separate Borrowing workflow.');
     const isConsumableIssue = selectedFlows.has('consumable');
-    // Per-unit assets may only enter this flow from an approved purchase requisition.
+    // Individually tracked items may only enter this flow from an approved purchase requisition.
     // GSO prepares them for pickup immediately, including their barcode labels; the
     // requester no longer needs to acknowledge a separate handover step.
     const isPerUnitPickup = selectedFlows.has('per-unit');
     const initialStatus = isConsumableIssue || isPerUnitPickup ? 'Issued' : 'Pending';
     const initialDecisionNote = isConsumableIssue
       ? 'Released by GSO. No employee approval is required for consumable stock.'
-      : 'GSO prepared the per-unit asset for pickup. Barcode labels are ready; no requester confirmation is required.';
+      : 'GSO prepared the individually tracked item for pickup. Barcode labels are ready; no requester confirmation is required.';
     for (const item of items) {
       if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
       if (item.purchaseRequisitionLine) {
@@ -424,17 +481,9 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     const batch = batchResult.rows[0];
 
     const issuanceItems = [];
+    const requisitionLineQuantities = new Map();
     for (const item of items) {
-      const inserted = await client.query(
-        `INSERT INTO employee_issuances (
-           batch_id, employee_id, item_id, requested_by_user_id, status, token_hash,
-           token_expires_at, item_condition, notes, quantity, unit_of_measure, decision_note, decided_at,
-           purchase_requisition_line_id
-         ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11,
-                   CASE WHEN $5 = 'Issued' THEN NOW() ELSE NULL END, $12)
-         RETURNING id`,
-        [batch.id, employee.id, item.id, requestedByUserId, initialStatus, batch.expiresAt, item.condition, notes, item.requestedQuantity, item.unit_of_measure, initialDecisionNote, item.purchaseRequisitionLine?.id || null],
-      );
+      if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
       if (item.purchaseRequisitionLine) {
         const line = item.purchaseRequisitionLine;
         await client.query(
@@ -445,79 +494,114 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
             WHERE line_id = $1 AND item_id = $2 AND status = 'Reserved'`,
           [line.id, item.id, item.requestedQuantity],
         );
-        if (initialStatus === 'Pending') {
-          line.route_status = 'HANDOVER_PENDING';
-        } else {
-          line.issued_quantity = Number(line.issued_quantity) + item.requestedQuantity;
-          if (line.issued_quantity < Number(line.reserved_quantity)) line.route_status = 'PARTIALLY_ISSUED';
-          else if (Number(line.finance_quantity) > 0) {
-          line.route_status = requisition.status === 'Sent to Finance' ? 'WAITING_FOR_PURCHASE' : 'WAITING_FINANCE';
-          } else line.route_status = 'ISSUED';
-        }
-        await client.query(
-          `UPDATE purchase_requisition_lines
-              SET issued_quantity = $2, route_status = $3, updated_at = NOW()
-            WHERE id = $1`,
-          [line.id, line.issued_quantity, line.route_status],
-        );
+        const existingLineQuantity = requisitionLineQuantities.get(String(line.id));
+        requisitionLineQuantities.set(String(line.id), {
+          line,
+          quantity: Number(existingLineQuantity?.quantity || 0) + Number(item.requestedQuantity),
+        });
       }
-      const issuance = {
-        id: inserted.rows[0].id,
-        employee_id: employee.id,
-        employee_code: employee.employee_code,
-        employee_name: `${employee.first_name} ${employee.last_name}`,
-        employee_email: employee.requester_email,
-        item_id: item.id,
-        item_code: item.item_code,
-        description: item.description,
-        tracking_mode: item.tracking_mode,
-        item_condition: item.condition,
-        quantity: item.requestedQuantity,
-        unit_of_measure: item.unit_of_measure,
-      };
-      const tags = initialStatus === 'Issued' && item.tracking_mode === 'individual'
-        ? await createUnitTags(client, issuance, employee.requester_user_id)
-        : [];
-      await refreshInventoryStatus(client, item.id);
-      issuanceItems.push({
-        id: issuance.id,
-        itemId: item.id,
-        itemCode: item.item_code,
-        itemName: item.description,
-        trackingMode: item.tracking_mode,
-        issueBehavior: item.issue_behavior,
-        condition: item.condition,
-        quantity: item.requestedQuantity,
-        unitOfMeasure: item.unit_of_measure,
-        availableQuantity: item.availableQuantityBefore - item.requestedQuantity,
-        tags: tags.map((tag) => ({ tagCode: tag.tagCode, unitNumber: tag.unitNumber, printedAt: null })),
-      });
 
-      await writeAuditLog(client, issuance, {
-        changedByUserId: requestedByUserId,
-        reason: isConsumableIssue
-          ? `GSO issued ${item.requestedQuantity} ${item.unit_of_measure} of ${issuance.description} to ${employee.employee_code}; no employee approval is required for consumable stock.`
-          : `GSO prepared per-unit asset ${issuance.description} for pickup by ${employee.employee_code}; barcode labels are ready and no requester confirmation is required.`,
-        oldValues: { inventoryStatus: item.inventory_status, availableQuantity: item.availableQuantityBefore },
-        newValues: {
-          inventoryStatus: item.requestedQuantity === item.availableQuantityBefore
-            ? isConsumableIssue || isPerUnitPickup ? 'Issued' : 'Reserved'
-            : 'Available',
-          reservedQuantity: initialStatus === 'Pending' ? item.requestedQuantity : 0,
-          issuedQuantity: initialStatus === 'Issued' ? item.requestedQuantity : 0,
-          issuanceStatus: initialStatus,
-          barcodeCount: tags.length,
-          issuanceBatchId: batch.id,
-          employeeCode: employee.employee_code,
-          employeeEmail: employee.requester_email,
-        },
-      });
+      for (const recipientAllocation of item.recipientAllocations) {
+        const recipient = recipientAllocation.recipient;
+        const recipientNotes = [
+          notes,
+          recipientAllocation.location ? `Use location: ${recipientAllocation.location}` : '',
+          recipientAllocation.purpose ? `Intended use: ${recipientAllocation.purpose}` : '',
+        ].filter(Boolean).join(' · ');
+        const inserted = await client.query(
+          `INSERT INTO employee_issuances (
+             batch_id, employee_id, item_id, requested_by_user_id, status, token_hash,
+             token_expires_at, item_condition, notes, quantity, unit_of_measure, decision_note, decided_at,
+             purchase_requisition_line_id, recipient_location, recipient_purpose
+           ) VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8, $9, $10, $11,
+                     CASE WHEN $5 = 'Issued' THEN NOW() ELSE NULL END, $12, $13, $14)
+           RETURNING id`,
+          [batch.id, recipient.id, item.id, requestedByUserId, initialStatus, batch.expiresAt,
+            item.condition, recipientNotes, recipientAllocation.quantity, item.unit_of_measure,
+            initialDecisionNote, item.purchaseRequisitionLine?.id || null,
+            recipientAllocation.location, recipientAllocation.purpose],
+        );
+        const issuance = {
+          id: inserted.rows[0].id,
+          employee_id: recipient.id,
+          employee_code: recipient.employee_code,
+          employee_name: `${recipient.first_name} ${recipient.middle_name || ''} ${recipient.last_name} ${recipient.suffix || ''}`.trim().replace(/\s+/g, ' '),
+          employee_email: recipient.requester_email || recipient.email,
+          item_id: item.id,
+          item_code: item.item_code,
+          description: item.description,
+          tracking_mode: item.tracking_mode,
+          item_condition: item.condition,
+          quantity: recipientAllocation.quantity,
+          unit_of_measure: item.unit_of_measure,
+        };
+        const tags = initialStatus === 'Issued' && item.tracking_mode === 'individual'
+          ? await createUnitTags(client, issuance, recipient.requester_user_id || null)
+          : [];
+        issuanceItems.push({
+          id: issuance.id,
+          itemId: item.id,
+          itemCode: item.item_code,
+          itemName: item.description,
+          recipientEmployeeCode: recipient.employee_code,
+          recipientEmployeeName: issuance.employee_name,
+          recipientLocation: recipientAllocation.location,
+          recipientPurpose: recipientAllocation.purpose,
+          trackingMode: item.tracking_mode,
+          issueBehavior: item.issue_behavior,
+          condition: item.condition,
+          quantity: recipientAllocation.quantity,
+          unitOfMeasure: item.unit_of_measure,
+          availableQuantity: item.availableQuantityBefore - item.requestedQuantity,
+          tags: tags.map((tag) => ({ tagCode: tag.tagCode, unitNumber: tag.unitNumber, printedAt: null })),
+        });
+
+        await writeAuditLog(client, issuance, {
+          changedByUserId: requestedByUserId,
+          reason: isConsumableIssue
+            ? `GSO issued ${recipientAllocation.quantity} ${item.unit_of_measure} of ${issuance.description} to ${recipient.employee_code} for requisition head ${employee.employee_code}.`
+            : `GSO issued ${issuance.description} to ${recipient.employee_code} for requisition head ${employee.employee_code}; barcode labels are ready.`,
+          oldValues: { inventoryStatus: item.inventory_status, availableQuantity: item.availableQuantityBefore },
+          newValues: {
+            inventoryStatus: item.requestedQuantity === item.availableQuantityBefore ? 'Issued' : 'Available',
+            reservedQuantity: 0,
+            issuedQuantity: recipientAllocation.quantity,
+            issuanceStatus: initialStatus,
+            barcodeCount: tags.length,
+            issuanceBatchId: batch.id,
+            handoverEmployeeCode: employee.employee_code,
+            employeeCode: recipient.employee_code,
+            employeeEmail: issuance.employee_email,
+            recipientLocation: recipientAllocation.location,
+            recipientPurpose: recipientAllocation.purpose,
+          },
+        });
+      }
+      await refreshInventoryStatus(client, item.id);
+    }
+
+    for (const { line, quantity } of requisitionLineQuantities.values()) {
+      if (initialStatus === 'Pending') {
+        line.route_status = 'HANDOVER_PENDING';
+      } else {
+        line.issued_quantity = Number(line.issued_quantity) + quantity;
+        if (line.issued_quantity < Number(line.reserved_quantity)) line.route_status = 'PARTIALLY_ISSUED';
+        else if (Number(line.finance_quantity) > 0) {
+          line.route_status = requisition.status === 'Sent to Finance' ? 'WAITING_FOR_PURCHASE' : 'WAITING_FINANCE';
+        } else line.route_status = 'ISSUED';
+      }
+      await client.query(
+        `UPDATE purchase_requisition_lines
+            SET issued_quantity = $2, route_status = $3, updated_at = NOW()
+          WHERE id = $1`,
+        [line.id, line.issued_quantity, line.route_status],
+      );
     }
 
     if (purchaseRequisitionId) {
-      const issuedSummary = issuanceItems.map((item) => `${item.quantity} ${item.unitOfMeasure} ${item.itemName}`).join('; ');
+      const issuedSummary = issuanceItems.map((item) => `${item.quantity} ${item.unitOfMeasure} ${item.itemName} to ${item.recipientEmployeeName}`).join('; ');
       const actionNote = isPerUnitPickup
-        ? `GSO Staff prepared ${issuedSummary} for pickup; barcode labels are ready.`
+        ? `GSO Staff recorded ${issuedSummary}; barcode labels are mapped to the listed staff recipients and ready to print.`
         : initialStatus === 'Pending'
         ? `GSO Staff prepared the physical handover for ${issuedSummary}; requester receipt is pending.`
         : `GSO Staff issued ${issuedSummary} through Main Issuance.`;
@@ -564,6 +648,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       id: batch.id,
       status: batch.status,
       requesterAccountLinked: Boolean(employee.requester_user_id),
+      requesterUserId: employee.requester_user_id ? String(employee.requester_user_id) : null,
       expiresAt: batch.expiresAt,
       requestedAt: batch.requestedAt,
       borrowDetails: batch.borrowUseDate ? {
@@ -680,7 +765,7 @@ async function markBatchEmailFailed(batchId) {
 }
 
 // Old purchase-requisition batches may still be Pending from the former
-// requester-confirmation flow. Promote only all-per-unit batches so they adopt
+// requester-confirmation flow. Promote only individually tracked batches so they adopt
 // the new pickup flow without affecting any other legacy approval process.
 async function prepareLegacyPendingPickupBatches(userId) {
   const pendingResult = await pool.query(
@@ -755,6 +840,10 @@ async function listMyPendingIssuanceBatches(userId) {
                 'issuanceId', issue.id::TEXT,
                 'itemCode', inventory.item_code,
                 'itemName', inventory.description,
+                'recipientEmployeeCode', recipient.employee_code,
+                'recipientEmployeeName', trim(concat_ws(' ', recipient.first_name, recipient.middle_name, recipient.last_name, recipient.suffix)),
+                'recipientLocation', issue.recipient_location,
+                'recipientPurpose', issue.recipient_purpose,
                 'trackingMode', inventory.tracking_mode,
                 'issueBehavior', inventory.issue_behavior,
                 'condition', issue.item_condition,
@@ -778,12 +867,13 @@ async function listMyPendingIssuanceBatches(userId) {
        JOIN employee_issuance_batches AS batch ON batch.employee_id = employee.id
        LEFT JOIN users AS requester ON requester.id = batch.requested_by_user_id
        LEFT JOIN employee_issuances AS issue ON issue.batch_id = batch.id
+        LEFT JOIN employees AS recipient ON recipient.id = issue.employee_id
        LEFT JOIN item_catalog AS inventory ON inventory.id = issue.item_id
       WHERE profile.user_id = $1
         AND profile.verification_status = 'Verified'
         AND batch.requester_user_id = $1
         AND batch.status = 'Pending'
-      GROUP BY batch.id, employee.id, requester.id
+       GROUP BY batch.id, employee.id, requester.id
       ORDER BY batch.requested_at DESC, batch.id DESC`,
     [userId],
   );
@@ -811,6 +901,10 @@ async function listMyIssuanceActivity(userId) {
                 'issuanceId', issue.id::TEXT,
                 'itemCode', inventory.item_code,
                 'itemName', inventory.description,
+                'recipientEmployeeCode', recipient.employee_code,
+                'recipientEmployeeName', trim(concat_ws(' ', recipient.first_name, recipient.middle_name, recipient.last_name, recipient.suffix)),
+                'recipientLocation', issue.recipient_location,
+                'recipientPurpose', issue.recipient_purpose,
                 'trackingMode', inventory.tracking_mode,
                 'issueBehavior', inventory.issue_behavior,
                 'status', issue.status,
@@ -836,6 +930,7 @@ async function listMyIssuanceActivity(userId) {
        JOIN employee_issuance_batches AS batch ON batch.employee_id = employee.id
        LEFT JOIN users AS requester ON requester.id = batch.requested_by_user_id
        LEFT JOIN employee_issuances AS issue ON issue.batch_id = batch.id
+        LEFT JOIN employees AS recipient ON recipient.id = issue.employee_id
        LEFT JOIN item_catalog AS inventory ON inventory.id = issue.item_id
       WHERE profile.user_id = $1
         AND profile.verification_status = 'Verified'
@@ -866,12 +961,12 @@ async function listMyDepartmentReturnActivity(userId) {
             COALESCE(return_record.tag_snapshot->>'tagCode', tag.tag_code) AS "tagCode",
             staff.department
        FROM requester_identity_profiles AS profile
-       JOIN employees AS head
-         ON lower(trim(head.employee_code)) = lower(trim(profile.employee_code))
-       JOIN employees AS staff
-         ON lower(trim(staff.department)) = lower(trim(head.department))
-       JOIN employee_issuances AS issue ON issue.employee_id = staff.id
-       JOIN employee_issuance_returns AS return_record ON return_record.issuance_id = issue.id
+        JOIN employees AS head
+          ON lower(trim(head.employee_code)) = lower(trim(profile.employee_code))
+        JOIN employees AS staff
+          ON lower(trim(staff.department)) = lower(trim(head.department))
+        JOIN employee_issuances AS issue ON issue.employee_id = staff.id
+        JOIN employee_issuance_returns AS return_record ON return_record.issuance_id = issue.id
        JOIN item_catalog AS inventory ON inventory.id = issue.item_id
        LEFT JOIN asset_unit_tags AS tag ON tag.id = return_record.asset_unit_tag_id
       WHERE profile.user_id = $1
@@ -906,6 +1001,10 @@ async function getMyDepartmentIssuanceSummary(userId) {
   return result.rows[0] || { totalIssuedUnits: 0 };
 }
 
+// A requisition is handed over to its requesting head first.  This workspace lets that
+// verified head record the final staff member who actually receives every tagged unit.
+
+
 async function getIssuanceBatch(batchId) {
   const batchResult = await pool.query(
     `SELECT batch.id::TEXT AS id,
@@ -937,6 +1036,10 @@ async function getIssuanceBatch(batchId) {
     `SELECT issue.id::TEXT AS "issuanceId",
             inventory.item_code AS "itemCode",
             inventory.description AS "itemName",
+            recipient.employee_code AS "recipientEmployeeCode",
+            trim(concat_ws(' ', recipient.first_name, recipient.middle_name, recipient.last_name, recipient.suffix)) AS "recipientEmployeeName",
+            issue.recipient_location AS "recipientLocation",
+            issue.recipient_purpose AS "recipientPurpose",
             inventory.tracking_mode AS "trackingMode",
             inventory.issue_behavior AS "issueBehavior",
             issue.item_condition AS condition,
@@ -967,6 +1070,7 @@ async function getIssuanceBatch(batchId) {
             ) AS tags
        FROM employee_issuances AS issue
        JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+        JOIN employees AS recipient ON recipient.id = issue.employee_id
       WHERE issue.batch_id = $1
       ORDER BY issue.id`,
     [batchId],
@@ -998,6 +1102,10 @@ async function listApprovedIssuanceBatches() {
                   'issuanceId', approved_item.issuance_id,
                   'itemCode', approved_item.item_code,
                   'itemName', approved_item.item_name,
+                   'recipientEmployeeCode', approved_item.recipient_employee_code,
+                   'recipientEmployeeName', approved_item.recipient_employee_name,
+                   'recipientLocation', approved_item.recipient_location,
+                   'recipientPurpose', approved_item.recipient_purpose,
                    'trackingMode', approved_item.tracking_mode,
                   'condition', approved_item.condition,
                   'quantity', approved_item.quantity,
@@ -1009,6 +1117,10 @@ async function listApprovedIssuanceBatches() {
              SELECT issue.id::TEXT AS issuance_id,
                     inventory.item_code,
                     COALESCE(NULLIF(inventory.item_name, ''), inventory.description) AS item_name,
+                     recipient.employee_code AS recipient_employee_code,
+                     trim(concat_ws(' ', recipient.first_name, recipient.middle_name, recipient.last_name, recipient.suffix)) AS recipient_employee_name,
+                     issue.recipient_location,
+                     issue.recipient_purpose,
                      inventory.tracking_mode,
                     issue.item_condition AS condition,
                     issue.quantity,
@@ -1033,6 +1145,7 @@ async function listApprovedIssuanceBatches() {
                     ), '[]'::JSON) AS tags
                FROM employee_issuances AS issue
                JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+                JOIN employees AS recipient ON recipient.id = issue.employee_id
               WHERE issue.batch_id = batch.id
            ) AS approved_item
        ) AS approved_items ON TRUE
@@ -1098,7 +1211,7 @@ async function getAssetTagByCode(tagCode) {
                          NULL::TEXT AS "returnCondition",
                          'Issued' AS status
                     FROM employee_issuances AS issue
-                    JOIN employees AS borrower ON borrower.id = issue.employee_id
+                    JOIN employees AS borrower ON borrower.id = tag.assigned_employee_id
                    WHERE issue.id = tag.issuance_id
                      AND tag.custody_status = 'Issued'
                 ) AS borrower_history
@@ -1430,7 +1543,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
       }
 
       if (action === 'acknowledge' && items.some((item) => item.tracking_mode !== 'individual')) {
-        throw conflict('Per-unit assets lang ang nangangailangan ng receipt acknowledgment.');
+        throw conflict('Individually tracked items lang ang nangangailangan ng receipt acknowledgment.');
       }
 
       const nextStatus = action === 'reject' ? 'Rejected' : 'Issued';
@@ -1442,7 +1555,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
       const decisionNote = action === 'reject'
         ? `Rejected by employee through the ${decisionChannel}.`
         : autoPreparePickup
-          ? 'GSO prepared the per-unit assets for pickup. Barcode labels are ready; no requester confirmation is required.'
+          ? 'GSO prepared the individually tracked items for pickup. Barcode labels are ready; no requester confirmation is required.'
         : action === 'acknowledge' && gsoUserId !== undefined
           ? `Receipt recorded by GSO via ${handoverMethod === 'authorized_handover' ? 'authorized handover' : 'signed receipt'}${handoverNote ? `: ${handoverNote}` : ''}.`
           : action === 'acknowledge'
@@ -1481,7 +1594,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
           );
         }
       } else {
-        // A requisition line can be fulfilled by several per-unit inventory
+        // A requisition line can be fulfilled by several individually tracked inventory
         // records. Update each line once with its total, otherwise the first
         // update changes HANDOVER_PENDING and the next one fails its guard.
         const quantitiesByLine = new Map();
@@ -1730,20 +1843,28 @@ async function listEmployeeIssuances(employeeCode) {
               inventory.tracking_mode AS "trackingMode",
               inventory.issue_behavior AS "issueBehavior",
               issue.item_condition AS condition,
-              issue.quantity - issue.returned_quantity AS quantity,
+              CASE WHEN inventory.tracking_mode = 'individual' THEN COALESCE((
+                SELECT COUNT(tag.id)::INTEGER
+                  FROM asset_unit_tags AS tag
+                 WHERE tag.issuance_id = issue.id
+                   AND tag.assigned_employee_id = $1
+                   AND tag.custody_status = 'Issued'
+                   AND tag.lifecycle_status = 'Active'
+              ), 0) ELSE issue.quantity - issue.returned_quantity END AS quantity,
               issue.unit_of_measure AS "unitOfMeasure",
               to_char(issue.decided_at, 'Mon DD, YYYY · HH12:MI AM') AS "assignedOn",
               COALESCE((
                 SELECT json_agg(tag.tag_code ORDER BY tag.unit_number)
                   FROM asset_unit_tags AS tag
                  WHERE tag.issuance_id = issue.id
+                   AND tag.assigned_employee_id = $1
                    AND tag.custody_status = 'Issued'
                    AND tag.lifecycle_status = 'Active'
               ), '[]'::JSON) AS "assetTagCodes"
          FROM employee_issuances AS issue
          JOIN item_catalog AS inventory ON inventory.id = issue.item_id
-        WHERE issue.employee_id = $1 AND issue.status = 'Issued'
-        ORDER BY issue.decided_at DESC, issue.id DESC`,
+         WHERE issue.employee_id = $1 AND issue.status = 'Issued'
+         ORDER BY issue.decided_at DESC, issue.id DESC`,
       [employee.id],
     ),
     pool.query(
@@ -1826,7 +1947,7 @@ async function listEmployeeIssuances(employeeCode) {
              JOIN employee_issuances AS issue ON issue.id = return_request.issuance_id
              JOIN item_catalog AS inventory ON inventory.id = issue.item_id
              LEFT JOIN asset_unit_tags AS return_tag ON return_tag.id = return_request.asset_unit_tag_id
-            WHERE issue.employee_id = $1
+              WHERE issue.employee_id = $1
          ) AS history
         ORDER BY history.event_at DESC, history.sort_id DESC`,
       [employee.id],

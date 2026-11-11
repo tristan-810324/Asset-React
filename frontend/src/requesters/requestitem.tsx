@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
-import { listCatalogAssets, listPurchaseItemNames, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType } from './requesterApi'
+import { listCatalogAssets, listPurchaseItemNames, listRequesterDepartmentStaff, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType, type RequesterDepartmentStaff } from './requesterApi'
 
 type FormRow = Record<string, string | number>
+type PlannedRecipient = { employeeCode: string; quantity: number; useLocation: string; purpose: string }
 type FormValues = {
   [key: string]: unknown
   purpose?: string
@@ -96,7 +97,7 @@ const catalogMatchesCategory = (asset: CatalogAsset, category: string) => {
 }
 const purchaseCategoryForCatalogCategory = (value: string) => Object.entries(catalogCategoryAliases)
   .find(([, aliases]) => aliases.includes(normalizedCategory(value)))?.[0] ?? ''
-// Only reusable quantity stock is lent; per-unit assets and supplies go through an issuance request.
+// Only reusable stock tracked by quantity is lent; individually tracked items and supplies go through an issuance request.
 const canBorrow = (asset: CatalogAsset) => asset.trackingMode === 'quantity' && asset.issueBehavior === 'returnable'
 // The catalog name falls back to the description, so only show the description when it adds detail.
 const hasDescription = (asset: CatalogAsset) => Boolean(asset.description?.trim()) && asset.description.trim().toLowerCase() !== asset.name.trim().toLowerCase()
@@ -137,7 +138,7 @@ function initialForm(type: RequestType, prefill: ItemPrefill = {}): FormValues {
   if (type === 'BORROWING') return { purpose: '', otherPurpose: '', neededDate: '', returnDate: '', useLocation: '', specificLocation: '', returnResponsibleName: '', returnResponsibleContact: '', remarks: '', items: [] }
   if (type === 'FACILITY_USE') return { departmentOrganization: '', activity: '', purpose: '', activityType: 'CURRICULAR', otherActivityType: '', date: '', startTime: '', endTime: '', participantsMale: '', participantsFemale: '', venue: '', equipment: [], remarks: '' }
   if (type === 'JOB_REQUEST') return { departmentOrganization: '', purpose: '', requiredDate: '', tasks: [{ quantity: 1, particulars: '', natureOfWork: '', remarks: '' }], remarks: '' }
-  if (type === 'PURCHASE_REQUISITION') return { purpose: '', otherPurpose: '', requiredDate: today(), urgency: 'Standard', urgentReason: '', requesterCertification: false, items: [{ quantity: 1, category: prefill.category || '', catalogItemId: prefill.catalogItemId || '', itemNameId: '', itemName: prefill.name || '', description: prefill.description || '' }], remarks: '' }
+  if (type === 'PURCHASE_REQUISITION') return { purpose: '', otherPurpose: '', requiredDate: today(), urgency: 'Standard', urgentReason: '', requesterCertification: false, items: [{ quantity: 1, category: prefill.category || '', catalogItemId: prefill.catalogItemId || '', itemNameId: '', itemName: prefill.name || '', description: prefill.description || '', plannedRecipientsJson: '[]' }], remarks: '' }
   if (type === 'ISSUANCE_REQUEST') return { purpose: '', neededDate: '', remarks: '', items: [{ quantity: 1, description: prefill.name || '' }] }
   return { incidentType: 'LOST', keyArea: '', incidentDate: '', responsiblePerson: '', items: [{ quantity: 1, description: '', assetCode: '', remarks: '' }], remarks: '' }
 }
@@ -183,6 +184,21 @@ function RequestStepHeader({ step, status, titleId, title, description, children
 const inputClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 const textareaClass = 'min-h-20 w-full resize-y rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 
+function plannedRecipientsFor(item: FormRow): PlannedRecipient[] {
+  try {
+    const value: unknown = JSON.parse(String(item.plannedRecipientsJson || '[]'))
+    if (!Array.isArray(value)) return []
+    return value.filter((recipient): recipient is PlannedRecipient => Boolean(recipient)
+      && typeof recipient === 'object'
+      && typeof recipient.employeeCode === 'string'
+      && Number.isInteger(Number(recipient.quantity))
+      && typeof recipient.useLocation === 'string'
+      && typeof recipient.purpose === 'string')
+  } catch {
+    return []
+  }
+}
+
 function RequestItemContent() {
   const { identity, identityLoading, refreshIdentity } = useRequesterIdentity()
   const params = new URLSearchParams(window.location.search)
@@ -201,6 +217,8 @@ function RequestItemContent() {
   const [form, setForm] = useState<FormValues>(() => type ? initialForm(type, itemPrefill) : {})
   const [catalog, setCatalog] = useState<CatalogAsset[]>([])
   const [purchaseItemNames, setPurchaseItemNames] = useState<PurchaseItemName[]>([])
+  const [departmentStaff, setDepartmentStaff] = useState<RequesterDepartmentStaff[]>([])
+  const [departmentStaffError, setDepartmentStaffError] = useState('')
   const [catalogError, setCatalogError] = useState('')
   const [catalogLoaded, setCatalogLoaded] = useState(false)
   const [search, setSearch] = useState(() => (params.get('q') || '').slice(0, 100))
@@ -228,9 +246,12 @@ function RequestItemContent() {
   useEffect(() => {
     if (type !== 'PURCHASE_REQUISITION') return
     let active = true
-    listPurchaseItemNames()
+    void listPurchaseItemNames()
       .then((itemNames) => { if (active) setPurchaseItemNames(itemNames) })
       .catch((reason: unknown) => { if (active) setCatalogError(reason instanceof Error ? reason.message : 'Unable to load saved item names.') })
+    void listRequesterDepartmentStaff()
+      .then((staff) => { if (active) { setDepartmentStaff(staff); setDepartmentStaffError('') } })
+      .catch((reason: unknown) => { if (active) setDepartmentStaffError(reason instanceof Error ? reason.message : 'Unable to load department staff.') })
     return () => { active = false }
   }, [type])
 
@@ -295,6 +316,8 @@ function RequestItemContent() {
   const requestItems = (type === 'PURCHASE_REQUISITION' ? form.items ?? [] : []) as FormRow[]
   const requestItemsAreComplete = requestItems.length > 0 && requestItems.every((item) => {
     const quantity = Number(item.quantity)
+    const plannedRecipients = plannedRecipientsFor(item)
+    const plannedQuantity = plannedRecipients.reduce((sum, recipient) => sum + Number(recipient.quantity), 0)
     return Boolean(String(item.category || '').trim())
       && Boolean(String(item.itemName || '').trim())
       && (item.catalogItemId === '__GENERAL__' || Boolean(item.catalogItemId) || Boolean(item.itemNameId))
@@ -302,6 +325,12 @@ function RequestItemContent() {
       && Number.isInteger(quantity)
       && quantity >= 1
       && quantity <= 2147483647
+      && plannedQuantity <= quantity
+      && plannedRecipients.every((recipient) => Boolean(recipient.employeeCode)
+        && Number.isInteger(Number(recipient.quantity))
+        && Number(recipient.quantity) > 0
+        && Boolean(recipient.useLocation.trim())
+        && Boolean(recipient.purpose.trim()))
   })
   const requestPurpose = String(form.purpose || '')
   const requestOtherPurpose = String(form.otherPurpose || '').trim()
@@ -330,6 +359,24 @@ function RequestItemContent() {
       const rows = current[key]
       return { ...current, [key]: Array.isArray(rows) ? (rows as FormRow[]).map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row) : [] }
     })
+  }
+  const updatePlannedRecipient = (itemIndex: number, recipientIndex: number, field: keyof PlannedRecipient, value: string) => {
+    const recipients = plannedRecipientsFor(requestItems[itemIndex] || {})
+    const updated = recipients.map((recipient, index) => index === recipientIndex
+      ? { ...recipient, [field]: field === 'quantity' ? Number(value) : value }
+      : recipient)
+    updateRow('items', itemIndex, 'plannedRecipientsJson', JSON.stringify(updated))
+  }
+  const addPlannedRecipient = (itemIndex: number) => {
+    const recipients = plannedRecipientsFor(requestItems[itemIndex] || {})
+    updateRow('items', itemIndex, 'plannedRecipientsJson', JSON.stringify([
+      ...recipients,
+      { employeeCode: '', quantity: 1, useLocation: '', purpose: '' },
+    ]))
+  }
+  const removePlannedRecipient = (itemIndex: number, recipientIndex: number) => {
+    const recipients = plannedRecipientsFor(requestItems[itemIndex] || {})
+    updateRow('items', itemIndex, 'plannedRecipientsJson', JSON.stringify(recipients.filter((_recipient, index) => index !== recipientIndex)))
   }
   const addRow = (key: string, value: FormRow) => setForm((current) => {
     const rows = current[key]
@@ -367,11 +414,16 @@ function RequestItemContent() {
         ? {
           ...form,
           purpose: form.purpose === 'Others' ? `Others: ${String(form.otherPurpose || '').trim()}` : form.purpose,
-          items: ((form.items ?? []) as FormRow[]).map((item) => ({
-            ...item,
-            catalogItemId: item.catalogItemId && item.catalogItemId !== '__GENERAL__' ? String(item.catalogItemId) : null,
-            itemNameId: item.itemNameId ? String(item.itemNameId) : null,
-          })),
+          items: ((form.items ?? []) as FormRow[]).map((item) => {
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { plannedRecipientsJson, ...requestItem } = item
+            return {
+              ...requestItem,
+              catalogItemId: item.catalogItemId && item.catalogItemId !== '__GENERAL__' ? String(item.catalogItemId) : null,
+              itemNameId: item.itemNameId ? String(item.itemNameId) : null,
+              plannedRecipients: plannedRecipientsFor(item),
+            }
+          }),
         }
         : type === 'BORROWING'
           ? {
@@ -656,7 +708,7 @@ function RequestItemContent() {
               >
                 <div className="flex items-center gap-2">
                   <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold text-blue-800">{requestItems.length} item{requestItems.length === 1 ? '' : 's'} · {requestQuantityCount} units</span>
-                  <button type="button" onClick={() => addRow('items', { quantity: 1, category: '', catalogItemId: '', itemNameId: '', itemName: '', description: '' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button>
+                  <button type="button" onClick={() => addRow('items', { quantity: 1, category: '', catalogItemId: '', itemNameId: '', itemName: '', description: '', plannedRecipientsJson: '[]' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button>
                 </div>
               </RequestStepHeader>
               <div className="mt-4 space-y-3">
@@ -664,6 +716,9 @@ function RequestItemContent() {
                   const matchingCatalogItems = purchaseCatalogItems.filter((asset) => Boolean(item.category) && catalogMatchesCategory(asset, String(item.category)))
                   const matchingManagedNames = purchaseItemNames.filter((saved) => Boolean(item.category) && purchaseCategoryForCatalogCategory(saved.category) === item.category)
                   const isGeneralItem = item.catalogItemId === '__GENERAL__'
+                  const plannedRecipients = plannedRecipientsFor(item)
+                  const plannedQuantity = plannedRecipients.reduce((sum, recipient) => sum + Number(recipient.quantity || 0), 0)
+                  const unplannedQuantity = Math.max(Number(item.quantity || 0) - plannedQuantity, 0)
                   return <div key={index} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                     <div className="grid gap-3 sm:grid-cols-[14rem_1fr_8rem_auto]">
                       <Field label="Item category"><select className={inputClass} value={String(item.category || '')} onChange={(event) => { updateRow('items', index, 'category', event.target.value); updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', '') }} required><option value="">Select category</option>{purchaseCategoryOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -674,6 +729,44 @@ function RequestItemContent() {
                     <p className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[0.66rem] font-semibold text-emerald-800">GSO checks available stock first. Purchased items require GSO Head review.</p>
                     {isGeneralItem && <div className="mt-3 rounded-xl border-2 border-blue-200 bg-blue-50/50 p-3"><Field label="Proposed item name"><input className={inputClass} value={String(item.itemName || '')} onChange={(event) => updateRow('items', index, 'itemName', event.target.value)} placeholder="Type item name" required maxLength={250} /></Field></div>}
                     <Field label="Specifications"><textarea className={`${textareaClass} mt-3`} value={String(item.description || '')} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>
+                    <section className="mt-3 rounded-xl border border-blue-100 bg-white p-3" aria-label={`Planned recipients for item ${index + 1}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-sm font-extrabold text-slate-800">Planned recipients <span className="font-semibold text-slate-400">(optional)</span></h3>
+                          <p className="mt-1 max-w-2xl text-[0.68rem] leading-relaxed text-slate-500">Choose who is expected to use this item. GSO can confirm or adjust the barcode-to-employee assignment during Main Issuance.</p>
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${unplannedQuantity === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{plannedQuantity} of {Number(item.quantity) || 0} planned</span>
+                      </div>
+                      {departmentStaffError && <p role="status" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-800">Department staff list is unavailable. You may leave this blank; GSO can select recipients during Main Issuance.</p>}
+                      {plannedRecipients.length > 0 && <div className="mt-3 space-y-3">
+                        {plannedRecipients.map((recipient, recipientIndex) => {
+                          const selectedStaff = departmentStaff.find((staff) => staff.employeeCode === recipient.employeeCode)
+                          const otherAllocated = plannedRecipients.reduce((sum, entry, currentIndex) => sum + (currentIndex === recipientIndex ? 0 : Number(entry.quantity || 0)), 0)
+                          const maxRecipientQuantity = Math.max(Number(item.quantity || 0) - otherAllocated, 1)
+                          return <div key={`${index}-${recipientIndex}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1.5fr)_7rem_auto]">
+                              <Field label={`Employee ${recipientIndex + 1}`}>
+                                <select className={inputClass} value={recipient.employeeCode} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'employeeCode', event.target.value)} required>
+                                  <option value="">Select department staff</option>
+                                  {recipient.employeeCode && !departmentStaff.some((staff) => staff.employeeCode === recipient.employeeCode) && <option value={recipient.employeeCode} disabled>Unavailable employee · {recipient.employeeCode} · choose another</option>}
+                                  {departmentStaff.map((staff) => <option key={staff.employeeCode} value={staff.employeeCode} disabled={plannedRecipients.some((entry, entryIndex) => entryIndex !== recipientIndex && entry.employeeCode === staff.employeeCode)}>{staff.employeeName} · {staff.employeeCode}</option>)}
+                                </select>
+                              </Field>
+                              <Field label="Quantity"><input className={inputClass} type="number" min="1" max={maxRecipientQuantity} step="1" value={recipient.quantity} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'quantity', event.target.value)} required /></Field>
+                              <button type="button" onClick={() => removePlannedRecipient(index, recipientIndex)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>
+                            </div>
+                            {selectedStaff && <p className="mt-2 text-[0.68rem] font-semibold text-slate-600">{selectedStaff.position} · {selectedStaff.email}</p>}
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              <Field label="Actual use location"><input className={inputClass} value={recipient.useLocation} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'useLocation', event.target.value)} maxLength={200} placeholder="e.g. IT Office · Room 201" required /></Field>
+                              <Field label="Intended use"><input className={inputClass} value={recipient.purpose} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'purpose', event.target.value)} maxLength={500} placeholder="e.g. Printing student records" required /></Field>
+                            </div>
+                          </div>
+                        })}
+                      </div>}
+                      {plannedQuantity > Number(item.quantity) && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[0.68rem] font-bold text-rose-700">Recipient quantities exceed the requested quantity. Reduce the allocations before submitting.</p>}
+                      {unplannedQuantity > 0 && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[0.68rem] font-semibold text-slate-600">{plannedRecipients.length > 0 ? `${unplannedQuantity} unit(s) not planned yet.` : 'No recipients planned yet.'} GSO will confirm or assign these during Main Issuance.</p>}
+                      <button type="button" onClick={() => addPlannedRecipient(index)} disabled={departmentStaff.length === 0 || plannedQuantity >= Number(item.quantity || 0)} className="mt-3 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">+ Add employee recipient</button>
+                    </section>
                   </div>
                 })}
               </div>
@@ -711,8 +804,12 @@ function RequestItemContent() {
                 <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold text-blue-800">{requestItems.length} item{requestItems.length === 1 ? '' : 's'} · {requestQuantityCount} units</span>
               </RequestStepHeader>
               <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-xl bg-slate-100 px-3.5 py-2.5"><span className="text-xs font-bold text-slate-700">Requester</span><span className="text-right text-sm font-extrabold text-slate-900">{verifiedEmployeeName || identity?.accountName || 'Not verified yet'}{verifiedDepartment ? <span className="mt-0.5 block text-xs font-semibold text-slate-600">{verifiedDepartment}</span> : null}</span></div>
-              <ul className="mt-3 divide-y divide-slate-200 rounded-xl border border-slate-100 px-3.5">
-                {requestItems.map((item, index) => <li key={`${item.category}-${item.itemName}-${index}`} className="py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="wrap-break-word text-sm font-extrabold text-slate-900">{String(item.itemName || 'Unnamed item')}</p><p className="mt-0.5 text-xs font-semibold text-slate-600">{String(item.category || 'No category')} · Qty {item.quantity}</p></div><span className="shrink-0 text-xs font-bold text-slate-500">{item.catalogItemId === '__GENERAL__' ? 'New item' : 'Catalog item'}</span></div><p className="mt-1.5 break-words text-xs leading-relaxed text-slate-600">{String(item.description || 'No specifications')}</p></li>)}
+               <ul className="mt-3 divide-y divide-slate-200 rounded-xl border border-slate-100 px-3.5">
+                 {requestItems.map((item, index) => {
+                   const plannedRecipients = plannedRecipientsFor(item)
+                   const unplannedQuantity = Math.max(Number(item.quantity || 0) - plannedRecipients.reduce((sum, recipient) => sum + Number(recipient.quantity || 0), 0), 0)
+                   return <li key={`${item.category}-${item.itemName}-${index}`} className="py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="wrap-break-word text-sm font-extrabold text-slate-900">{String(item.itemName || 'Unnamed item')}</p><p className="mt-0.5 text-xs font-semibold text-slate-600">{String(item.category || 'No category')} · Qty {item.quantity}</p></div><span className="shrink-0 text-xs font-bold text-slate-500">{item.catalogItemId === '__GENERAL__' ? 'New item' : 'Catalog item'}</span></div><p className="mt-1.5 wrap-break-word text-xs leading-relaxed text-slate-600">{String(item.description || 'No specifications')}</p><div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 p-2.5"><p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-700">{plannedRecipients.length > 0 ? 'Planned recipients' : 'Recipient allocation'}</p>{plannedRecipients.length > 0 ? plannedRecipients.map((recipient) => { const staff = departmentStaff.find((entry) => entry.employeeCode === recipient.employeeCode); return <p key={recipient.employeeCode} className="mt-1 text-[0.68rem] font-semibold text-slate-700">{staff?.employeeName || recipient.employeeCode} · {recipient.quantity} · {recipient.useLocation} · {recipient.purpose}</p> }) : <p className="mt-1 text-[0.68rem] font-semibold text-slate-600">GSO will assign recipients during Main Issuance.</p>}{unplannedQuantity > 0 && plannedRecipients.length > 0 && <p className="mt-1 text-[0.68rem] font-semibold text-slate-500">{unplannedQuantity} unit(s) to be assigned by GSO.</p>}</div></li>
+                 })}
               </ul>
               <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                 {[
@@ -720,7 +817,7 @@ function RequestItemContent() {
                   ['Date needed', String(form.requiredDate || 'Not set')],
                   ['Urgency', requestUrgency],
                   ['Purpose', requestPurposeSummary],
-                ].map(([label, value]) => <div key={label} className="rounded-lg border border-slate-100 bg-slate-50/70 p-2.5"><dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-1 break-words text-xs font-semibold leading-relaxed text-slate-700">{value}</dd></div>)}
+                ].map(([label, value]) => <div key={label} className="rounded-lg border border-slate-100 bg-slate-50/70 p-2.5"><dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-1 wrap-break-word text-xs font-semibold leading-relaxed text-slate-700">{value}</dd></div>)}
               </dl>
               {requestUrgency === 'Urgent' && <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs leading-relaxed text-amber-900"><span className="font-extrabold">Urgent reason: </span>{requestUrgentReason}</p>}
               {error && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-rose-700">{error}</p>}

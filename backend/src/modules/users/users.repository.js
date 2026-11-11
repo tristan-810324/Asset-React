@@ -23,18 +23,9 @@ async function listSystemUsers() {
 
 async function listAccountPositions() {
   const result = await pool.query(
-    `SELECT position
-       FROM (
-         SELECT DISTINCT trim(employee.position) AS position
-           FROM employees employee
-          WHERE employee.status = 'Active'
-            AND length(trim(employee.position)) > 0
-         UNION
-         SELECT DISTINCT trim(user_account.position) AS position
-           FROM users user_account
-          WHERE length(trim(user_account.position)) > 0
-       ) AS available_positions
-      ORDER BY lower(position), position`,
+    `SELECT name AS position
+       FROM employee_positions
+      ORDER BY lower(name), name`,
   );
   return result.rows.map((row) => row.position);
 }

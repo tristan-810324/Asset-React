@@ -91,7 +91,7 @@ const consumableStockUnits: UnitGroup[] = [
 ]
 
 function inventoryTypeLabel(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
-  if (trackingMode === 'individual') return 'Per-unit asset'
+  if (trackingMode === 'individual') return 'Individually tracked item'
   return issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock'
 }
 
@@ -774,7 +774,7 @@ function ReusableStockStatus({ item }: { item: InventoryItem }) {
   ]
 
   return (
-    <section aria-labelledby="borrowing-status-title" className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <section aria-labelledby="borrowing-status-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
       <div className="mb-4 border-b border-slate-100 pb-3">
         <h3 id="borrowing-status-title" className="text-sm font-extrabold text-slate-900">Borrowing status</h3>
         <p className="mt-1 text-sm text-slate-600">How many are out, how many remain, and who has them right now. Counted per {item.unit}.</p>
@@ -1362,7 +1362,7 @@ export default function ItemsMasterData() {
       return
     }
     if (!formData.condition.trim()) {
-      showActionAlert('Select the condition for every unit in this batch or bulk stock record.', 'Condition required')
+      showActionAlert('Select the condition for every separate item record or quantity-tracked stock record.', 'Condition required')
       return
     }
     if (!formData.dateAcquired.trim()) {
@@ -1417,7 +1417,7 @@ export default function ItemsMasterData() {
         setInventoryLoadError('')
         handleClearForm(nextItems, formData.category)
         closeAddItemModal()
-        notifyAction('Bulk stock restocked', `${quantity} ${updatedItem.unit} were added to ${updatedItem.code}. The delivery was saved in receipt history.`)
+        notifyAction('Quantity-tracked stock restocked', `${quantity} ${updatedItem.unit} were added to ${updatedItem.code}. The delivery was saved in receipt history.`)
         await offerDeliveryLink(updatedItem.id ? [updatedItem.id] : [], { quantity, unit: updatedItem.unit, name: updatedItem.name }, formData.receiptReference.trim())
         return
       }
@@ -1463,9 +1463,9 @@ export default function ItemsMasterData() {
       notifyAction(
         isIndividualTracking
           ? (quantity === 1 ? 'Asset added' : 'Assets added')
-          : 'Bulk stock added',
+          : 'Quantity-tracked stock added',
         isIndividualTracking
-          ? `${quantity} ${quantity === 1 ? 'individual asset was' : 'individual assets were'} added. Barcode labels are available after issuance approval.`
+          ? `${quantity} ${quantity === 1 ? 'individually tracked item was' : 'individually tracked items were'} added. Barcode labels are available after issuance approval.`
           : `${quantity} ${formData.unitOfMeasure.trim() || 'piece'} of ${formData.itemName.trim()} were added as quantity-tracked stock (${bulkCodeRange?.display || itemCodes[0]}).`,
       )
       await offerDeliveryLink(
@@ -1658,7 +1658,7 @@ export default function ItemsMasterData() {
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6">
           <div className="mx-auto max-w-4xl space-y-4">
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <div className="mb-4 border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-slate-900">Item details</h3>
               <p className="mt-1 text-sm text-slate-600">Choose a category and a saved item name. The item code is generated automatically.</p>
@@ -1718,7 +1718,7 @@ export default function ItemsMasterData() {
                   ? 'Each physical asset receives its own item code.'
                   : formRestockTarget
                     ? `Restocking keeps code ${formRestockTarget.code}.`
-                    : 'This item-code range is reserved for the bulk quantity.'}
+                    : 'This item-code range is reserved for stock tracked by quantity.'}
               </span>
             </label>
 
@@ -1737,7 +1737,7 @@ export default function ItemsMasterData() {
               <span className="mt-2 block text-xs leading-relaxed text-slate-600">
                 {formData.trackingMode === 'individual'
                   ? 'All units in this batch start with the same condition. Add items separately if conditions differ.'
-                  : 'Bulk stock is kept in one condition group; create another stock record if its condition differs.'}
+                  : 'Quantity-tracked stock is kept in one condition group; create another stock record if its condition differs.'}
               </span>
             </label>
 
@@ -1783,7 +1783,7 @@ export default function ItemsMasterData() {
             </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+            <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="mb-4 border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-extrabold text-slate-900">Tracking &amp; acquisition</h3>
                 <p className="mt-1 text-sm text-slate-600">Choose how this item is tracked and enter its acquisition details.</p>
@@ -1793,8 +1793,8 @@ export default function ItemsMasterData() {
               <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Select how this inventory will be counted and issued.</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {([
-                  { value: 'individual' as const, title: 'Per-unit asset', description: 'Equipment tracked separately; its barcode label becomes available after issuance approval.' },
-                  { value: 'quantity' as const, title: 'Bulk quantity', description: 'Interchangeable items counted together. Choose below whether they are consumed or returned by quantity.' },
+                  { value: 'individual' as const, title: 'Track each item separately', description: 'Each physical item gets its own inventory record and barcode after issuance approval.' },
+                  { value: 'quantity' as const, title: 'Track as quantity', description: 'Matching items share one stock record. Choose below whether they are consumed or returned by quantity.' },
                 ]).map((option) => (
                   <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${formData.trackingMode === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                     <input
@@ -1818,7 +1818,7 @@ export default function ItemsMasterData() {
               {formData.trackingMode === 'quantity' && (
                 <fieldset className="mt-5">
                   <legend className={editFieldLabelClass}>How is this stock issued? <span className="text-rose-600">*</span></legend>
-                  <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Both options are quantity-tracked and do not need a barcode for each unit.</p>
+                  <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Items in this mode share a stock record. No separate barcode is created for each piece.</p>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {([
                       { value: 'consumable' as const, title: 'Consumable stock', description: 'Used up or given out; the quantity is not expected to be returned.' },
@@ -1892,7 +1892,7 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className={editFieldLabelClass}>{formData.trackingMode === 'individual' ? 'Number of physical assets' : 'Stock quantity'} <span className="text-rose-600">*</span></span>
+              <span className={editFieldLabelClass}>{formData.trackingMode === 'individual' ? 'Number of items to track separately' : 'Stock quantity'} <span className="text-rose-600">*</span></span>
               <input
                 type="number"
                 min="1"
@@ -1954,7 +1954,7 @@ export default function ItemsMasterData() {
             </div>
             </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <div className="mb-4 border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-slate-900">Review before saving</h3>
               <p className="mt-1 text-sm text-slate-600">Review the quantity and total acquisition cost.</p>
@@ -1974,10 +1974,10 @@ export default function ItemsMasterData() {
                 </div>
                 <p className="mt-2 text-sm font-medium leading-relaxed text-slate-700">
                   {formData.trackingMode === 'individual'
-                    ? `Will create ${formQuantity} individual asset record${formQuantity === 1 ? '' : 's'}${formItemCodes.length > 1 ? ` (${formItemCodes[0]} – ${formItemCodes[formItemCodes.length - 1]})` : ''}. Barcode labels become available after issuance approval.`
+                    ? `Will create ${formQuantity} separate item record${formQuantity === 1 ? '' : 's'}${formItemCodes.length > 1 ? ` (${formItemCodes[0]} – ${formItemCodes[formItemCodes.length - 1]})` : ''}. Barcode labels become available after issuance approval.`
                     : formRestockTarget
-                      ? `Will add ${formQuantity} ${formRestockTarget.unit} to ${formRestockTarget.code}; stock will become ${Number(formRestockTarget.quantityValue || 0) + formQuantity} ${formRestockTarget.unit}. Type: ${inventoryTypeLabel(formData.trackingMode, formData.issueBehavior)}. No per-unit barcode is printed.`
-                      : `Will create one ${inventoryTypeLabel(formData.trackingMode, formData.issueBehavior).toLocaleLowerCase()} record for ${formQuantity} ${formData.unitOfMeasure || 'piece'} (${formBulkCodeRange?.display || formData.itemCode}). No per-unit barcode is printed.`}
+                      ? `Will add ${formQuantity} ${formRestockTarget.unit} to ${formRestockTarget.code}; stock will become ${Number(formRestockTarget.quantityValue || 0) + formQuantity} ${formRestockTarget.unit}. Type: ${inventoryTypeLabel(formData.trackingMode, formData.issueBehavior)}. No separate barcode is created for each piece.`
+                      : `Will create one ${inventoryTypeLabel(formData.trackingMode, formData.issueBehavior).toLocaleLowerCase()} record for ${formQuantity} ${formData.unitOfMeasure || 'piece'} (${formBulkCodeRange?.display || formData.itemCode}). No separate barcode is created for each piece.`}
                 </p>
                 {formCostIsMissing && (
                   <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold leading-relaxed text-amber-900">
@@ -2058,7 +2058,7 @@ export default function ItemsMasterData() {
             <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/50 p-4 sm:p-7">
               {masterDataManagerTab === 'item_names' ? (
                 <div role="tabpanel" className="mx-auto min-h-full max-w-4xl space-y-5">
-                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Add an item name</h3>
                     <p className="mt-1 text-sm leading-relaxed text-slate-600">Add specific item names and link them to a category. Saved names appear in the Add Inventory Item dropdown.</p>
@@ -2100,7 +2100,7 @@ export default function ItemsMasterData() {
                   {itemNameManagerError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{itemNameManagerError}</p>}
                   </section>
 
-                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-end">
                     <div>
                       <h3 className="text-sm font-extrabold text-slate-900">Saved item names</h3>
@@ -2166,7 +2166,7 @@ export default function ItemsMasterData() {
                 </div>
               ) : (
                 <div role="tabpanel" className="mx-auto max-w-4xl space-y-5">
-                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Add a category</h3>
                     <p className="mt-1 text-sm leading-relaxed text-slate-600">Add categories, rename them with a reason, or remove unused categories.</p>
@@ -2195,7 +2195,7 @@ export default function ItemsMasterData() {
                   {categoryManagerError && <p role="alert" className="mt-3 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{categoryManagerError}</p>}
                   </section>
 
-                  <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                  <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                     <h3 className="border-b border-slate-100 pb-4 text-sm font-extrabold text-slate-900">Existing categories · {categories.length}</h3>
                     <div className="mt-4 max-h-[54vh] space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-3 pr-3.5">
                       {categories.map((category) => (
@@ -2341,7 +2341,7 @@ export default function ItemsMasterData() {
       )}
 
       {/* INVENTORY LIST TABLE */}
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">
@@ -2487,7 +2487,7 @@ export default function ItemsMasterData() {
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="all">All stock types</option>
-                <option value="individual">Per-unit assets</option>
+                <option value="individual">Track each item separately</option>
                 <option value="consumable">Consumable stocks</option>
                 <option value="reusable">Reusable stocks</option>
               </select>
@@ -2607,7 +2607,7 @@ export default function ItemsMasterData() {
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-8 sm:py-6">
               <div className="mx-auto max-w-4xl space-y-4">
                 {isReusableStock(selectedItem) && <ReusableStockStatus item={selectedItem} />}
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Item overview</h3>
                     <p className="mt-1 text-sm text-slate-600">Acquisition, stock, and valuation details for this inventory item.</p>
@@ -2675,7 +2675,7 @@ export default function ItemsMasterData() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-md sm:p-5">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Item History</h3>
                     <button
@@ -2769,7 +2769,7 @@ export default function ItemsMasterData() {
                 selectedItem.history.length > 0 ? (
                   <div className="space-y-3">
                     {selectedItem.history.map((log, index) => (
-                      <article key={log.changedAt + '-' + index} className="flex flex-col items-start justify-between gap-3 rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md sm:flex-row sm:gap-4">
+                      <article key={log.changedAt + '-' + index} className="flex flex-col items-start justify-between gap-3 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:flex-row sm:gap-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-base font-semibold text-slate-800">{log.previous}</span>
@@ -2793,7 +2793,7 @@ export default function ItemsMasterData() {
                   {[...selectedItem.changeHistory]
                     .sort((left, right) => new Date(left.changedAt).getTime() - new Date(right.changedAt).getTime())
                     .map((change, index) => (
-                      <article key={change.changedAt + '-' + index} className="rounded-2xl border-2 border-slate-300 bg-white p-5 shadow-md">
+                      <article key={change.changedAt + '-' + index} className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                         <div className="min-w-0">
                           <p className="text-base font-semibold leading-relaxed text-slate-950">{change.action === 'updated' ? 'Item updated' : change.reason}</p>
                           {change.action === 'updated' && change.reason && (
@@ -2858,7 +2858,7 @@ export default function ItemsMasterData() {
                   </p>
                 )}
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Item details</h3>
                     <p className="mt-1 text-sm text-slate-600">Fields marked <span className="font-extrabold text-rose-600">*</span> are required. Choose a saved item name for the selected category.</p>
@@ -2905,7 +2905,7 @@ export default function ItemsMasterData() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Tracking &amp; acquisition</h3>
                     <p className="mt-1 text-sm text-slate-600">Review how this item is tracked and record its acquisition details.</p>
@@ -2921,15 +2921,15 @@ export default function ItemsMasterData() {
                         required
                         className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
                       >
-                        <option value="individual">Per-unit asset - unique barcode for each physical unit</option>
-                        <option value="quantity">Bulk quantity - one stock record, no per-unit labels</option>
+                        <option value="individual">Track each item separately — unique barcode for each item</option>
+                        <option value="quantity">Track as quantity — one stock record for matching items</option>
                       </select>
                       <span className="mt-2 block text-xs leading-relaxed text-slate-600">Tracking mode can only change before asset tags are created. Existing barcode history is preserved.</span>
                     </label>
                     {editFormData.trackingMode === 'quantity' && (
                       <fieldset className="sm:col-span-2">
                         <legend className={editFieldLabelClass}>How is this stock issued? <span className="text-rose-600">*</span></legend>
-                        <p className="mb-3 text-xs leading-relaxed text-slate-600">Choose whether the quantity is consumed or expected back. Neither option uses per-unit barcodes.</p>
+                        <p className="mb-3 text-xs leading-relaxed text-slate-600">Choose whether stock is used up or expected back. Items in this mode do not have separate barcodes.</p>
                         <div className="grid gap-2 sm:grid-cols-2">
                           {([
                             { value: 'consumable' as const, title: 'Consumable stock', description: 'Used up or given out; the quantity is not expected to be returned.' },
@@ -2979,7 +2979,7 @@ export default function ItemsMasterData() {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Stock &amp; condition</h3>
                     <p className="mt-1 text-sm text-slate-600">Keep the item quantity, unit, and condition up to date.</p>
@@ -2988,7 +2988,7 @@ export default function ItemsMasterData() {
                     <label className="block">
                       <span className={editFieldLabelClass}>Quantity <span className="text-rose-600">*</span></span>
                       <input type="number" min="1" step="1" name="quantity" required value={editFormData.quantity} onChange={handleEditInputChange} disabled={selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0} className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`} />
-                      {selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0 && <span className="mt-2 block text-xs text-slate-600">Quantity is locked because asset tags already exist.</span>}
+                      {selectedItem.trackingMode === 'individual' && selectedItem.assetTags.length > 0 && <span className="mt-2 block text-xs text-slate-600">Quantity is locked because item barcodes already exist.</span>}
                     </label>
                     <label className="block">
                       <span className={editFieldLabelClass}>Issued per <span className="text-rose-600">*</span></span>

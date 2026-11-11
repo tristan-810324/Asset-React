@@ -1,8 +1,9 @@
-type RequisitionIssuanceDestination = 'requisitions' | 'issuance'
+type RequisitionIssuanceDestination = 'requisitions' | 'issuance' | 'labels'
 
 const shortcuts: Array<{ destination: RequisitionIssuanceDestination; label: string; href: string }> = [
   { destination: 'requisitions', label: 'Check Requisitions', href: '/gso/purchase-requisitions?tab=review' },
   { destination: 'issuance', label: 'Open Main Issuance', href: '/gso/main-issuance' },
+  { destination: 'labels', label: 'Print Asset Labels', href: '/gso/asset-labels' },
 ]
 
 export function RequisitionIssuanceShortcuts({ active }: { active: RequisitionIssuanceDestination }) {

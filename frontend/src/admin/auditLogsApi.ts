@@ -1,7 +1,8 @@
 import { apiRequest } from '../auth/authApi'
 
-export type AuditLogAction = 'created' | 'updated' | 'renamed' | 'deleted'
-export type AuditLogEntityType = 'item' | 'category' | 'employee'
+export type AuditLogAction = 'created' | 'updated' | 'renamed' | 'deleted' | 'requested' | 'issued' | 'returned' | 'received' | 'approved' | 'rejected' | 'cancelled' | 'moved'
+export type AuditLogEntityType = 'item' | 'category' | 'employee' | 'request'
+export type AuditLogFlag = 'MANUAL_ENTRY' | 'ITEM_LOST' | 'DELIVERY_UNDONE' | 'RECORD_DELETED' | 'LABEL_REPRINT'
 
 export type AuditLogEntry = {
   id: string
@@ -9,6 +10,8 @@ export type AuditLogEntry = {
   entityId: string
   entityName: string
   action: AuditLogAction
+  flag: AuditLogFlag | null
+  requestId: string | null
   reason: string
   oldValues: Record<string, unknown>
   newValues: Record<string, unknown>
@@ -21,6 +24,8 @@ export type AuditLogFilters = {
   offset: number
   action: 'all' | AuditLogAction
   entityType: 'all' | AuditLogEntityType
+  // 'any' shows every red-flagged entry; a specific flag shows only that one.
+  flag: 'all' | 'any' | AuditLogFlag
   search: string
   from: string
   to: string
@@ -31,6 +36,7 @@ export type AuditLogPage = {
   total: number
   limit: number
   offset: number
+  flaggedLast30Days: number
 }
 
 export async function listAuditLogs(filters: AuditLogFilters) {
@@ -39,6 +45,7 @@ export async function listAuditLogs(filters: AuditLogFilters) {
     offset: String(filters.offset),
     action: filters.action,
     entityType: filters.entityType,
+    flag: filters.flag,
     search: filters.search.trim(),
     from: filters.from,
     to: filters.to,

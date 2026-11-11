@@ -196,7 +196,7 @@ function RequesterDashboardContent() {
 
         {loading ? <div className="grid min-h-40 place-items-center text-xs font-semibold text-slate-500">Loading recent requests…</div>
           : recentRequests.length === 0 ? <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><div><span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><MetricIcon name="requests" /></span><p className="mt-2 text-xs font-extrabold text-slate-700">No requests yet</p><p className="mt-1 text-[0.68rem] text-slate-500">Start a purchase requisition or another GSO request.</p><a href="/requester/request-center" className="mt-3 inline-flex text-[0.68rem] font-extrabold text-blue-600 hover:underline">Open Request Center →</a></div></div>
-             : <ul className="max-h-[30rem] divide-y divide-slate-200 overflow-y-auto px-3 sm:px-6">{recentRequests.map((request) => {
+             : <ul className="max-h-120 divide-y divide-slate-200 overflow-y-auto px-3 sm:px-6">{recentRequests.map((request) => {
               const items = getRequestItems(request)
               const [firstItem] = items
               return <li key={request.id} className="py-2.5 first:pt-1 last:pb-1 sm:py-4">

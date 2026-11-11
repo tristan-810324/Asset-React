@@ -591,7 +591,7 @@ async function updateItem(id, item, { changedByUserId }) {
       : item.issueBehavior ?? previous.issue_behavior ?? 'returnable';
     const trackingModeChanged = nextTrackingMode !== (previous.tracking_mode ?? 'individual');
     if (nextTrackingMode === 'individual' && nextIssueBehavior === 'consumable') {
-      throw Object.assign(new Error('Ang per-unit asset ay dapat itakda bilang ibinabalik na item.'), { status: 400 });
+      throw Object.assign(new Error('Ang item na tina-track nang paisa-isa ay dapat ibinabalik bilang individual item.'), { status: 400 });
     }
     if (nextIssueBehavior === 'consumable'
       && previous.issue_behavior !== 'consumable'
@@ -638,7 +638,7 @@ async function updateItem(id, item, { changedByUserId }) {
     if (nextTrackingMode === 'individual'
       && existingTagCount > 0
       && item.quantity !== Number(previous.quantity)) {
-      throw Object.assign(new Error('Magdagdag ng bagong per-unit item record sa halip na baguhin ang quantity ng item na may asset tags na.'), { status: 409 });
+      throw Object.assign(new Error('Magdagdag ng bagong item record sa halip na baguhin ang quantity ng item na may barcode tags na.'), { status: 409 });
     }
 
     const costOrQuantityChanged = Number(previous.unit_cost) !== item.unitCost
@@ -767,10 +767,10 @@ async function restockItem(id, receipt) {
     const previous = itemResult.rows[0];
     if (!previous) throw Object.assign(new Error('Hindi na makita ang inventory item.'), { status: 404 });
     if (previous.tracking_mode !== 'quantity') {
-      throw Object.assign(new Error('Bulk quantity items lamang ang maaaring i-restock sa SKU na ito.'), { status: 409 });
+      throw Object.assign(new Error('Mga item na naka-track as quantity lamang ang maaaring i-restock sa SKU na ito.'), { status: 409 });
     }
     if (previous.condition !== receipt.condition) {
-      throw Object.assign(new Error('Magkaiba ang condition ng kasalukuyang bulk stock at bagong delivery. Gumawa ng hiwalay na stock record.'), { status: 409 });
+      throw Object.assign(new Error('Magkaiba ang condition ng kasalukuyang stock na naka-track as quantity at bagong delivery. Gumawa ng hiwalay na stock record.'), { status: 409 });
     }
 
     const previousQuantity = Number(previous.quantity);
@@ -822,7 +822,7 @@ async function restockItem(id, receipt) {
         String(id),
         updatedItem.itemName,
         id,
-        `Bulk stock restocked with ${receipt.quantity} ${previous.unit_of_measure}.`,
+        `Quantity-tracked stock restocked with ${receipt.quantity} ${previous.unit_of_measure}.`,
         JSON.stringify(itemSnapshot(previous)),
         JSON.stringify({
           itemCode: updatedItem.itemCode,
@@ -969,8 +969,8 @@ async function deleteCategory(id, { reason, changedByUserId }) {
     await client.query(
       `INSERT INTO inventory_change_logs (
          entity_type, entity_key, entity_name, category_id, action, reason,
-         old_values, new_values, changed_by_user_id
-       ) VALUES ('category', $1, $2, $3, 'deleted', $4, $5::JSONB, '{}'::JSONB, $6)`,
+         old_values, new_values, changed_by_user_id, flag
+       ) VALUES ('category', $1, $2, $3, 'deleted', $4, $5::JSONB, '{}'::JSONB, $6, 'RECORD_DELETED')`,
       [String(id), category.name, id, reason, JSON.stringify({ name: category.name }), changedByUserId],
     );
     await client.query('DELETE FROM item_categories WHERE id = $1', [id]);

@@ -593,7 +593,7 @@ export default function ToRepaired() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-200/55 sm:p-5">
+      <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(300px,1.2fr)] lg:items-center">
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
@@ -645,7 +645,7 @@ export default function ToRepaired() {
       )}
 
       {activeRepairSection === 'queue' && (
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Items To Be Repaired</h2>
@@ -767,7 +767,7 @@ export default function ToRepaired() {
       )}
 
       {activeRepairSection === 'history' && (
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Completed Repair History</h2>
@@ -910,7 +910,7 @@ export default function ToRepaired() {
 
             <fieldset className="mt-4 space-y-2" disabled={isCompletingRepair}>
               <legend className="mb-2 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">What happened to the item?</legend>
-              <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition ${completionChoice === 'repaired' ? 'border-emerald-300 bg-emerald-50/60 ring-4 ring-emerald-100' : 'border-slate-200 hover:border-slate-300'}`}>
+              <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border-2 p-3.5 shadow-md shadow-slate-300/35 transition ${completionChoice === 'repaired' ? 'border-emerald-300 bg-emerald-50/60 ring-4 ring-emerald-100' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5 hover:border-slate-400'}`}>
                 <input type="radio" name="repair-outcome" checked={completionChoice === 'repaired'} onChange={() => { setCompletionChoice('repaired'); setRepairActionError('') }} className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600" />
                 <span>
                   <span className="block text-xs font-extrabold text-slate-900">It was repaired</span>
@@ -920,7 +920,7 @@ export default function ToRepaired() {
                 </span>
               </label>
               {repairCompletionItem.returnId && repairCompletionItem.repairStatus !== writeOffRequestedStatus && (
-                <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition ${completionChoice === 'writeOff' ? 'border-rose-300 bg-rose-50/60 ring-4 ring-rose-100' : 'border-slate-200 hover:border-slate-300'}`}>
+                <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border-2 p-3.5 shadow-md shadow-slate-300/35 transition ${completionChoice === 'writeOff' ? 'border-rose-300 bg-rose-50/60 ring-4 ring-rose-100' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5 hover:border-slate-400'}`}>
                   <input type="radio" name="repair-outcome" checked={completionChoice === 'writeOff'} onChange={() => { setCompletionChoice('writeOff'); setRepairActionError('') }} className="mt-0.5 h-4 w-4 shrink-0 accent-rose-600" />
                   <span>
                     <span className="block text-xs font-extrabold text-slate-900">It can't be repaired</span>

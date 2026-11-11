@@ -137,6 +137,8 @@ export type IssuanceRecord = {
   employeeName: string
   department: string
   position: string
+  recipientLocation: string
+  recipientPurpose: string
   tagCodes: string[]
   returns: IssuanceRecordReturn[]
 }
@@ -272,6 +274,10 @@ export type EmployeeIssuanceBatchDetails = {
     issuanceId: string
     itemCode: string
     itemName: string
+    recipientEmployeeCode: string
+    recipientEmployeeName: string
+    recipientLocation: string
+    recipientPurpose: string
     trackingMode: 'individual' | 'quantity'
     issueBehavior?: 'consumable' | 'returnable'
     condition: string
@@ -352,7 +358,12 @@ export async function createEmployeeIssuance(
 
 export async function createEmployeeIssuanceBatch(
   employeeCode: string,
-  items: Array<{ itemId: string; quantity: number; purchaseRequisitionLineId?: string }>,
+  items: Array<{
+    itemId: string
+    quantity: number
+    purchaseRequisitionLineId?: string
+    recipientAllocations?: Array<{ employeeCode: string; quantity: number; location?: string; purpose?: string }>
+  }>,
   notes: string,
   borrowDetails: {
     useAt: string
@@ -385,6 +396,10 @@ export async function createEmployeeIssuanceBatch(
         itemId: string
         itemCode: string
         itemName: string
+        recipientEmployeeCode: string
+        recipientEmployeeName: string
+        recipientLocation: string
+        recipientPurpose: string
         trackingMode: 'individual' | 'quantity'
         issueBehavior: 'consumable' | 'returnable'
         condition: string
@@ -504,6 +519,9 @@ export type UnitLabel = {
   itemName: string
   holderCode: string
   holderName: string
+  batchEmployeeName?: string | null
+  batchEmployeeEmail?: string | null
+  emailSent?: boolean
   issuedAt: string | null
   batchId: string | null
   purchaseRequisitionReference: string | null

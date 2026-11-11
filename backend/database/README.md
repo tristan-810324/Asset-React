@@ -2,7 +2,7 @@
 
 ## Migrations
 
-`migrations/` builds the whole schema from an empty database in sixteen files, one per feature. Keep their order: later files reference tables created by earlier files.
+`migrations/` builds the whole schema from an empty database in twenty files, one per feature. Keep their order: later files reference tables created by earlier files.
 
 | Version | File | Scope |
 | --- | --- | --- |
@@ -24,8 +24,10 @@
 | 016 | `016_staff_choice_for_in_stock_items.sql` | GSO Staff choose to issue in-stock items or ask the GSO Head, unless the Head locked the item |
 | 017 | `017_app_notifications.sql` | In-app notifications for users and roles |
 | 018 | `018_purchase_delivery_without_finance_reply.sql` | Finance no longer replies in the app: Finance reply statuses become `WAITING_FOR_PURCHASE`, and a delivery link can be undone |
+| 019 | `019_issuance_recipient_details.sql` | Stores the actual employee recipient, use location, and intended purpose on each GSO issuance line |
+| 020 | `020_employee_position_master_data.sql` | Adds managed employee positions and preserves established employee, requester, and account position labels |
 
-Treat an applied migration as history. Add a new numbered file, starting at `019`, for every later schema change. Do not edit, rename, move, or delete a file that a database has already applied.
+Treat an applied migration as history. Add a new numbered file, starting at `020`, for every later schema change. Do not edit, rename, move, or delete a file that a database has already applied.
 
 Run migrations with `npm run db:migrate`, which applies the pending files in order and records each one in `schema_migrations`. The script takes its target only from `MIGRATION_DATABASE_URL`, never from `backend/.env`, and refuses Neon pooled connection strings.
 

@@ -9,13 +9,13 @@ import {
   type ServiceRequest,
 } from './requesterApi'
 
-type ItemFilter = 'All items' | 'Per-unit assets' | 'Consumables' | 'Reusable stock'
+type ItemFilter = 'All items' | 'Track each item separately' | 'Consumables' | 'Reusable stock'
 type IssuedItem = RequesterIssuanceApproval['items'][number]
 
-const filters: ItemFilter[] = ['All items', 'Per-unit assets', 'Consumables', 'Reusable stock']
+const filters: ItemFilter[] = ['All items', 'Track each item separately', 'Consumables', 'Reusable stock']
 
 function itemCategory(item: IssuedItem): Exclude<ItemFilter, 'All items'> {
-  if (item.trackingMode === 'individual') return 'Per-unit assets'
+  if (item.trackingMode === 'individual') return 'Track each item separately'
   return item.issueBehavior === 'consumable' ? 'Consumables' : 'Reusable stock'
 }
 
@@ -38,14 +38,14 @@ function itemStatus(batch: RequesterIssuanceApproval, item: IssuedItem) {
     && Number(item.quantity) - Number(item.returnedQuantity || 0) <= 0) return 'Returned'
   if (item.status === 'Returned') return 'Returned'
   if (batch.status === 'Pending' && item.trackingMode === 'individual') return 'Awaiting acknowledgment'
-  if (batch.status === 'Issued' && item.trackingMode === 'individual') return 'Ready for pickup'
+  if (batch.status === 'Issued' && item.trackingMode === 'individual') return 'Issued to department'
   if (batch.status === 'Issued' && item.issueBehavior === 'consumable') return 'Distributed'
   if (batch.status === 'Issued' && item.issueBehavior === 'returnable') return 'Borrowed'
   return item.status || batch.status
 }
 
 function statusTone(status: string) {
-  if (['Ready for pickup', 'Distributed', 'Borrowed', 'Returned', 'Issued'].includes(status)) return 'bg-emerald-50 text-emerald-700'
+  if (['Ready for pickup', 'Issued to department', 'Distributed', 'Borrowed', 'Returned', 'Issued'].includes(status)) return 'bg-emerald-50 text-emerald-700'
   if (['Pending', 'Approved', 'Awaiting acknowledgment', 'Return Requested'].includes(status)) return 'bg-amber-50 text-amber-800'
   if (['Rejected', 'Cancelled', 'For Repair'].includes(status)) return 'bg-rose-50 text-rose-700'
   return 'bg-slate-100 text-slate-700'
@@ -122,7 +122,7 @@ export default function RequesterIssuedItems() {
     }
   }
 
-  return <RequesterLayout title="My Issued Items" subtitle="View equipment assigned to you, supplies distributed, and reusable stock borrowed from GSO.">
+  return <RequesterLayout title="My Issued Items" subtitle="View items issued to your department, staff recipient assignments, supplies, and borrowings.">
     <div className="space-y-6">
       <section className="relative isolate overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
@@ -133,7 +133,7 @@ export default function RequesterIssuedItems() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Requester workspace
             </span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">My Issued Items</h1>
-            <p className="mt-2 max-w-xl text-sm font-medium leading-relaxed text-blue-100">Your equipment, distributed supplies, and reusable-stock loans.</p>
+            <p className="mt-2 max-w-xl text-sm font-medium leading-relaxed text-blue-100">Equipment issued to your department, actual staff recipients, distributed supplies, and reusable-stock loans.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <a href="/requester/my-requests" className="inline-flex h-10 items-center justify-center rounded-xl border border-white/20 bg-white/10 px-4 text-xs font-extrabold text-white transition hover:bg-white/15">My requests</a>
@@ -150,8 +150,8 @@ export default function RequesterIssuedItems() {
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Issued items summary" aria-busy={loading}>
         {[
-          { label: 'Assigned assets', value: activePerUnitCount, detail: 'Per-unit equipment in your custody', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'asset' as const },
-          { label: 'Consumables issued', value: distributedConsumableCount, detail: 'Units distributed to you', tone: 'border-violet-100 bg-violet-50 text-violet-700', icon: 'supplies' as const },
+          { label: 'Assigned items', value: activePerUnitCount, detail: 'Individually tracked equipment assigned across your department', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'asset' as const },
+          { label: 'Consumables issued', value: distributedConsumableCount, detail: 'Units distributed for your department', tone: 'border-violet-100 bg-violet-50 text-violet-700', icon: 'supplies' as const },
           { label: 'Reusable stock to return', value: reusableOutstandingCount, detail: 'Outstanding quantity from GSO', tone: 'border-amber-100 bg-amber-50 text-amber-700', icon: 'return' as const },
           { label: 'Records', value: totalRecords, detail: 'Issuance and borrowing line items', tone: 'border-emerald-100 bg-emerald-50 text-emerald-700', icon: 'records' as const },
         ].map((metric) => <article key={metric.label} className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 transition hover:-translate-y-0.5 hover:shadow-md">
@@ -206,6 +206,8 @@ export default function RequesterIssuedItems() {
                         <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-[0.58rem] font-extrabold text-slate-600">{category}</span>
                       </div>
                       <p className="mt-1.5 text-xs font-semibold text-slate-600">{item.itemCode}<span className="px-1.5 text-slate-300">·</span>{item.quantity} {item.unitOfMeasure}{item.issueBehavior === 'returnable' && item.trackingMode === 'quantity' ? <span className="text-amber-700"><span className="px-1.5 text-slate-300">·</span>{remaining} remaining</span> : null}</p>
+                      <p className="mt-1 text-xs font-bold text-blue-700">Assigned to {item.recipientEmployeeName} · {item.recipientEmployeeCode}</p>
+                      {(item.recipientLocation || item.recipientPurpose) && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-500">{[item.recipientLocation, item.recipientPurpose].filter(Boolean).join(' · ')}</p>}
                     </div>
                     <span className={'shrink-0 rounded-full px-3 py-1.5 text-[0.62rem] font-extrabold ' + statusTone(currentStatus)}>{currentStatus}</span>
                   </div>

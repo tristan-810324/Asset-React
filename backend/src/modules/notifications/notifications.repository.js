@@ -62,50 +62,9 @@ async function markAllRead(user) {
 }
 
 async function refreshOperationalNotifications() {
-  await pool.query(`
-    WITH active AS (
-      SELECT issue.item_id, SUM(issue.quantity - issue.returned_quantity)::INTEGER AS qty
-        FROM employee_issuances AS issue WHERE issue.status IN ('Pending', 'Issued') GROUP BY issue.item_id
-      UNION ALL
-      SELECT asset.item_id, SUM(asset.quantity)::INTEGER AS qty
-        FROM service_request_assets AS asset
-        JOIN service_requests AS request ON request.id = asset.request_id
-       WHERE request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair') GROUP BY asset.item_id
-    ), used AS (SELECT item_id, SUM(qty)::INTEGER AS qty FROM active GROUP BY item_id), low AS (
-      SELECT item.id, item.item_code, COALESCE(NULLIF(item.item_name, ''), item.description) AS item_name,
-             GREATEST(item.quantity - COALESCE(used.qty, 0) - COALESCE((SELECT COUNT(*) FROM asset_unit_tags AS tag
-               WHERE tag.item_id = item.id AND tag.lifecycle_status = 'Pending Disposal' AND tag.custody_status = 'Available'), 0), 0)::INTEGER AS available, item.reorder_level
-        FROM item_catalog AS item LEFT JOIN used ON used.item_id = item.id
-       WHERE item.lifecycle_status = 'Active' AND item.reorder_level > 0
-    )
-    INSERT INTO app_notifications (recipient_role_key, notification_type, title, message, href, dedupe_key)
-    SELECT 'GSO_STAFF', 'LOW_STOCK', 'Low stock: ' || item_name,
-           item_code || ' has ' || available || ' available; reorder threshold is ' || reorder_level || '.',
-           '/gso/items', 'low-stock:' || id
-      FROM low WHERE available <= reorder_level
-    ON CONFLICT (dedupe_key) DO UPDATE SET
-      title = EXCLUDED.title, message = EXCLUDED.message, resolved_at = NULL,
-      read_at = CASE WHEN app_notifications.resolved_at IS NOT NULL THEN NULL ELSE app_notifications.read_at END`);
-
-  await pool.query(`
-    UPDATE app_notifications AS notification SET resolved_at = NOW()
-     WHERE notification.notification_type = 'LOW_STOCK' AND notification.resolved_at IS NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM item_catalog AS item
-          LEFT JOIN LATERAL (
-            SELECT COALESCE(SUM(issue.quantity - issue.returned_quantity), 0)
-                   + COALESCE((SELECT SUM(asset.quantity)
-                                FROM service_request_assets AS asset
-                                JOIN service_requests AS request ON request.id = asset.request_id
-                               WHERE asset.item_id = item.id AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')), 0)
-                   + COALESCE((SELECT COUNT(*) FROM asset_unit_tags AS tag
-                                WHERE tag.item_id = item.id AND tag.lifecycle_status = 'Pending Disposal' AND tag.custody_status = 'Available'), 0) AS used
-              FROM employee_issuances AS issue WHERE issue.item_id = item.id AND issue.status IN ('Pending', 'Issued')
-          ) AS usage ON TRUE
-          WHERE notification.dedupe_key = 'low-stock:' || item.id
-            AND item.lifecycle_status = 'Active' AND item.reorder_level > 0
-            AND GREATEST(item.quantity - usage.used, 0) <= item.reorder_level
-       )`);
+  // shortcut: low-stock alerts were removed because item_catalog has no reorder_level column yet;
+  // add that column and an Item Master Data field first, then bring the alert back.
+  await pool.query(`UPDATE app_notifications SET resolved_at = NOW() WHERE notification_type = 'LOW_STOCK' AND resolved_at IS NULL`);
 
   await pool.query(`
     INSERT INTO app_notifications (recipient_user_id, notification_type, title, message, href, dedupe_key)
@@ -133,4 +92,28 @@ async function refreshOperationalNotifications() {
        )`);
 }
 
-module.exports = { listForUser, markRead, markAllRead, refreshOperationalNotifications, createUserNotification, createRoleNotification };
+// Hides every open notification whose key starts with the prefix, for example the GSO Head's
+// "needs your decision" once the decision is made. Keys are built by our code, never by users.
+async function resolveByPrefix(prefix) {
+  await pool.query(
+    `UPDATE app_notifications SET resolved_at = NOW()
+      WHERE resolved_at IS NULL AND left(dedupe_key, length($1)) = $1`,
+    [prefix],
+  );
+}
+
+// The verified requester account that holds this employee code, if one exists.
+async function userIdForEmployeeCode(employeeCode) {
+  const result = await pool.query(
+    `SELECT user_id FROM requester_identity_profiles
+      WHERE verification_status = 'Verified' AND lower(trim(employee_code)) = lower(trim($1))
+      ORDER BY reviewed_at DESC NULLS LAST, user_id LIMIT 1`,
+    [employeeCode],
+  );
+  return result.rows[0]?.user_id ?? null;
+}
+
+module.exports = {
+  listForUser, markRead, markAllRead, refreshOperationalNotifications,
+  createUserNotification, createRoleNotification, resolveByPrefix, userIdForEmployeeCode,
+};

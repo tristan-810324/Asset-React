@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const nodemailer = require('nodemailer');
 const env = require('../../config/env');
 const issuancesRepository = require('./issuances.repository');
+const notificationsRepository = require('../notifications/notifications.repository');
 
 const mailTransport = env.smtp
   ? nodemailer.createTransport({
@@ -81,7 +82,36 @@ function validateCreateIssuanceBatch(input) {
     if (purchaseRequisitionLineId !== null && !/^\d{1,20}$/.test(purchaseRequisitionLineId)) {
       throw httpError(400, 'Hindi valid ang purchase requisition item reference.');
     }
-    return { itemId, quantity, purchaseRequisitionLineId };
+    const rawRecipientAllocations = value.recipientAllocations;
+    if (rawRecipientAllocations !== undefined && (!Array.isArray(rawRecipientAllocations) || rawRecipientAllocations.length > 100)) {
+      throw httpError(400, 'Hindi valid ang planned employee allocation para sa item.');
+    }
+    const recipientAllocations = (rawRecipientAllocations || []).map((allocation) => {
+      if (!allocation || typeof allocation !== 'object' || Array.isArray(allocation)) {
+        throw httpError(400, 'May hindi valid na employee allocation para sa item.');
+      }
+      const recipientEmployeeCode = requiredText(allocation.employeeCode, 'recipient employee code', 40);
+      const recipientQuantity = Number(allocation.quantity);
+      if (!Number.isInteger(recipientQuantity) || recipientQuantity < 1 || recipientQuantity > quantity) {
+        throw httpError(400, 'Ang recipient quantity ay dapat whole number na hindi lalampas sa item quantity.');
+      }
+      return {
+        employeeCode: recipientEmployeeCode,
+        quantity: recipientQuantity,
+        location: requiredText(allocation.location, 'actual use location', 200, { optional: true }),
+        purpose: requiredText(allocation.purpose, 'recipient purpose', 500, { optional: true }),
+      };
+    });
+    if (recipientAllocations.length > 0) {
+      const recipientCodes = recipientAllocations.map((allocation) => allocation.employeeCode.toLowerCase());
+      if (new Set(recipientCodes).size !== recipientCodes.length) {
+        throw httpError(400, 'Pagsamahin sa iisang allocation row ang quantity para sa parehong employee.');
+      }
+      if (recipientAllocations.reduce((sum, allocation) => sum + allocation.quantity, 0) !== quantity) {
+        throw httpError(400, 'Dapat eksaktong tumugma ang kabuuang recipient allocation sa issuance quantity.');
+      }
+    }
+    return { itemId, quantity, purchaseRequisitionLineId, recipientAllocations };
   });
   const itemIds = items.map((item) => item.itemId);
   if (new Set(itemIds).size !== itemIds.length) {
@@ -204,13 +234,21 @@ async function createIssuance(input, user) {
 }
 async function createIssuanceBatch(input, user) {
   const { employeeCode, items, notes, borrowDetails, purchaseRequisitionId } = validateCreateIssuanceBatch(input);
-  const blockers = await issuancesRepository.getEmployeeReturnBlockers(employeeCode);
-  if (blockers.overdue || blockers.unsettled) {
+  const recipientCodes = [...new Set([
+    employeeCode,
+    ...items.flatMap((item) => item.recipientAllocations.map((allocation) => allocation.employeeCode)),
+  ])];
+  const recipientBlockers = await Promise.all(recipientCodes.map(async (recipientCode) => ({
+    employeeCode: recipientCode,
+    blockers: await issuancesRepository.getEmployeeReturnBlockers(recipientCode),
+  })));
+  for (const { employeeCode: recipientCode, blockers } of recipientBlockers) {
+    if (!blockers.overdue && !blockers.unsettled) continue
     const problems = [
       blockers.overdue ? `${blockers.overdue} overdue na hiniram na hindi pa naisasauli` : '',
       blockers.unsettled ? `${blockers.unsettled} nawalang item na hindi pa naaayos ang settlement` : '',
     ].filter(Boolean).join(' at ');
-    throw httpError(409, `Hindi muna ma-issue-han si ${employeeCode}: may ${problems}. Ayusin muna ito sa Return Items.`);
+    throw httpError(409, `Hindi muna ma-issue-han si ${recipientCode}: may ${problems}. Ayusin muna ito sa Return Items.`);
   }
   const token = crypto.randomBytes(32).toString('base64url');
   const batch = await issuancesRepository.createPendingIssuanceBatch({
@@ -226,21 +264,24 @@ async function createIssuanceBatch(input, user) {
   const note = escapeHtml(notes || 'No additional notes.');
   const isConsumableDistribution = batch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'consumable');
   const isReusableBorrow = batch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'returnable');
+  const needsDepartmentDistribution = Boolean(purchaseRequisitionId);
   const subject = isConsumableDistribution
     ? 'GSO consumable stock issued'
     : isReusableBorrow
       ? 'GSO reusable-stock borrowing recorded'
-      : 'Per-unit assets ready for pickup';
+      : needsDepartmentDistribution ? 'GSO issuance with staff recipient assignments' : 'Individually tracked items ready for pickup';
   const employeeActionText = isConsumableDistribution
     ? 'GSO has issued this consumable stock. No approval or follow-up action is needed.'
     : isReusableBorrow
       ? 'GSO recorded your face-to-face borrowing. Return the borrowed items by the scheduled date and time.'
-    : 'GSO prepared these per-unit assets for pickup. Barcode labels are ready; no requester confirmation is required.';
+      : needsDepartmentDistribution
+        ? 'GSO recorded the intended staff recipient for each item. Use the printed recipient sheet when handing the physical items to your staff.'
+    : 'GSO prepared these individually tracked items for pickup. Barcode labels are ready; no requester confirmation is required.';
   const itemTypeLabel = (item) => item.trackingMode === 'individual'
-    ? 'Per-unit asset'
+    ? 'Individually tracked item'
     : item.issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock';
   const textItems = batch.items.map((item, index) =>
-    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Type: ${itemTypeLabel(item)}\n   Quantity: ${item.quantity} ${item.unitOfMeasure}\n   Condition: ${item.condition}`
+    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Type: ${itemTypeLabel(item)}\n   Quantity: ${item.quantity} ${item.unitOfMeasure}\n   Condition: ${item.condition}\n   Assigned to: ${item.recipientEmployeeName} (${item.recipientEmployeeCode})${item.recipientLocation ? `\n   Use location: ${item.recipientLocation}` : ''}${item.recipientPurpose ? `\n   Intended use: ${item.recipientPurpose}` : ''}`
   );
   const borrowingDetailsText = batch.borrowDetails ? [
     '',
@@ -265,6 +306,9 @@ async function createIssuanceBatch(input, user) {
       <div style="margin-top:4px;color:#64748b">Type: ${escapeHtml(itemTypeLabel(item))}</div>
       <div style="margin-top:4px;color:#334155">Quantity: <strong>${item.quantity} ${escapeHtml(item.unitOfMeasure)}</strong></div>
       <div style="margin-top:4px;color:#334155">Condition: <strong>${escapeHtml(item.condition)}</strong></div>
+      <div style="margin-top:4px;color:#334155">Assigned to: <strong>${escapeHtml(item.recipientEmployeeName)} (${escapeHtml(item.recipientEmployeeCode)})</strong></div>
+      ${item.recipientLocation ? `<div style="margin-top:4px;color:#334155">Use location: <strong>${escapeHtml(item.recipientLocation)}</strong></div>` : ''}
+      ${item.recipientPurpose ? `<div style="margin-top:4px;color:#334155">Intended use: <strong>${escapeHtml(item.recipientPurpose)}</strong></div>` : ''}
     </li>`).join('');
 
   let emailSent = false;
@@ -276,7 +320,7 @@ async function createIssuanceBatch(input, user) {
       text: [
         `Hello ${batch.employee_name},`,
         '',
-        `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : 'per-unit assets ready for pickup'} for these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'}:`,
+        `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : needsDepartmentDistribution ? 'issuance with staff recipient assignments' : 'individually tracked items ready for pickup'} for these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'}:`,
         ...textItems,
         ...borrowingDetailsText,
         `Notes: ${notes || 'No additional notes.'}`,
@@ -315,6 +359,26 @@ async function createIssuanceBatch(input, user) {
       console.error('Issuance batch email was delivered, but its sent timestamp could not be saved.', {
         message: error.message,
       });
+    }
+  }
+
+  // The requester's own account sees the same batch in the app, so tell them there too.
+  if (batch.requesterUserId) {
+    const count = batch.items.length;
+    const needsConfirmation = batch.status === 'Pending';
+    try {
+      await notificationsRepository.createUserNotification({
+        userId: batch.requesterUserId,
+        type: 'ISSUANCE',
+        title: needsConfirmation ? 'Items are waiting for your confirmation' : 'Items were issued to you',
+        message: `${count} item${count === 1 ? '' : 's'} recorded for you. ${needsConfirmation
+          ? 'Open My Issued Items and confirm once you have received them.'
+          : 'No action is needed; the record is in My Issued Items.'}`,
+        href: '/requester/issued-items',
+        dedupeKey: `requester-issue:${batch.id}:${batch.status}`,
+      });
+    } catch (error) {
+      console.error('Issuance notification to the requester could not be saved.', { code: error.code });
     }
   }
 
@@ -430,6 +494,7 @@ async function decideMyIssuanceBatch(batchIdValue, input, user) {
   });
   if (result.notFound) throw httpError(404, 'Hindi makita ang pending issuance para sa verified employee account na ito.');
   if (result.expired) throw httpError(410, 'Nag-expire na ang issuance request at naibalik na sa available stock.');
+  await notificationsRepository.resolveByPrefix(`requester-issue:${batchId}:`).catch(() => undefined);
   return result;
 }
 
@@ -453,8 +518,9 @@ async function recordIssuanceHandover(batchIdValue, input, user) {
     handoverMethod,
     handoverNote,
   });
-  if (result.notFound) throw httpError(404, 'Hindi makita ang pending per-unit handover.');
+  if (result.notFound) throw httpError(404, 'Hindi makita ang pending item handover.');
   if (result.expired) throw httpError(410, 'Nag-expire na ang handover record.');
+  await notificationsRepository.resolveByPrefix(`requester-issue:${batchId}:`).catch(() => undefined);
   return result;
 }
 

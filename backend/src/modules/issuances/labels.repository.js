@@ -12,6 +12,9 @@ async function listUnitLabels({ limit = 2000 } = {}) {
               COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
               employee.employee_code AS "holderCode",
               employee.first_name || ' ' || employee.last_name AS "holderName",
+              batch_employee.first_name || ' ' || batch_employee.last_name AS "batchEmployeeName",
+              batch_employee.email AS "batchEmployeeEmail",
+              batch.email_sent_at IS NOT NULL AS "emailSent",
               COALESCE(issue.decided_at, issue.requested_at) AS "issuedAt",
               issue.batch_id::TEXT AS "batchId",
               requisition.reference_no AS "purchaseRequisitionReference",
@@ -30,6 +33,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
          JOIN employees AS employee ON employee.id = tag.assigned_employee_id
          LEFT JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
          LEFT JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+         LEFT JOIN employees AS batch_employee ON batch_employee.id = batch.employee_id
          LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
          -- Set only when the current barcode itself came from a reprint.
          LEFT JOIN asset_label_reprints AS current_reprint
@@ -48,6 +52,9 @@ async function listUnitLabels({ limit = 2000 } = {}) {
               COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
               employee.employee_code AS "holderCode",
               employee.first_name || ' ' || employee.last_name AS "holderName",
+              batch_employee.first_name || ' ' || batch_employee.last_name AS "batchEmployeeName",
+              batch_employee.email AS "batchEmployeeEmail",
+              batch.email_sent_at IS NOT NULL AS "emailSent",
               COALESCE(issue.decided_at, issue.requested_at) AS "issuedAt",
               issue.batch_id::TEXT AS "batchId",
               requisition.reference_no AS "purchaseRequisitionReference",
@@ -71,6 +78,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
          JOIN employee_issuances AS issue ON issue.id = return_record.issuance_id
          JOIN employees AS employee ON employee.id = issue.employee_id
          LEFT JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+         LEFT JOIN employees AS batch_employee ON batch_employee.id = batch.employee_id
          LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
          LEFT JOIN users AS processor ON processor.id = return_record.requested_by_user_id
         WHERE reprint.kind = 'return'
@@ -151,9 +159,11 @@ async function writeLabelLog(client, tag, { reason, oldValues, newValues, userId
   await client.query(
     `INSERT INTO inventory_change_logs (
        entity_type, entity_key, entity_name, item_id, employee_id, action, reason,
-       old_values, new_values, changed_by_user_id
-     ) VALUES ('item', $1, $2, $3, $4, 'updated', $5, $6::JSONB, $7::JSONB, $8)`,
-    [tag.item_code, tag.description, tag.item_id, tag.assigned_employee_id, reason, JSON.stringify(oldValues), JSON.stringify(newValues), userId],
+       old_values, new_values, changed_by_user_id, flag
+     ) VALUES ('item', $1, $2, $3, $4, 'updated', $5, $6::JSONB, $7::JSONB, $8, $9)`,
+    // A reprint retires the old barcode, so reviewers should see it.
+    [tag.item_code, tag.description, tag.item_id, tag.assigned_employee_id, reason, JSON.stringify(oldValues), JSON.stringify(newValues), userId,
+      oldValues?.tagCode ? 'LABEL_REPRINT' : null],
   );
 }
 

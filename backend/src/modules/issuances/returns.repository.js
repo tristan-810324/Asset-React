@@ -19,11 +19,18 @@ async function writeReturnAuditLog(client, record, {
   oldValues,
   newValues,
 }) {
+  const status = newValues?.returnStatus;
+  const action = status === 'Pending' ? 'requested'
+    : ['Returned', 'Lost'].includes(status) ? 'returned'
+    : status === 'Rejected' ? 'rejected'
+      : ['Expired', 'Email Failed'].includes(status) ? 'cancelled' : 'updated';
+  // Red flags for Audit Logs: a typed (not scanned) barcode, or a unit reported lost.
+  const flag = newValues?.entryMethod === 'typed' ? 'MANUAL_ENTRY' : status === 'Lost' ? 'ITEM_LOST' : null;
   await client.query(
     `INSERT INTO inventory_change_logs (
        entity_type, entity_key, entity_name, item_id, employee_id, action, reason,
-       old_values, new_values, changed_by_user_id
-     ) VALUES ('item', $1, $2, $3, $4, 'updated', $5, $6::JSONB, $7::JSONB, $8)`,
+       old_values, new_values, changed_by_user_id, flag
+     ) VALUES ('item', $1, $2, $3, $4, $9, $5, $6::JSONB, $7::JSONB, $8, $10)`,
     [
       record.item_code,
       record.description,
@@ -33,6 +40,8 @@ async function writeReturnAuditLog(client, record, {
       JSON.stringify(oldValues),
       JSON.stringify(newValues),
       changedByUserId,
+      action,
+      flag,
     ],
   );
 }
@@ -265,7 +274,7 @@ async function confirmReturnByGso({
       throw conflict('Hindi na active ang item issuance. I-refresh ang employee at inventory records.');
     }
 
-    // Bulk stock keeps one shared condition, so damaged units are set aside by count instead of
+    // Quantity-tracked stock keeps one shared condition, so damaged units are set aside by count instead of
     // rewriting the condition of every unit in stock; lost units leave the stock.
     const repairQuantity = lines.filter((line) => repairReturnConditions.includes(line.condition))
       .reduce((sum, line) => sum + line.quantity, 0);
@@ -1247,7 +1256,7 @@ async function applyRepairOutcome(client, record, { outcome, note, userId, appro
       await client.query('UPDATE item_catalog SET quantity = GREATEST(quantity - 1, 0) WHERE id = $1', [record.item_id]);
     }
   } else {
-    // A bulk item whose whole stock was marked for repair before per-unit counts existed is
+    // A quantity-tracked item whose whole stock was marked for repair before individual counts existed is
     // cleared back to Good when its units are repaired, as the old repair step did.
     await client.query(
       outcome === 'Repaired'
@@ -1539,6 +1548,8 @@ async function listIssuanceRecords({ from = null, to = null, limit = 1000 } = {}
             employee.first_name || ' ' || employee.last_name AS "employeeName",
             employee.department,
             employee.position,
+            issue.recipient_location AS "recipientLocation",
+            issue.recipient_purpose AS "recipientPurpose",
             COALESCE((
               SELECT json_agg(DISTINCT used.tag_code ORDER BY used.tag_code)
                 FROM (

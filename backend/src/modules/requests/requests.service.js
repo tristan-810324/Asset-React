@@ -6,6 +6,7 @@ const { normalizeEmail } = require('../auth/auth.validation');
 const { buildPurchaseRequisitionPdf } = require('./purchase-requisition-pdf');
 const { STAFF_ROUTES } = require('./requisition-routing');
 const notificationsRepository = require('../notifications/notifications.repository');
+const auditRepository = require('../audit/audit.repository');
 const { invalid, text, validateCreateRequest, validateRequestFilters, validateRequestId } = require('./requests.validation');
 
 const mailTransport = env.smtp
@@ -138,6 +139,99 @@ async function notifyGsoStaffPurchase(request, stage) {
   }
 }
 
+const requestTypeLabels = {
+  BORROWING: 'Borrow request',
+  FACILITY_USE: 'Facility use request',
+  JOB_REQUEST: 'Job / service request',
+  PURCHASE_REQUISITION: 'Purchase requisition',
+  LOSS_DAMAGE_REPORT: 'Loss / damage report',
+  ISSUANCE_REQUEST: 'Item issuance request',
+};
+const gsoRequestPages = {
+  PURCHASE_REQUISITION: '/gso/purchase-requisitions',
+  BORROWING: '/gso/borrowing-requests',
+};
+
+// Notifications and audit entries run after the request change is saved, so a failure is
+// logged instead of undoing or failing the user's action.
+async function sideEffect(label, work) {
+  try {
+    await work();
+  } catch (error) {
+    console.error(`${label} could not be saved.`, { code: error.code, message: error.message });
+  }
+}
+
+// Role notification keys end in ':' + user id, so resolve them with a prefix ending in ':'.
+function notifyRole(roleKey, request, { type = 'REQUEST', key, title, message, href }) {
+  return sideEffect(`${roleKey} notification`, () => notificationsRepository.createRoleNotification({
+    roleKey,
+    type,
+    title,
+    message: `${request.referenceNo}: ${message}`,
+    href,
+    dedupeKey: key,
+  }));
+}
+
+function notifyStaff(request, notice) {
+  return notifyRole('GSO_STAFF', request, { href: gsoRequestPages[request.requestType] || '/gso', ...notice });
+}
+
+function notifyHead(request, notice) {
+  return notifyRole('GSO_HEAD', request, { href: `/gso-head/requests?request=${encodeURIComponent(request.id)}`, ...notice });
+}
+
+function resolveNotices(...prefixes) {
+  return sideEffect('Notification cleanup', () => Promise.all(prefixes.map((prefix) => notificationsRepository.resolveByPrefix(prefix))));
+}
+
+const requesterStatusNotices = {
+  'Under Review': ['GSO is reviewing your request', 'GSO Staff started reviewing your request.'],
+  'Needs Information': ['GSO needs more information', 'Open the request and reply so GSO can continue.'],
+  Approved: ['Request approved', 'Your request was approved. GSO will tell you the next step.'],
+  Rejected: ['Request declined', 'GSO declined your request.'],
+  'Ready for Pickup': ['Ready for pickup', 'Your item is ready. Pick it up at the GSO office.'],
+  Issued: ['Item released to you', 'GSO released the item to you. Return it on or before the due date.'],
+  'In Progress': ['Work started', 'GSO started working on your request.'],
+  Completed: ['Request completed', 'GSO marked your request as complete.'],
+  Returned: ['Return confirmed', 'GSO confirmed that you returned the item. Thank you!'],
+  'For Repair': ['Return received: repair needed', 'GSO received the return, and some items need repair.'],
+};
+
+function notifyRequesterStatus(request, status, note = '') {
+  const notice = requesterStatusNotices[status];
+  if (!notice || !request?.requesterId) return null;
+  return sideEffect('Requester notification', () => notificationsRepository.createUserNotification({
+    userId: request.requesterId,
+    type: 'REQUEST',
+    title: notice[0],
+    message: `${request.referenceNo}: ${notice[1]}${note ? ` Note from GSO: ${note}` : ''}`,
+    href: `/requester/requests/${request.id}`,
+    dedupeKey: `requester-status:${request.id}:${status}:${Date.now()}`,
+  }));
+}
+
+const statusAuditAction = {
+  Issued: 'issued', Returned: 'returned', 'For Repair': 'returned', Approved: 'approved', Rejected: 'rejected', Cancelled: 'cancelled',
+};
+
+function auditRequest(request, user, { action, reason, oldValues, newValues, flag }) {
+  if (!request) return null;
+  return sideEffect('Request audit entry', () => auditRepository.writeLog(null, {
+    entityType: 'request',
+    entityKey: request.referenceNo,
+    entityName: request.title || requestTypeLabels[request.requestType] || 'Request',
+    requestId: request.id,
+    action,
+    reason,
+    oldValues,
+    newValues: { status: request.status, ...newValues },
+    changedByUserId: user?.id || null,
+    flag,
+  }));
+}
+
 const transitions = {
   BORROWING: {
     Submitted: ['Under Review', 'Needs Information', 'Approved', 'Rejected'],
@@ -243,6 +337,11 @@ async function createRequest(input, user) {
     });
     const employee = await requesterIdentityRepository.getVerifiedEmployeeSummary(user.id);
     if (!employee) invalid('Hindi makita ang aktibong verified employee record. Makipag-ugnayan sa GSO.', 403);
+    const hasPlannedRecipients = validated.formData.items.some((item) => item.plannedRecipients.length > 0);
+    const departmentStaff = hasPlannedRecipients
+      ? await requesterIdentityRepository.listVerifiedDepartmentEmployees(user.id)
+      : [];
+    const departmentStaffByCode = new Map(departmentStaff.map((staff) => [String(staff.employeeCode).trim().toLowerCase(), staff]));
     validated.formData = {
       ...validated.formData,
       departmentOrganization: employee.department,
@@ -262,10 +361,29 @@ async function createRequest(input, user) {
         staffIssueMaxQuantity: item.staffIssueMaxQuantity || null,
         itemName: item.itemName,
         description: item.description,
+        plannedRecipients: item.plannedRecipients.map((recipient) => {
+          const staff = departmentStaffByCode.get(recipient.employeeCode.trim().toLowerCase());
+          if (!staff) invalid(`${recipient.employeeCode} ay hindi active staff sa verified department ng requester. Pumili ulit sa department staff list.`);
+          return {
+            ...recipient,
+            employeeCode: staff.employeeCode,
+            employeeName: staff.employeeName,
+            email: staff.email,
+            position: staff.position,
+          };
+        }),
       })),
     };
   }
-  return requestsRepository.createRequest({ ...validated, userId: user.id });
+  const request = await requestsRepository.createRequest({ ...validated, userId: user.id });
+  const typeLabel = requestTypeLabels[request.requestType] || 'Request';
+  await notifyStaff(request, {
+    key: `staff-new:${request.id}`,
+    title: `New ${typeLabel.toLowerCase()}`,
+    message: `${request.formData?.requesterName || request.requesterName || 'A requester'} submitted a ${typeLabel.toLowerCase()}. Review it to move it forward.`,
+  });
+  await auditRequest(request, user, { action: 'created', reason: `${typeLabel} submitted by ${request.formData?.requesterName || request.requesterName || user.name}.` });
+  return request;
 }
 
 async function listRequesterDepartmentStaff(user) {
@@ -296,13 +414,22 @@ async function cancelMine(idValue, user) {
   if (!['Submitted', 'Needs Information'].includes(current.status) && !isUnissuedAutoApproval) {
     invalid('Hindi na maaaring kanselahin ang request sa kasalukuyang status.', 409);
   }
-  return requestsRepository.changeMineStatus({
+  const request = await requestsRepository.changeMineStatus({
     id,
     userId: user.id,
     expectedStatus: current.status,
     status: 'Cancelled',
     note: 'Request cancelled by requester.',
   });
+  // Nobody needs to act on it any more.
+  await resolveNotices(`staff-new:${id}:`, `staff-reply:${id}:`, `head-approval:${id}:`);
+  await notifyStaff(request, {
+    key: `staff-cancelled:${id}`,
+    title: 'Request cancelled by requester',
+    message: `${request.requesterName || 'The requester'} cancelled this request. No further action is needed.`,
+  });
+  await auditRequest(request, user, { action: 'cancelled', reason: 'Request cancelled by the requester.', oldValues: { status: current.status } });
+  return request;
 }
 
 async function respondMine(idValue, input, user) {
@@ -311,7 +438,14 @@ async function respondMine(idValue, input, user) {
   if (!current) invalid('Hindi makita ang request.', 404);
   if (current.status !== 'Needs Information') invalid('Maaaring magbigay ng dagdag na impormasyon kapag Needs Information ang status.', 409);
   const message = text(input?.message, 'response', 2000);
-  return requestsRepository.respondToRequest({ id, userId: user.id, message });
+  const request = await requestsRepository.respondToRequest({ id, userId: user.id, message });
+  await notifyStaff(request, {
+    key: `staff-reply:${id}:${Date.now()}`,
+    title: 'Requester replied',
+    message: `${request.requesterName || 'The requester'} sent the information GSO asked for. Review the request again.`,
+  });
+  await auditRequest(request, user, { action: 'updated', reason: 'Requester replied to a request for more information.', oldValues: { status: current.status } });
+  return request;
 }
 
 async function requestReturn(idValue, user) {
@@ -321,13 +455,22 @@ async function requestReturn(idValue, user) {
   if (current.requestType !== 'BORROWING' || current.status !== 'Issued') {
     invalid('Return request ay para lamang sa kasalukuyang issued na borrowing.', 409);
   }
-  return requestsRepository.changeMineStatus({
+  const request = await requestsRepository.changeMineStatus({
     id,
     userId: user.id,
     expectedStatus: 'Issued',
     status: 'Return Requested',
     note: 'Requester asked GSO to confirm the physical return.',
   });
+  await notifyStaff(request, {
+    type: 'RETURN',
+    key: `staff-return:${id}`,
+    title: 'Return requested',
+    message: `${request.requesterName || 'The requester'} is returning a borrowed item. Inspect it and confirm the return.`,
+    href: '/gso/borrowing-returns',
+  });
+  await auditRequest(request, user, { action: 'updated', reason: 'Requester asked GSO to confirm the return.', oldValues: { status: 'Issued' } });
+  return request;
 }
 
 async function listAll(query) {
@@ -371,6 +514,23 @@ async function staffReviewPurchaseRequisition(idValue, input, user) {
   const requesterNotified = ['Needs Information', 'Approved'].includes(request.status)
     ? await notifyPurchaseRequester(request, request.status, note)
     : null;
+  await resolveNotices(`staff-new:${id}:`, `staff-reply:${id}:`);
+  const waitingForHead = (request.purchaseLines || []).filter((line) => line.routeStatus === 'WAITING_GSO_HEAD');
+  if (waitingForHead.length) {
+    // A new key each time, so a second batch sent up reopens as unread; resolveByPrefix clears them all on decision.
+    await notifyHead(request, {
+      key: `head-approval:${id}:${Date.now()}`,
+      title: 'Purchase requisition needs your decision',
+      message: `GSO Staff sent ${waitingForHead.length} item${waitingForHead.length === 1 ? '' : 's'} for your approval (${request.formData?.departmentOrganization || request.requesterName || 'requester'}).`,
+    });
+  }
+  await auditRequest(request, user, {
+    action: 'updated',
+    reason: input.action === 'NEEDS_INFORMATION'
+      ? `GSO Staff asked the requester for more information: ${note}`
+      : `GSO Staff routed the items${waitingForHead.length ? `; ${waitingForHead.length} sent to the GSO Head for approval` : ''}.${note ? ` Note: ${note}` : ''}`,
+    newValues: { routes: Object.values(expectedRoutes) },
+  });
   return { request, requesterNotified };
 }
 
@@ -415,6 +575,12 @@ async function recordPurchaseDeliveries(input, user) {
   const result = await requestsRepository.recordPurchaseDeliveries({ deliveries, receiptReference, changedBy: user.id });
   for (const request of result.requests) {
     if (result.approvedRequestIds.includes(String(request.id))) await notifyPurchaseRequester(request, 'Stock Received');
+    const linked = deliveries.filter((delivery) => (request.purchaseLines || []).some((line) => String(line.id) === delivery.lineId));
+    await auditRequest(request, user, {
+      action: 'received',
+      reason: `GSO Staff linked a delivery for ${linked.length} item${linked.length === 1 ? '' : 's'}.${receiptReference ? ` Receipt: ${receiptReference}.` : ''}`,
+      newValues: { deliveries: linked, receiptReference: receiptReference || null },
+    });
   }
   return result.requests;
 }
@@ -427,6 +593,12 @@ async function undoPurchaseDelivery(idValue, receiptIdValue, user) {
   });
   // The requester was told the items were ready, so tell them when that is taken back.
   if (result.reopened) await notifyPurchaseRequester(result.request, 'Delivery Undone');
+  await auditRequest(result.request, user, {
+    action: 'updated',
+    reason: 'GSO Staff undid a recorded purchase delivery. The item stock is no longer reserved for this request.',
+    newValues: { receiptId: String(receiptIdValue) },
+    flag: 'DELIVERY_UNDONE',
+  });
   return result.request;
 }
 
@@ -469,6 +641,24 @@ async function reviewPurchaseRequisition(idValue, input, user) {
   });
   const requesterNotified = await notifyPurchaseRequester(request, request.status, note);
   if (request.status === 'GSO Endorsed') await notifyGsoStaffPurchase(request, 'endorsed');
+  // The Head has decided, so the "needs your decision" reminder is done.
+  await resolveNotices(`head-approval:${id}:`);
+  const approved = decisions.filter((decision) => decision.decision === 'APPROVE').length;
+  const declined = decisions.length - approved;
+  if (input.action === 'DECIDE') {
+    await notifyStaff(request, {
+      key: `staff-head-decided:${id}:${Date.now()}`,
+      title: declined && !approved ? 'GSO Head declined the items' : 'GSO Head decided on the items',
+      message: `${approved} approved, ${declined} declined. ${request.status === 'Approved' ? 'The approved items are ready for issuance.' : 'Open the requisition to see each item.'}`,
+    });
+  }
+  await auditRequest(request, user, {
+    action: input.action === 'NEEDS_INFORMATION' ? 'updated' : declined && !approved ? 'rejected' : 'approved',
+    reason: input.action === 'NEEDS_INFORMATION'
+      ? `GSO Head asked the requester for more information: ${note}`
+      : `GSO Head decided: ${approved} item${approved === 1 ? '' : 's'} approved, ${declined} declined.${note ? ` Note: ${note}` : ''}`,
+    newValues: { decisions },
+  });
   return { request, requesterNotified };
 }
 
@@ -536,18 +726,31 @@ async function sendPurchaseRequisitionToFinance(idValue, input, user) {
       }],
     });
   } catch (error) {
-    await requestsRepository.failFinanceHandoff({ id, changedBy: user.id });
+    const failed = await requestsRepository.failFinanceHandoff({ id, changedBy: user.id });
     console.error('Purchase requisition email to Finance could not be delivered.', {
       code: error.code,
       responseCode: error.responseCode,
       command: error.command,
     });
+    await notifyHead(failed || current, {
+      key: `head-finance-failed:${id}:${Date.now()}`,
+      title: 'Email to Finance failed',
+      message: `The email to ${financeEmail} was not delivered. Open the requisition and send it again.`,
+      href: '/gso-head/requests?tab=finance',
+    });
+    await auditRequest(failed || current, user, { action: 'updated', reason: `Email to Finance (${financeEmail}) could not be delivered.`, newValues: { financeEmail } });
     invalid('Hindi naipadala ang email sa Finance. Naka-save ang requisition at maaari itong subukang ipadala muli.', 502);
   }
 
   const completedRequest = await requestsRepository.completeFinanceHandoff({ id, messageId: sent.messageId, changedBy: user.id });
   const requesterNotified = await notifyPurchaseRequester(completedRequest, 'Sent to Finance');
   await notifyGsoStaffPurchase(completedRequest, 'sentToFinance');
+  await resolveNotices(`head-finance-failed:${id}:`);
+  await auditRequest(completedRequest, user, {
+    action: 'updated',
+    reason: `GSO Head sent the purchase requisition to Finance (${financeEmail}).`,
+    newValues: { financeEmail, items: financeItems.map((item) => `${item.quantity} ${item.itemName}`) },
+  });
   return { request: completedRequest, requesterNotified };
 }
 
@@ -610,7 +813,7 @@ async function updateStatus(idValue, input, user) {
     conditionIn = null;
   }
 
-  return requestsRepository.setStatus({
+  const updated = await requestsRepository.setStatus({
     id,
     expectedStatus: current.status,
     status,
@@ -621,6 +824,16 @@ async function updateStatus(idValue, input, user) {
     conditionIn,
     conditionsIn,
   });
+  // Purchase requisitions get their own messages; everything else gets the in-app notice.
+  await notifyRequesterStatus(updated, status, note);
+  await resolveNotices(`staff-return:${id}:`, `staff-new:${id}:`, `staff-reply:${id}:`);
+  await auditRequest(updated, user, {
+    action: statusAuditAction[status] || 'updated',
+    reason: `${requestTypeLabels[current.requestType] || 'Request'} moved from ${current.status} to ${status}.${note ? ` Note: ${note}` : ''}`,
+    oldValues: { status: current.status },
+    newValues: { dueDate: dueDate || null, conditionOut, conditionIn, conditionsIn },
+  });
+  return updated;
 }
 
 module.exports = {

@@ -166,10 +166,11 @@ async function createMovement(input, actorId) {
         input.fromLocation || null, input.toLocation || null, input.reason, input.acknowledgement, actorId]);
     await client.query(
       `INSERT INTO inventory_change_logs (entity_type, entity_key, entity_name, item_id, action, reason, old_values, new_values, changed_by_user_id)
-       VALUES ('item', $1, $2, $3, $4, $5, $6::JSONB, $7::JSONB, $8)`,
-      [String(item.id), item.item_name || item.description, item.id, input.movementType.toLowerCase(), input.reason,
+       VALUES ('item', $1, $2, $3, 'moved', $4, $5::JSONB, $6::JSONB, $7)`,
+      // The audit action check allows 'moved'; the movement type stays in new_values.
+      [String(item.id), item.item_name || item.description, item.id, input.reason,
         JSON.stringify({ fromEmployee: fromEmployee?.employee_code || null, fromLocation: input.fromLocation || null }),
-        JSON.stringify({ toEmployee: toEmployee?.employee_code || null, toLocation: input.toLocation || null, quantity: input.quantity, acknowledgement: input.acknowledgement }), actorId]);
+        JSON.stringify({ movementType: input.movementType, toEmployee: toEmployee?.employee_code || null, toLocation: input.toLocation || null, quantity: input.quantity, acknowledgement: input.acknowledgement }), actorId]);
     await refreshInventoryStatus(client, input.itemId);
     await client.query('COMMIT');
     return inserted.rows[0].id;

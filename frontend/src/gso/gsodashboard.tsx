@@ -372,7 +372,7 @@ export default function GsoDashboard() {
 
           {/* KPI CARDS */}
           <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Key Performance Metrics">
-            <article className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55">
+            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Total Cataloged Assets</p>
@@ -394,7 +394,7 @@ export default function GsoDashboard() {
               </div>
             </article>
 
-            <article className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55">
+            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Currently Issued</p>
@@ -414,7 +414,7 @@ export default function GsoDashboard() {
               </div>
             </article>
 
-            <article className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55">
+            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Storage Inventory</p>
@@ -434,7 +434,7 @@ export default function GsoDashboard() {
               </div>
             </article>
 
-            <article className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55">
+            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-xs font-bold text-slate-500">Maintenance Queue</p>
@@ -458,7 +458,7 @@ export default function GsoDashboard() {
           {/* ANALYTICS CHARTS & DISTRIBUTION SECTION */}
           <section className="mt-6 grid gap-6 xl:grid-cols-2">
             {/* DEPARTMENT ASSET DISTRIBUTION (CLEAN TOUCH OF BLUE PALETTE) */}
-            <article className="min-h-88 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+            <article className="min-h-88 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-black tracking-tight text-slate-900">Asset Distribution by Department</h2>
@@ -506,7 +506,7 @@ export default function GsoDashboard() {
             </article>
 
             {/* ASSET CONDITION & HEALTH BREAKDOWN */}
-            <article className="min-h-88 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 sm:p-6">
+            <article className="min-h-88 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-black tracking-tight text-slate-900">Condition Status</h2>

@@ -204,7 +204,7 @@ export function DeliveryChecklist({ lines, receiptDefault = '', restocked, skipL
       })}
     </div>
 
-    <div className="sticky bottom-0 mt-4 rounded-2xl border border-slate-200 bg-white/95 p-3.5 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <div className="sticky bottom-0 mt-4 rounded-2xl border-2 border-slate-300/80 bg-white/95 p-3.5 backdrop-blur shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
       <label className="block">
         <span className={fieldLabel}>Receipt / invoice no. <span className="font-bold normal-case text-slate-400">(optional · one receipt for everything selected)</span></span>
         <input value={receipt} onChange={(event) => setReceipt(event.target.value)} maxLength={120} placeholder="e.g. OR-004512" className={fieldInput} />

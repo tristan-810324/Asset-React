@@ -87,7 +87,7 @@ function tabsFor(request: ServiceRequest): Tab[] {
   const tabs: Tab[] = []
   if (request.status === 'Submitted' && countLines(request, ['WAITING_STAFF_REVIEW'])) tabs.push('review')
   if (deliveryOpen(request) && linesOf(request).some(canRecordDelivery)) tabs.push('waiting')
-  // Once GSO has prepared every per-unit asset, the requisition leaves this
+  // Once GSO has prepared every individually tracked item, the requisition leaves this
   // checking workspace. Its pickup status and barcode labels live in Main Issuance.
   if (!tabs.length && !['Completed', 'Rejected', 'Ready for Pickup'].includes(request.status) && countLines(request, ISSUABLE_STATUSES) === 0) tabs.push('waiting')
   return tabs
@@ -278,6 +278,7 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
         <div className="min-w-0 flex-1">
           <p className="text-xs font-extrabold text-slate-900">Put it in Item Master Data</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-600">Already listed? <span className="font-bold text-slate-800">Restock</span> it with the quantity you bought. New item? <span className="font-bold text-slate-800">Add</span> it named <span className="font-extrabold text-slate-900">“{line.itemName}”</span> under <span className="font-bold text-slate-800">{categoryName}</span> so it matches this request.</p>
+          <p className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[0.68rem] leading-relaxed text-indigo-900"><span className="font-extrabold">Choose tracking mode:</span> use <span className="font-bold">Track each item separately</span> when every item needs its own barcode and record. Use <span className="font-bold">Track as quantity</span> when matching items share one stock count.</p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button type="button" onClick={() => window.open('/gso/items', '_blank')} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-extrabold text-white shadow-sm transition hover:bg-indigo-700">
               Open Item Master Data
@@ -351,6 +352,10 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
       if (action === 'ROUTE') {
         const routes = Object.fromEntries(checks.map(({ line, check }) => [line.id, routeOf(line, check)]))
         const result = await staffReviewPurchaseRequisition(request.id, { action, routes, note: note.trim() })
+        if (countLines(result.request, ISSUABLE_STATUSES) > 0) {
+          window.location.assign(`/gso/main-issuance?purchaseRequisitionId=${encodeURIComponent(request.id)}`)
+          return
+        }
         onSaved(routedMessage(result.request))
       } else {
         await staffReviewPurchaseRequisition(request.id, { action, note: question.trim() })
@@ -429,7 +434,7 @@ function ReadyToLinkPanel({ lines, loading, onLinked, onRefresh }: {
   onLinked: (message: string) => void
   onRefresh: () => void
 }) {
-  return <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5" aria-label="Link deliveries to requests">
+  return <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-label="Link deliveries to requests">
     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-4">
       <div className="min-w-0">
         <p className="text-xs font-extrabold uppercase tracking-wide text-blue-700">Bought items</p>
@@ -561,8 +566,8 @@ export default function GsoPurchaseRequisitions() {
 
   return <GsoPageFrame activePage="Purchase Requisitions" searchPlaceholder="Search reference, requester, item...">
       <div className="space-y-6">
-        <section className="relative overflow-hidden rounded-3xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-6 text-white shadow-xl shadow-blue-950/15 sm:p-8">
-          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.3),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.16),transparent_36%)]" />
+        <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
           <div className="relative">
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff checks first</span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Purchase Requisitions</h1>
@@ -579,7 +584,7 @@ export default function GsoPurchaseRequisitions() {
         </section>
 
         <section className="grid gap-5 xl:grid-cols-2" aria-label="Purchase requisition workflow">
-          <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white shadow-sm">
+          <section className="flex min-w-0 flex-col rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <div className="p-4 sm:p-5">
               <WorkflowStepHeader
                 step={1}
@@ -612,7 +617,7 @@ export default function GsoPurchaseRequisitions() {
 
           </section>
 
-          <section className="flex min-w-0 flex-col rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:p-5">
+          <section className="flex min-w-0 flex-col rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
                 <div className="min-w-0"><p className="text-xs font-extrabold uppercase tracking-wide text-blue-700">Request review</p><h2 className="mt-0.5 text-base font-black leading-tight text-slate-900">Request details</h2><p className="mt-1 text-sm leading-snug text-slate-600">Review the requester and item information below.</p></div>
                 <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">{TABS[tab].label}</span>

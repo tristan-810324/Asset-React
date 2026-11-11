@@ -1,6 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { clearAuthSession } from '../../auth/authApi'
+import { clearAuthSession, getCurrentUser, type AuthUser } from '../../auth/authApi'
 import GsoNotif from '../notifbell/gsonotif'
 
 export type GsoNavigationItem =
@@ -10,20 +9,24 @@ export type GsoNavigationItem =
   | 'Requisition and Issuances'
   | 'Main Issuance'
   | 'Purchase Requisitions'
-  | 'Request & Borrowing'
-  | 'Returns & Records'
-  | 'Issuances Records'
+  | 'Asset Labels'
+  | 'Borrowing Requests'
+  | 'Issuance History'
+  | 'Audit Logs'
+  | 'Returns & Histories'
   | 'Return Items'
+  | 'Borrowing Returns'
   | 'Repair & Maintenance'
   | 'Notifications'
+  | 'Profile'
 
-type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Returns & Records'>
+type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Returns & Histories'>
 type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
 
 type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string; activePages?: GsoNavigationItem[] }
 type NavigationGroup = {
   kind: 'group'
-  name: 'Returns & Records'
+  name: 'Returns & Histories'
   icon: NavigationIconName
   href: string
   activePages: GsoNavigationItem[]
@@ -144,13 +147,14 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Overview', icon: 'grid', href: '/gso' },
   { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
-  { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/main-issuance', activePages: ['Purchase Requisitions', 'Main Issuance'] },
+  { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/main-issuance', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
+  { kind: 'link', name: 'Borrowing Requests', icon: 'clipboard-plus', href: '/gso/borrowing-requests' },
   {
     kind: 'group',
-    name: 'Returns & Records',
+    name: 'Returns & Histories',
     icon: 'history',
     href: '/gso/return-items',
-    activePages: ['Issuances Records', 'Return Items'],
+    activePages: ['Return Items', 'Borrowing Returns'],
   },
   { kind: 'link', name: 'Repair & Maintenance', icon: 'wrench', href: '/gso/to-be-repaired' },
   { kind: 'link', name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
@@ -294,9 +298,16 @@ export function GsoPageHeader({
     }
   }, [accountMenuOpen])
 
-  function onAction(_arg0: string) {
-    throw new Error('Function not implemented.')
-  }
+  const [user, setUser] = useState<AuthUser | null>(null)
+  useEffect(() => {
+    let active = true
+    getCurrentUser().then((currentUser) => { if (active) setUser(currentUser) }).catch(() => undefined)
+    return () => { active = false }
+  }, [])
+  const accountName = user?.name || 'GSO Staff'
+  const accountEmail = user?.email || 'GSO workspace account'
+  const initials = accountName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'GS'
+  const onProfilePage = window.location.pathname === '/gso/profile'
 
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
@@ -329,10 +340,10 @@ export function GsoPageHeader({
               aria-haspopup="menu"
               aria-expanded={accountMenuOpen}
             >
-              <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">GO</span>
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span>
               <span className="hidden text-left sm:block">
-                <span className="block text-[0.68rem] font-extrabold leading-none text-slate-800">GSO Officer</span>
-                <span className="mt-1 block text-[0.58rem] font-bold leading-none text-slate-400">Administrator</span>
+                <span className="block text-[0.68rem] font-extrabold leading-none text-slate-800">{accountName}</span>
+                <span className="mt-1 block text-[0.58rem] font-bold leading-none text-slate-400">GSO Staff</span>
               </span>
               <NavigationIcon name="chevron-down" className={`h-3.5 w-3.5 text-slate-400 transition ${accountMenuOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -340,49 +351,49 @@ export function GsoPageHeader({
             {accountMenuOpen && (
               <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/20">
                 <div className="flex items-center gap-3 border-b border-slate-100 px-3 py-3">
-                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">GO</span>
-                  <div>
-                    <p className="text-xs font-extrabold text-slate-800">GSO Officer</p>
-                    <p className="mt-1 text-[0.65rem] font-semibold text-slate-500">Administrator</p>
+                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span>
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-extrabold text-slate-800">{accountName}</p>
+                    <p className="mt-1 truncate text-[0.65rem] font-semibold text-slate-500">{accountEmail}</p>
                   </div>
                 </div>
-                <div className="border-b border-slate-100 px-1 py-2">
-                  <p className="px-2.5 pb-1.5 pt-1 text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Settings</p>
+                <div className="px-1 py-2">
+                  <p className="px-2.5 pb-1.5 pt-1 text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Settings</p>
+                  <a
+                    href="/gso/profile"
+                    role="menuitem"
+                    aria-current={onProfilePage ? 'page' : undefined}
+                    onClick={() => setAccountMenuOpen(false)}
+                    className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-700'}`}
+                  >
+                    <NavigationIcon name="user" className={`h-4 w-4 ${onProfilePage ? 'text-blue-600' : 'text-slate-400'}`} />
+                    Profile
+                  </a>
+                  <a
+                    href="/gso/audit-logs"
+                    role="menuitem"
+                    onClick={() => setAccountMenuOpen(false)}
+                    className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    <NavigationIcon name="history" className="h-4 w-4 text-slate-400" />
+                    Audit Trail
+                  </a>
+                </div>
+                <div className="border-t border-slate-100 px-1 pb-1 pt-1">
                   <button
                     type="button"
                     role="menuitem"
                     onClick={() => {
                       setAccountMenuOpen(false)
-                      onAction('Profile')
+                      clearAuthSession()
+                      window.location.replace('/login')
                     }}
-                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+                    className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"
                   >
-                    <NavigationIcon name="user" className="h-4 w-4 text-slate-400" /> Profile
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setAccountMenuOpen(false)
-                      onAction('Audit Trail')
-                    }}
-                    className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
-                  >
-                    <NavigationIcon name="history" className="h-4 w-4 text-slate-400" /> Audit Trail
+                    <NavigationIcon name="logout" className="h-4 w-4" />
+                    Logout
                   </button>
                 </div>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setAccountMenuOpen(false)
-                    clearAuthSession()
-                    window.location.replace('/login')
-                  }}
-                  className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"
-                >
-                  <NavigationIcon name="logout" className="h-4 w-4" /> Logout
-                </button>
               </div>
             )}
           </div>

@@ -3,6 +3,28 @@ const nodemailer = require('nodemailer');
 const { waitUntil } = require('@vercel/functions');
 const env = require('../../config/env');
 const returnsRepository = require('./returns.repository');
+const notificationsRepository = require('../notifications/notifications.repository');
+
+// In-app notices for a return. They never block the return itself, so a failure is only logged.
+async function notifyReturnRecorded({ employeeCode, requesterTitle, requesterMessage, requesterKey, headMessage, headKey }) {
+  try {
+    const requesterUserId = await notificationsRepository.userIdForEmployeeCode(employeeCode);
+    if (requesterUserId) {
+      await notificationsRepository.createUserNotification({
+        userId: requesterUserId, type: 'RETURN', title: requesterTitle, message: requesterMessage,
+        href: '/requester/issued-items', dedupeKey: requesterKey,
+      });
+    }
+    if (headMessage) {
+      await notificationsRepository.createRoleNotification({
+        roleKey: 'GSO_HEAD', type: 'RETURN', title: headMessage.title, message: headMessage.message,
+        href: '/gso-head/audit-logs?flag=any', dedupeKey: headKey,
+      });
+    }
+  } catch (error) {
+    console.error('Return notification could not be saved.', { code: error.code });
+  }
+}
 
 // Conditions GSO can record for units physically returned to the counter.
 const returnLineConditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'];
@@ -211,6 +233,19 @@ async function createEmployeeReturn(input, user) {
     warning: receiptWarning,
   });
 
+  const returnedQuantity = lines.reduce((sum, line) => sum + line.quantity, 0);
+  await notifyReturnRecorded({
+    employeeCode: returned.employee_code,
+    requesterTitle: 'Return recorded',
+    requesterMessage: `GSO recorded ${returnedQuantity} ${unit} of ${returned.description} returned by you.${lostQuantity ? ` ${lostQuantity} reported lost and still your responsibility until settled.` : ''}`,
+    requesterKey: `requester-return:bulk:${returned.id}`,
+    headMessage: lostQuantity ? {
+      title: 'Item reported lost',
+      message: `${lostQuantity} ${unit} of ${returned.description} (${returned.item_code}) was reported lost. Review the audit entry.`,
+    } : null,
+    headKey: `head-return-review:bulk:${returned.id}`,
+  });
+
   return {
     id: returned.id,
     lines: returned.lines.map((line) => ({ id: String(line.id), status: line.status, condition: line.condition, quantity: line.quantity })),
@@ -289,6 +324,24 @@ async function confirmScannedTagReturn(tagCodeValue, input, user) {
       ['Processed by', user.name || user.email],
     ],
     warning: receiptWarning,
+  });
+
+  // Lost units and typed codes are the cases the GSO Head should review in Audit Logs.
+  const flagged = isLost || entryMethod === 'typed';
+  await notifyReturnRecorded({
+    employeeCode: result.employeeCode,
+    requesterTitle: isLost ? 'Item recorded as lost' : 'Return confirmed',
+    requesterMessage: isLost
+      ? `${result.itemName} (${result.tagCode}) was recorded as lost while assigned to you. It stays your responsibility until GSO records a settlement.`
+      : `GSO received ${result.itemName} (${result.tagCode}) from you. Your return is complete.`,
+    requesterKey: `requester-return:${result.id}`,
+    headMessage: flagged ? {
+      title: isLost ? 'Item reported lost' : 'Return entered by typing the code',
+      message: isLost
+        ? `${result.itemName} (${result.tagCode}) was reported lost. Review the audit entry and the settlement.`
+        : `${result.itemName} (${result.tagCode}) was returned with a typed code, not a scan. Review the audit entry.`,
+    } : null,
+    headKey: `head-return-review:${result.id}`,
   });
 
   return { ...result, entryMethod, emailQueued };

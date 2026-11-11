@@ -36,6 +36,14 @@ export type PurchaseRequisitionAllocation = {
   unitOfMeasure: string
 }
 
+export type PurchaseRequisitionRecipient = {
+  employeeCode: string
+  employeeName: string
+  quantity: number
+  useLocation: string
+  purpose: string
+}
+
 export type StaffRoute = 'ISSUE' | 'HEAD_ISSUE' | 'PURCHASE'
 
 // Live stock and rule check the server adds to items GSO Staff still has to route.
@@ -64,6 +72,7 @@ export type PurchaseRequisitionLine = {
   routeStatus: string
   reviewNote: string
   pendingBatchId?: string | null
+  issuedRecipients?: PurchaseRequisitionRecipient[]
   allocations: PurchaseRequisitionAllocation[]
   receipts?: PurchaseRequisitionReceipt[]
   stockCheck?: PurchaseRequisitionStockCheck
@@ -168,6 +177,8 @@ export type RequesterIdentity = {
 
 export type RequesterIdentityInput = Pick<RequesterIdentity, 'employeeCode' | 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'department' | 'position' | 'contactNumber'>
 
+export type RequesterMasterDataChoice = { id: string; name: string }
+
 export type RequesterIssuanceApproval = {
   id: string
   status: string
@@ -188,6 +199,10 @@ export type RequesterIssuanceApproval = {
     issuanceId: string
     itemCode: string
     itemName: string
+    recipientEmployeeCode: string
+    recipientEmployeeName: string
+    recipientLocation: string
+    recipientPurpose: string
     trackingMode: 'individual' | 'quantity'
     issueBehavior: 'consumable' | 'returnable'
     status?: string
@@ -239,6 +254,10 @@ export type RequesterDepartmentIssuanceSummary = {
 
 export async function listRequesterDepartments() {
   return apiRequest<{ departments: Array<{ id: string; name: string }> }>('/departments')
+}
+
+export async function listRequesterPositions() {
+  return apiRequest<{ positions: RequesterMasterDataChoice[] }>('/employees/positions').then((data) => data.positions)
 }
 
 export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
@@ -336,7 +355,14 @@ export function getRequesterIdentityPicture(userId: string | number) {
   return apiRequest<{ pictureData: string | null }>(`/requester-identity/reviews/${encodeURIComponent(String(userId))}/picture`).then((data) => data.pictureData)
 }
 
-export function reviewRequesterIdentity(userId: string | number, payload: { status: 'Verified' | 'Needs Correction'; note: string }) {
+export function reviewRequesterIdentity(userId: string | number, payload: {
+  status: 'Verified' | 'Needs Correction'
+  note: string
+  department?: string
+  position?: string
+  addDepartment?: boolean
+  addPosition?: boolean
+}) {
   return apiRequest<{ identity: RequesterIdentity }>(`/requester-identity/reviews/${encodeURIComponent(String(userId))}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),

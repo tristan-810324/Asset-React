@@ -172,13 +172,28 @@ function validateCreateRequest(input) {
       const catalogItemId = integer(row.catalogItemId, 'catalog item id', { optional: true, minimum: 1 });
       const itemNameId = integer(row.itemNameId, 'saved item name id', { optional: true, minimum: 1 });
       if (catalogItemId !== null && itemNameId !== null) invalid('Pumili ng isang saved item source lamang.');
+      const quantity = integer(row.quantity, 'item quantity', { minimum: 1 });
+      const plannedRecipients = row.plannedRecipients === undefined
+        ? []
+        : rows(row.plannedRecipients, 'planned recipients', (recipient) => ({
+          employeeCode: text(recipient.employeeCode, 'recipient employee code', 40),
+          quantity: integer(recipient.quantity, 'recipient quantity', { minimum: 1 }),
+          useLocation: text(recipient.useLocation, 'recipient use location', 200),
+          purpose: text(recipient.purpose, 'recipient purpose', 500),
+        }), { min: 0, max: 50 });
+      const recipientCodes = plannedRecipients.map((recipient) => recipient.employeeCode.trim().toLowerCase());
+      if (new Set(recipientCodes).size !== recipientCodes.length) invalid('Pumili lamang ng isang allocation row bawat employee sa bawat item.');
+      if (plannedRecipients.reduce((sum, recipient) => sum + recipient.quantity, 0) > quantity) {
+        invalid('Hindi puwedeng lumampas sa requested quantity ang planned recipient allocation.');
+      }
       return {
-        quantity: integer(row.quantity, 'item quantity', { minimum: 1 }),
+        quantity,
         category,
         catalogItemId,
         itemNameId,
         itemName: text(row.itemName, 'item name', 250),
         description: text(row.description, 'item description/specifications', 1000),
+        plannedRecipients,
       };
     }, { max: 30 });
     const uniqueLineKeys = new Set();

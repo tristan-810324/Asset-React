@@ -81,6 +81,19 @@ const REQUEST_SELECT = `
                 ORDER BY batch.requested_at DESC, batch.id DESC
                 LIMIT 1
              ),
+              'issuedRecipients', COALESCE((
+                SELECT json_agg(json_build_object(
+                  'employeeCode', employee.employee_code,
+                  'employeeName', trim(concat_ws(' ', employee.first_name, employee.middle_name, employee.last_name, employee.suffix)),
+                  'quantity', issue.quantity,
+                  'useLocation', issue.recipient_location,
+                  'purpose', issue.recipient_purpose
+                ) ORDER BY issue.id)
+                  FROM employee_issuances AS issue
+                  JOIN employees AS employee ON employee.id = issue.employee_id
+                 WHERE issue.purchase_requisition_line_id = line.id
+                   AND issue.status IN ('Issued', 'Returned')
+              ), '[]'::JSON),
              'allocations', COALESCE((
                SELECT json_agg(json_build_object(
                  'id', allocation.id::TEXT,

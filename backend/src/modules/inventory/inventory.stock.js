@@ -19,7 +19,7 @@ async function addRepairHold(queryable, itemId, usage) {
   );
   const item = result.rows[0];
   if (!item) return { ...usage, repairQuantity: 0 };
-  // Bulk stock: a whole-stock repair condition holds everything; otherwise only the units set
+  // Quantity-tracked stock: a whole-stock repair condition holds everything; otherwise only the units set
   // aside by damaged returns. Tagged stock counts its own units in repair.
   const repairQuantity = Number(item.tagged_quantity) === 0
     ? repairConditions.includes(item.item_condition) ? Number(item.quantity) : Number(item.bulk_repair_quantity || 0)
