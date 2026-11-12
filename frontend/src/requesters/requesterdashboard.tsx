@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
-import { MetricIcon, RequestItemPreview } from './requesterrequestcard'
-import { formatDate, formatDateTime, getRequestItems, requestStatusLabel, requestStatusTone } from './requesterrequestutils'
+import { MetricIcon } from './requesterrequestcard'
+import { formatDateTime, getRequestItems, requestStatusLabel, requestStatusTone } from './requesterrequestutils'
 import {
   getMyDepartmentIssuanceSummary,
   listMyDepartmentReturns,
   listMyPendingIssuanceBatches,
   listMyRequests,
-  REQUEST_TYPE_LABELS,
   type RequesterDepartmentReturn,
   type RequesterIssuanceApproval,
   type ServiceRequest,
@@ -26,6 +25,7 @@ function RequesterDashboardContent() {
   const [requests, setRequests] = useState<ServiceRequest[]>([])
   const [pendingIssuances, setPendingIssuances] = useState<RequesterIssuanceApproval[]>([])
   const [departmentIssuedUnits, setDepartmentIssuedUnits] = useState<number | null>(null)
+  const [departmentRemainingUnits, setDepartmentRemainingUnits] = useState<number | null>(null)
   const [departmentIssuanceLoading, setDepartmentIssuanceLoading] = useState(true)
   const [departmentIssuanceError, setDepartmentIssuanceError] = useState('')
   const [departmentReturns, setDepartmentReturns] = useState<RequesterDepartmentReturn[]>([])
@@ -54,6 +54,7 @@ function RequesterDashboardContent() {
         .then((summary) => {
           if (!active) return
           setDepartmentIssuedUnits(summary.totalIssuedUnits)
+          setDepartmentRemainingUnits(summary.remainingUnits ?? 0)
           setDepartmentIssuanceError('')
         })
         .catch((reason: unknown) => { if (active) setDepartmentIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-load ang department issuance total.') })
@@ -102,7 +103,7 @@ function RequesterDashboardContent() {
   const inProgressCount = useMemo(() => requests.filter((request) => inProgressStatuses.has(request.status)).length, [inProgressStatuses, requests])
   const recentRequests = useMemo(() => [...requests]
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-    .slice(0, 8), [requests])
+    .slice(0, 2), [requests])
   const recentReturns = useMemo(() => [...departmentReturns]
     .sort((left, right) => new Date(right.decidedAt || right.requestedAt).getTime() - new Date(left.decidedAt || left.requestedAt).getTime())
     .slice(0, 8), [departmentReturns])
@@ -111,7 +112,7 @@ function RequesterDashboardContent() {
     {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700">{error}</p>}
 
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.85fr)]" aria-label="Requester overview" aria-busy={loading || departmentIssuanceLoading}>
-      <article className="relative isolate overflow-hidden rounded-2xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-4 text-white shadow-xl shadow-blue-950/15 sm:p-5">
+      <article className="relative isolate overflow-hidden rounded-2xl bg-[#09244a] p-4 text-white shadow-xl shadow-blue-950/15 sm:p-5">
         <div className="absolute -right-12 -top-10 h-40 w-40 rounded-full border-16 border-white/5 sm:-right-16 sm:-top-14 sm:h-52 sm:w-52 sm:border-22" />
         <div className="absolute -bottom-24 right-16 h-36 w-36 rounded-full border-14 border-blue-300/10 sm:-bottom-28 sm:right-24 sm:h-48 sm:w-48 sm:border-18" />
         <div className="relative flex flex-col justify-between">
@@ -135,13 +136,14 @@ function RequesterDashboardContent() {
             </div>
             <div className="flex items-start justify-between gap-4 border-t border-blue-200/20 pt-3">
               <div>
-                <p className="text-[0.55rem] font-extrabold uppercase tracking-[0.12em] text-blue-200 sm:text-[0.62rem] sm:tracking-[0.16em]"><span className="sm:hidden">Activity</span><span className="hidden sm:inline">Requester activity</span></p>
-                <h2 className="mt-1 text-sm font-black tracking-tight text-white sm:text-base">Total requests</h2>
+                <p className="text-[0.55rem] font-extrabold uppercase tracking-[0.12em] text-blue-200 sm:text-[0.62rem] sm:tracking-[0.16em]"><span className="sm:hidden">Assigned</span><span className="hidden sm:inline">Department assignment</span></p>
+                <h2 className="mt-1 text-sm font-black tracking-tight text-white sm:text-base">Total assigned</h2>
               </div>
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/15 bg-white/10 text-blue-100 sm:h-11 sm:w-11"><MetricIcon name="requests" className="h-4 w-4 sm:h-5 sm:w-5" /></span>
             </div>
-            <p aria-live="polite" className="mt-3 text-4xl font-black leading-none tracking-tight">{loading ? '—' : requests.length.toLocaleString('en-PH')}</p>
-            <p className="mt-1 text-xs font-medium text-blue-100 sm:mt-2 sm:text-sm"><span className="sm:hidden">Submitted to GSO</span><span className="hidden sm:inline">Forms submitted to GSO</span></p>
+            <p aria-live="polite" className="mt-3 text-4xl font-black leading-none tracking-tight">{departmentIssuanceLoading || Boolean(departmentIssuanceError) ? '—' : (departmentIssuedUnits ?? 0).toLocaleString('en-PH')}</p>
+            <p className="mt-1 text-xs font-medium text-blue-100 sm:mt-2 sm:text-sm">units assigned to your staff</p>
+            <p className="mt-2 inline-flex items-center gap-2 rounded-lg border border-white/15 bg-white/10 px-2.5 py-1 text-xs font-bold text-white">Still assigned <span className="text-sm font-black">{departmentIssuanceLoading || Boolean(departmentIssuanceError) ? '—' : (departmentRemainingUnits ?? 0).toLocaleString('en-PH')}</span></p>
           </div>
         </div>
       </article>
@@ -172,91 +174,102 @@ function RequesterDashboardContent() {
     </section>
 
     <nav className="grid gap-2.5 sm:grid-cols-2 lg:hidden" aria-label="Requester activity navigation">
-      <a href="/requester/my-requests" className="group flex min-h-16 items-center gap-3 rounded-2xl border-2 border-slate-300/80 bg-linear-to-r from-blue-50/70 to-white px-3.5 py-3 shadow-md shadow-slate-300/30 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm"><MetricIcon name="document" className="h-4 w-4" /></span>
-        <span className="min-w-0 flex-1"><span className="block text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-blue-600">Request activity</span><span className="mt-0.5 block text-sm font-black text-slate-900">Recent requests</span><span className="mt-0.5 block text-[0.62rem] font-medium text-slate-500">{loading ? 'Loading' : `${requests.length} total`}</span></span>
-        <span aria-hidden="true" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-blue-200 bg-white text-blue-700 shadow-sm transition group-hover:translate-x-0.5 group-hover:border-blue-400 group-hover:bg-blue-50 group-focus-visible:ring-4 group-focus-visible:ring-blue-100"><MetricIcon name="arrow-right" className="h-4 w-4" /></span>
+      <a href="/requester/my-requests" className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border-2 border-slate-300/80 bg-white px-4 py-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
+        <span className="min-w-0"><span className="block text-sm font-black text-slate-900">Recent requests</span><span className="mt-0.5 block text-xs font-medium text-slate-500">{loading ? 'Loading' : `${requests.length} total`}</span></span>
+        <MetricIcon name="arrow-right" className="h-4 w-4 shrink-0 text-blue-700" />
       </a>
-      <a href="/requester/return-items" className="group flex min-h-16 items-center gap-3 rounded-2xl border-2 border-slate-300/80 bg-linear-to-r from-sky-50/75 to-white px-3.5 py-3 shadow-md shadow-slate-300/30 ring-1 ring-slate-900/5 transition hover:border-sky-300 hover:shadow-lg focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-sky-100 bg-white text-sky-700 shadow-sm"><MetricIcon name="return" className="h-4 w-4" /></span>
-        <span className="min-w-0 flex-1"><span className="block text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-sky-700">Custody activity</span><span className="mt-0.5 block text-sm font-black text-slate-900">Recent returns</span><span className="mt-0.5 block text-[0.62rem] font-medium text-slate-500">{departmentReturnsLoading ? 'Loading' : `${departmentReturns.length} records`}</span></span>
-        <span aria-hidden="true" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 border-sky-200 bg-white text-sky-700 shadow-sm transition group-hover:translate-x-0.5 group-hover:border-sky-400 group-hover:bg-sky-50 group-focus-visible:ring-4 group-focus-visible:ring-sky-100"><MetricIcon name="arrow-right" className="h-4 w-4" /></span>
+      <a href="/requester/return-items" className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border-2 border-slate-300/80 bg-white px-4 py-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 focus:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
+        <span className="min-w-0"><span className="block text-sm font-black text-slate-900">Recent returns</span><span className="mt-0.5 block text-xs font-medium text-slate-500">{departmentReturnsLoading ? 'Loading' : `${departmentReturns.length} records`}</span></span>
+        <MetricIcon name="arrow-right" className="h-4 w-4 shrink-0 text-blue-700" />
       </a>
     </nav>
 
-    <section className="hidden items-stretch gap-3 sm:gap-5 lg:grid lg:grid-cols-2" aria-label="Recent requests and department returns">
-      <article className="h-auto min-h-0 min-w-0 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 lg:h-full lg:min-h-112" aria-labelledby="recent-requests-title">
-        <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-200 bg-slate-50/45 p-3 pb-2.5 sm:gap-3 sm:p-6 sm:pb-4">
-          <div className="flex items-start gap-2 sm:gap-3">
-            <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700 shadow-sm shadow-blue-900/10 sm:h-10 sm:w-10"><MetricIcon name="document" className="h-4 w-4 sm:h-5 sm:w-5" /></span>
-            <div><span className="text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-blue-600 sm:text-[0.62rem]">Request activity</span><h2 id="recent-requests-title" className="mt-0.5 text-sm font-black tracking-tight text-slate-900 sm:mt-1 sm:text-lg">Recent requests</h2><p className="mt-0.5 text-[0.65rem] leading-relaxed text-slate-500 sm:mt-1 sm:text-xs">Status and planned recipients.</p></div>
+    <section className="hidden items-stretch gap-5 lg:grid lg:grid-cols-2" aria-label="Recent requests and department returns">
+      <article className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="recent-requests-title">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
+          <div>
+            <h2 id="recent-requests-title" className="text-base font-black tracking-tight text-slate-900">Recent requests</h2>
+            <p className="mt-1 text-xs font-medium text-slate-500">Status and planned recipients.</p>
           </div>
-          <div className="flex items-center gap-2 sm:gap-3"><span className="rounded-lg bg-blue-50 px-2 py-1 text-[0.58rem] font-extrabold text-blue-700 sm:px-2.5 sm:py-1.5 sm:text-[0.62rem]">{loading ? 'Loading' : `${requests.length} total`}</span><a href="/requester/my-requests" className="text-[0.62rem] font-extrabold text-blue-600 hover:underline sm:text-[0.68rem]">View all</a></div>
+          <div className="flex items-center gap-3 text-xs font-bold text-slate-500">
+            <span>{loading ? 'Loading' : `${requests.length} total`}</span>
+            <a href="/requester/my-requests" className="font-extrabold text-blue-600 hover:underline">View all</a>
+          </div>
         </div>
 
-        {loading ? <div className="grid min-h-40 place-items-center text-xs font-semibold text-slate-500">Loading recent requests…</div>
-          : recentRequests.length === 0 ? <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><div><span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><MetricIcon name="requests" /></span><p className="mt-2 text-xs font-extrabold text-slate-700">No requests yet</p><p className="mt-1 text-[0.68rem] text-slate-500">Start a purchase requisition or another GSO request.</p><a href="/requester/request-center" className="mt-3 inline-flex text-[0.68rem] font-extrabold text-blue-600 hover:underline">Open Request Center →</a></div></div>
-             : <ul className="max-h-120 divide-y divide-slate-200 overflow-y-auto px-3 sm:px-6">{recentRequests.map((request) => {
+        {loading ? <div className="grid min-h-40 place-items-center text-sm font-semibold text-slate-400">Loading recent requests…</div>
+          : recentRequests.length === 0 ? <div className="grid min-h-40 place-items-center px-4 text-center"><div><p className="text-sm font-bold text-slate-700">No requests yet</p><p className="mt-1 text-xs text-slate-400">Start a purchase requisition or another GSO request.</p><a href="/requester/request-center" className="mt-3 inline-flex text-xs font-extrabold text-blue-600 hover:underline">Open Request Center →</a></div></div>
+             : <ul className="max-h-120 space-y-2.5 overflow-y-auto p-4 sm:px-5">{recentRequests.map((request) => {
               const items = getRequestItems(request)
               const [firstItem] = items
-              return <li key={request.id} className="py-2.5 first:pt-1 last:pb-1 sm:py-4">
-                <a href={`/requester/requests/${request.id}`} className="block rounded-xl border border-slate-200 bg-white p-3.5 transition hover:border-blue-200 hover:bg-blue-50/60 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 sm:p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2 sm:gap-3">
-                    <div className="flex min-w-0 items-start gap-2 sm:gap-3">
-                      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700 sm:h-9 sm:w-9"><MetricIcon name="document" className="h-3.5 w-3.5 sm:h-4.5 sm:w-4.5" /></span>
-                      <div className="min-w-0">
-                        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400 sm:gap-x-2 sm:text-[0.63rem]">
-                          <span>{request.referenceNo}</span>
-                          <span className="rounded-md bg-blue-50 px-1.5 py-0.5 text-blue-700">{REQUEST_TYPE_LABELS[request.requestType]}</span>
-                          <span>{formatDate(request.createdAt)}</span>
-                        </p>
-                        <h3 className="mt-1 text-xs font-extrabold leading-relaxed text-slate-900 sm:mt-1.5 sm:text-sm">{request.title}</h3>
-                        <p className="mt-0.5 text-[0.58rem] font-medium text-slate-400 sm:text-[0.63rem]">Last updated {formatDateTime(request.updatedAt)}</p>
-                      </div>
-                    </div>
-                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[0.56rem] font-extrabold sm:px-2.5 sm:py-1 sm:text-[0.6rem] ${requestStatusTone(request)}`}>{requestStatusLabel(request)}</span>
+              return <li key={request.id}>
+                <div className="rounded-xl border border-slate-200 bg-white p-4 transition hover:border-blue-300 hover:bg-blue-50/40">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-sm font-black text-slate-900">{request.referenceNo}</span>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[0.6rem] font-extrabold ${dashboardRequestTone(request)}`}>{requestStatusLabel(request)}</span>
                   </div>
-                  {firstItem && <div className="mt-3">
-                    <RequestItemPreview item={firstItem} index={0} requestType={request.requestType} />
-                    {items.length > 1 && <p className="mt-1.5 text-[0.6rem] font-bold text-blue-600">+{items.length - 1} more item{items.length - 1 === 1 ? '' : 's'} · view full request</p>}
-                  </div>}
-                  {request.status === 'Needs Information' && <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[0.62rem] font-bold text-amber-800 sm:mt-3 sm:px-3 sm:py-2 sm:text-[0.65rem]">May hinihinging dagdag na impormasyon ang GSO.</p>}
-                </a>
+                  <p className="mt-1 text-xs font-bold text-blue-700">{request.title}</p>
+                  {firstItem && <p className="mt-1 text-xs text-slate-500">{firstItem.quantity} × {firstItem.itemName}{items.length > 1 ? ` · +${items.length - 1} more` : ''}</p>}
+                  {request.status === 'Needs Information' && <p className="mt-2 text-xs font-bold text-amber-700">May hinihinging dagdag na impormasyon ang GSO.</p>}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <p className="text-[0.62rem] font-medium text-slate-400">Updated {formatDateTime(request.updatedAt)}</p>
+                    <a href={`/requester/requests/${request.id}`} aria-label={`Request details for ${request.referenceNo}`} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
+                      Request details
+                      <MetricIcon name="arrow-right" className="h-3 w-3" />
+                    </a>
+                  </div>
+                </div>
               </li>
             })}</ul>}
 
-        {(issuanceError || pendingIssuances.length > 0) && <div className="mx-5 mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3.5 sm:mx-6">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-[0.61rem] font-extrabold uppercase tracking-wide text-amber-700">Pickup preparation</p><p className="mt-1 text-[0.68rem] font-bold text-slate-700">GSO prepares the barcode labels and pickup record automatically. No confirmation is needed from you.</p></div><span className="rounded-lg bg-white px-2 py-1 text-[0.58rem] font-extrabold text-amber-700">{issuanceLoading ? 'Loading' : `${pendingIssuances.length} updating`}</span></div>
-          {issuanceError && <p role="alert" className="mt-2 text-[0.65rem] font-bold text-rose-700">{issuanceError}</p>}
+        {(issuanceError || pendingIssuances.length > 0) && <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:mx-6">
+          <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-amber-700">Pickup preparation</p><p className="mt-1 text-xs font-bold text-slate-700">GSO prepares the barcode labels and pickup record automatically. No confirmation is needed from you.</p></div><span className="rounded-lg bg-white px-2 py-1 text-[0.6rem] font-extrabold text-amber-700">{issuanceLoading ? 'Loading' : `${pendingIssuances.length} updating`}</span></div>
+          {issuanceError && <p role="alert" className="mt-2 text-xs font-bold text-rose-700">{issuanceError}</p>}
           {pendingIssuances.map((batch) => <div key={batch.id} className="mt-3 rounded-lg border border-amber-100 bg-white p-3"><p className="text-xs font-extrabold text-slate-800">{batch.items.map((item) => `${item.quantity} ${item.unitOfMeasure} ${item.itemName}`).join(', ')}</p><p className="mt-1 text-[0.62rem] font-semibold text-slate-500">GSO is updating this legacy record for {batch.employeeName} · {batch.employeeCode}. Please refresh shortly.</p></div>)}
         </div>}
       </article>
 
-      <article className="h-auto min-h-0 min-w-0 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 lg:h-full lg:min-h-112" aria-labelledby="recent-returns-title">
-        <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-200 bg-slate-50/45 p-3 pb-2.5 sm:gap-3 sm:p-6 sm:pb-4">
-          <div className="flex items-start gap-2 sm:gap-3">
-            <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-sky-100 bg-sky-50 text-sky-700 shadow-sm shadow-sky-900/10 sm:h-10 sm:w-10"><MetricIcon name="return" className="h-4 w-4 sm:h-5 sm:w-5" /></span>
-            <div><span className="text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-blue-600 sm:text-[0.62rem]">Custody activity</span><h2 id="recent-returns-title" className="mt-0.5 text-sm font-black tracking-tight text-slate-900 sm:mt-1 sm:text-lg">Recent returns</h2><p className="mt-0.5 text-[0.65rem] leading-relaxed text-slate-500 sm:mt-1 sm:text-xs">Assigned staff and the person who brought each item back to GSO.</p></div>
+      <article className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="recent-returns-title">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
+          <div>
+            <h2 id="recent-returns-title" className="text-base font-black tracking-tight text-slate-900">Recent returns</h2>
+            <p className="mt-1 text-xs font-medium text-slate-500">Assigned staff and who brought each item back.</p>
           </div>
-          <div className="flex items-center gap-2 sm:gap-3"><span className="rounded-lg bg-blue-50 px-2 py-1 text-[0.58rem] font-extrabold text-blue-700 sm:px-2.5 sm:py-1.5 sm:text-[0.62rem]">{departmentReturnsLoading ? 'Loading' : `${departmentReturns.length} records`}</span><a href="/requester/return-items" className="text-[0.62rem] font-extrabold text-blue-600 hover:underline sm:text-[0.68rem]">View returns</a></div>
+          <div className="flex items-center gap-3 text-xs font-bold text-slate-500">
+            <span>{departmentReturnsLoading ? 'Loading' : `${departmentReturns.length} records`}</span>
+            <a href="/requester/return-items" className="font-extrabold text-blue-600 hover:underline">View returns</a>
+          </div>
         </div>
 
-        {departmentReturnsError && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-[0.68rem] font-bold text-rose-700">{departmentReturnsError}</p>}
-        {departmentReturnsLoading ? <div className="grid min-h-40 place-items-center text-xs font-semibold text-slate-500">Loading department returns…</div>
-            : recentReturns.length === 0 ? <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><div><span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700">↶</span><p className="mt-2 text-xs font-extrabold text-slate-700">No recent returns</p><p className="mt-1 max-w-xs text-[0.68rem] leading-relaxed text-slate-500">GSO return records for staff in your verified department will appear here.</p></div></div>
-             : <ul className="grid gap-2 p-3 sm:grid-cols-2 sm:gap-3 sm:p-6">{recentReturns.map((returnRecord) => <li key={returnRecord.id} className="rounded-xl border border-slate-200 bg-white p-2.5 transition hover:border-sky-200 hover:bg-sky-50/50 sm:p-3">
-              <div className="flex flex-wrap items-start justify-between gap-2 sm:gap-3">
-                <div className="flex min-w-0 items-start gap-2 sm:gap-3">
-                  <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-sky-50 text-sky-700 sm:h-9 sm:w-9"><MetricIcon name="box" className="h-3.5 w-3.5 sm:h-4.5 sm:w-4.5" /></span>
-                  <div className="min-w-0"><p className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400 sm:text-[0.62rem]">{returnRecord.itemCode}{returnRecord.tagCode ? ` · ${returnRecord.tagCode}` : ''} · {formatDate(returnRecord.decidedAt || returnRecord.requestedAt)}</p><h3 className="mt-1 text-xs font-extrabold leading-relaxed text-slate-900 sm:text-sm">{returnRecord.itemName}{Number(returnRecord.quantity) > 1 ? ` · ${returnRecord.quantity} ${returnRecord.unitOfMeasure}` : ''}</h3></div>
+        {departmentReturnsError && <p role="alert" className="mx-5 mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700 sm:mx-6">{departmentReturnsError}</p>}
+        {departmentReturnsLoading ? <div className="grid min-h-40 place-items-center text-sm font-semibold text-slate-400">Loading department returns…</div>
+            : recentReturns.length === 0 ? <div className="grid min-h-40 place-items-center px-4 text-center"><div><p className="text-sm font-bold text-slate-700">No recent returns</p><p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-400">GSO return records for staff in your verified department will appear here.</p></div></div>
+             : <ul className="max-h-120 space-y-2.5 overflow-y-auto p-4 sm:px-5">{recentReturns.map((returnRecord) => <li key={returnRecord.id} className="rounded-xl border border-slate-200 bg-white p-4 transition hover:border-blue-200">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-black text-slate-900">{returnRecord.tagCode || returnRecord.itemCode}</p>
+                  <p className="mt-1 text-xs font-bold text-blue-700">{returnRecord.itemName}{Number(returnRecord.quantity) > 1 ? ` · ${returnRecord.quantity} ${returnRecord.unitOfMeasure}` : ''}</p>
                 </div>
-                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[0.56rem] font-extrabold sm:px-2.5 sm:py-1 sm:text-[0.6rem] ${returnStatusTone(returnRecord.status)}`}>{returnRecord.status}</span>
+                <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[0.6rem] font-extrabold ${returnStatusTone(returnRecord.status)}`}>{returnRecord.status}</span>
               </div>
-              <div className="mt-2 grid gap-y-1 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2 sm:mt-2.5 sm:gap-y-1.5 sm:px-3 sm:py-2.5"><p className="text-[0.63rem] text-slate-600 sm:text-[0.68rem]"><span className="font-extrabold text-blue-700">Assigned staff:</span> {returnRecord.employeeName} · {returnRecord.employeeCode}</p><p className="text-[0.63rem] text-slate-600 sm:text-[0.68rem]"><span className="font-extrabold text-blue-700">Brought in by:</span> {returnRecord.returnedByName || 'Not recorded'}</p><p className="text-[0.63rem] text-slate-600 sm:text-[0.68rem]"><span className="font-extrabold text-blue-700">Condition:</span> {returnRecord.condition}</p><p className="text-[0.63rem] text-slate-600 sm:text-[0.68rem]"><span className="font-extrabold text-blue-700">Reason:</span> {returnRecord.reason}</p></div>
+              <p className="mt-1 text-xs text-slate-500">{returnRecord.recipientLocation || 'Location not recorded'} · {returnRecord.employeeName}</p>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                <p className="text-[0.62rem] font-medium text-slate-400">Brought in by {returnRecord.returnedByName || 'Not recorded'} · {formatDateTime(returnRecord.decidedAt || returnRecord.requestedAt)}</p>
+                <a href="/requester/return-items#return-records" aria-label={`View details for ${returnRecord.tagCode || returnRecord.itemCode}`} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">View details</a>
+              </div>
+
             </li>)}</ul>}
       </article>
     </section>
   </div>
+}
+
+// Dashboard-only status colors: "Pending" and "Ready for Pickup" get their own tone instead of the shared gray default.
+function dashboardRequestTone(request: ServiceRequest) {
+  const label = requestStatusLabel(request)
+  if (label === 'Pending') return 'border-amber-200 bg-amber-50 text-amber-800'
+  if (label === 'Ready for Pickup') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  return requestStatusTone(request)
 }
 
 export default function RequesterDashboard() {

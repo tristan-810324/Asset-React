@@ -100,12 +100,12 @@ async function listVerifiedDepartmentEmployees(userId) {
        JOIN employees AS head
          ON lower(trim(head.employee_code)) = lower(trim(profile.employee_code))
        JOIN employees AS employee
-         ON lower(trim(employee.department)) = lower(trim(head.department))
+         ON employee.id = head.id
+         OR lower(trim(employee.department)) = lower(trim(head.department))
       WHERE profile.user_id = $1
         AND profile.verification_status = 'Verified'
         AND head.status = 'Active'
         AND employee.status = 'Active'
-        AND employee.id <> head.id
       ORDER BY lower(employee.last_name), lower(employee.first_name), lower(employee.employee_code)`,
     [userId],
   );

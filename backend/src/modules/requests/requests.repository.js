@@ -56,6 +56,38 @@ const REQUEST_SELECT = `
              LEFT JOIN users AS editor ON editor.id = event.changed_by_user_id
             WHERE event.request_id = request.id
          ), '[]'::json) AS history
+         , (EXISTS (
+             SELECT 1 FROM asset_unit_tags AS tag
+               JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
+               JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+              WHERE batch.purchase_requisition_id = request.id)
+           AND NOT EXISTS (
+             SELECT 1 FROM asset_unit_tags AS tag
+               JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
+               JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+              WHERE batch.purchase_requisition_id = request.id AND tag.label_printed_at IS NULL)) AS "labelsAllPrinted"
+         , COALESCE((
+           SELECT json_agg(json_build_object(
+             'id', return_record.id::TEXT,
+             'itemName', COALESCE(NULLIF(inventory.item_name, ''), inventory.description),
+             'itemCode', inventory.item_code,
+             'tagCode', COALESCE(return_record.tag_snapshot->>'tagCode', tag.tag_code),
+             'quantity', return_record.quantity,
+             'unitOfMeasure', issue.unit_of_measure,
+             'employeeName', trim(concat_ws(' ', staff.first_name, staff.middle_name, staff.last_name, staff.suffix)),
+             'condition', return_record.return_condition,
+             'status', return_record.status,
+             'returnedAt', COALESCE(return_record.decided_at, return_record.requested_at)
+           ) ORDER BY COALESCE(return_record.decided_at, return_record.requested_at) DESC, return_record.id DESC)
+             FROM purchase_requisition_lines AS line
+             JOIN employee_issuances AS issue ON issue.purchase_requisition_line_id = line.id
+             JOIN employee_issuance_returns AS return_record ON return_record.issuance_id = issue.id
+             JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+             JOIN employees AS staff ON staff.id = issue.employee_id
+             LEFT JOIN asset_unit_tags AS tag ON tag.id = return_record.asset_unit_tag_id
+            WHERE line.request_id = request.id
+              AND return_record.status NOT IN ('Voided', 'Lost')
+         ), '[]'::json) AS "returnedItems"
          ,COALESCE((
            SELECT json_agg(json_build_object(
              'id', line.id::TEXT,
@@ -348,7 +380,12 @@ async function checkLineStock(queryable, line, { lock = false, consumed = new Ma
     matches.push({ itemId, itemCode: item.item_code, name: item.name, unitOfMeasure: item.unit_of_measure, availableQuantity, reserveQuantity });
   }
   const availableQuantity = matches.reduce((total, match) => total + match.availableQuantity, 0);
-  const options = staffRouteOptions({ requestedQuantity, availableQuantity });
+  const options = staffRouteOptions({
+    requestedQuantity,
+    availableQuantity,
+    approvalPolicy: line.approvalPolicy,
+    staffIssueMaxQuantity: line.staffIssueMaxQuantity,
+  });
   return {
     route: options[0],
     options,
@@ -371,12 +408,20 @@ async function attachStaffStockChecks(requests) {
 }
 
 function staffRouteSummary(counts, note) {
-  const parts = [
-    counts.ISSUE && `${counts.ISSUE} ready for GSO Staff issuance`,
-    counts.HEAD_ISSUE && `${counts.HEAD_ISSUE} in stock but sent to the GSO Head for approval`,
-    counts.PURCHASE && `${counts.PURCHASE} sent to the GSO Head for purchase approval`,
-  ].filter(Boolean);
-  return `GSO Staff checked stock: ${parts.join('; ')}.${note ? ` Note: ${note}` : ''}`;
+  const total = counts.ISSUE + counts.HEAD_ISSUE + counts.PURCHASE;
+  const parts = [];
+  if (counts.PURCHASE > 0) {
+    parts.push(`${counts.PURCHASE} item line(s) have a shortage`);
+    if (counts.HEAD_ISSUE > 0) parts.push(`${counts.HEAD_ISSUE} stocked item line(s) are held`);
+  } else if (counts.HEAD_ISSUE > 0) {
+    parts.push(`GSO Head approval covers all ${total} item line(s)`);
+  } else {
+    parts.push(`all ${counts.ISSUE} item line(s) are reserved for GSO Staff`);
+  }
+  const destination = counts.PURCHASE > 0 || counts.HEAD_ISSUE > 0
+    ? 'The entire request is waiting for the GSO Head; no line may be issued separately.'
+    : 'The entire request is ready for GSO Staff issuance.';
+  return `GSO Staff checked the complete request: ${parts.filter(Boolean).join('; ')}. ${destination}${note ? ` Note: ${note}` : ''}`;
 }
 
 async function staffReviewPurchaseRequisition({ id, action, note, expectedRoutes, changedBy }) {
@@ -410,18 +455,31 @@ async function staffReviewPurchaseRequisition({ id, action, note, expectedRoutes
       historyNote = `GSO Staff asked the requester for more details: ${note}`;
     } else {
       const counts = { ISSUE: 0, HEAD_ISSUE: 0, PURCHASE: 0 };
+      // Release every line first so a multi-line request cannot reserve the same units twice.
+      for (const line of lines) await releasePurchaseLineStock(client, line.id);
+
+      const consumed = new Map();
+      const checkedLines = [];
       for (const line of lines) {
-        await releasePurchaseLineStock(client, line.id);
         const check = await checkLineStock(client, {
           itemName: line.item_name,
           category: line.category,
           requestedQuantity: line.requested_quantity,
-        }, { lock: true });
-        // The staff member's choice must still be allowed by current stock.
-        const route = expectedRoutes[String(line.id)];
-        if (!check.options.includes(route)) {
+          approvalPolicy: line.approval_policy,
+          staffIssueMaxQuantity: line.staff_issue_max_quantity,
+        }, { lock: true, consumed });
+        const requestedRoute = expectedRoutes[String(line.id)];
+        if (!check.options.includes(requestedRoute)) {
           throw httpError(409, `Nagbago ang stock ng ${line.item_name}. I-refresh at i-check muli bago mag-route.`);
         }
+        checkedLines.push({ line, check, requestedRoute });
+      }
+
+      const hasShortage = checkedLines.some(({ line, check }) => check.reservedQuantity < Number(line.requested_quantity));
+      const needsHeadApproval = hasShortage || checkedLines.some(({ requestedRoute }) => requestedRoute !== 'ISSUE');
+      for (const { line, check } of checkedLines) {
+        const lineHasShortage = check.reservedQuantity < Number(line.requested_quantity);
+        const route = lineHasShortage ? 'PURCHASE' : needsHeadApproval ? 'HEAD_ISSUE' : 'ISSUE';
         for (const match of check.matches.filter((entry) => entry.reserveQuantity > 0)) {
           await client.query(
             `INSERT INTO purchase_requisition_line_allocations (line_id, item_id, quantity)
@@ -633,7 +691,7 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
         `UPDATE purchase_requisition_lines
             SET reserved_quantity = reserved_quantity + $2, finance_quantity = $3, route_status = $4, updated_at = NOW()
           WHERE id = $1`,
-        [lineId, received, remaining, remaining > 0 ? 'PARTIAL_STOCK' : 'READY_FOR_STAFF'],
+        [lineId, received, remaining, remaining > 0 ? 'WAITING_FOR_PURCHASE' : 'READY_FOR_STAFF'],
       );
     }
     for (const item of items.values()) await refreshInventoryStatus(client, item.id);
@@ -650,7 +708,10 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
         [request.id, request.status, note.slice(0, 2000), changedBy],
       );
       const open = await client.query(
-        'SELECT COUNT(*)::INTEGER AS count FROM purchase_requisition_lines WHERE request_id = $1 AND finance_quantity > 0',
+        `SELECT COUNT(*)::INTEGER AS count
+           FROM purchase_requisition_lines
+          WHERE request_id = $1
+            AND (finance_quantity > 0 OR reserved_quantity < requested_quantity)`,
         [request.id],
       );
       if (Number(open.rows[0].count) === 0) {
@@ -729,9 +790,7 @@ async function undoPurchaseDelivery({ id, receiptId, changedBy }) {
       );
     }
     const reservedAfter = Number(line.reserved_quantity) - quantity;
-    const routeStatus = reservedAfter > Number(line.issued_quantity)
-      ? Number(line.issued_quantity) > 0 ? 'PARTIALLY_ISSUED' : 'PARTIAL_STOCK'
-      : 'WAITING_FOR_PURCHASE';
+    const routeStatus = 'WAITING_FOR_PURCHASE';
     await client.query(
       `UPDATE purchase_requisition_lines
           SET reserved_quantity = $2, finance_quantity = finance_quantity + $3, route_status = $4, updated_at = NOW()
@@ -770,8 +829,8 @@ async function undoPurchaseDelivery({ id, receiptId, changedBy }) {
   }
 }
 
-// The GSO Head decides only the items GSO Staff sent up; staff-routed items are left as they are.
-async function reviewPurchaseRequisition({ id, action, decisions, note, changedBy }) {
+// The GSO Head approves or declines the complete requisition as one package.
+async function reviewPurchaseRequisition({ id, action, decision, note, changedBy }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -780,20 +839,21 @@ async function reviewPurchaseRequisition({ id, action, decisions, note, changedB
       [id],
     )).rows[0];
     if (!current || current.request_type !== 'PURCHASE_REQUISITION') throw httpError(404, 'Hindi makita ang purchase requisition.');
-    const pending = (await client.query(
+    const lines = (await client.query(
       `SELECT * FROM purchase_requisition_lines
-        WHERE request_id = $1 AND route_status = 'WAITING_GSO_HEAD'
+        WHERE request_id = $1
         ORDER BY line_number
         FOR UPDATE`,
       [id],
     )).rows;
-    if (current.status !== 'Under Review' || pending.length === 0) {
-      throw httpError(409, 'Walang item na naghihintay ng approval mo sa requisition na ito. I-refresh ang listahan.');
+    if (current.status !== 'Under Review' || lines.length === 0
+      || !lines.some((line) => line.route_status === 'WAITING_GSO_HEAD')) {
+      throw httpError(409, 'Walang buong request na naghihintay ng approval mo. I-refresh ang listahan.');
     }
 
     let historyNote;
     if (action === 'NEEDS_INFORMATION') {
-      for (const line of pending) {
+      for (const line of lines) {
         await releasePurchaseLineStock(client, line.id);
         await client.query(
           `UPDATE purchase_requisition_lines
@@ -805,40 +865,40 @@ async function reviewPurchaseRequisition({ id, action, decisions, note, changedB
       }
       historyNote = `GSO Head asked the requester for more details: ${note}`;
     } else {
-      const decisionByLine = new Map(decisions.map((decision) => [decision.lineId, decision]));
-      if (decisionByLine.size !== pending.length || pending.some((line) => !decisionByLine.has(String(line.id)))) {
-        throw httpError(409, 'Magpasya para sa bawat item na naghihintay ng approval. I-refresh kung may nagbago.');
+      if (!['APPROVE', 'DECLINE'].includes(decision)) {
+        throw httpError(400, 'Piliin kung ia-approve o ide-decline ang buong request.');
       }
-      const approved = [];
-      const declined = [];
-      for (const line of pending) {
-        const decision = decisionByLine.get(String(line.id));
-        if (decision.decision === 'APPROVE') {
-          // Reserved units go to GSO Staff; any shortage waits for the Finance handoff.
-          const routeStatus = Number(line.finance_quantity) > 0
-            ? Number(line.reserved_quantity) > 0 ? 'PARTIAL_STOCK' : 'WAITING_FINANCE'
-            : 'READY_FOR_STAFF';
+      if (decision === 'APPROVE') {
+        const shortageNames = [];
+        const heldNames = [];
+        for (const line of lines) {
+          const requested = Number(line.requested_quantity);
+          const reserved = Number(line.reserved_quantity);
+          const shortage = Math.max(Number(line.finance_quantity), requested - reserved);
+          const routeStatus = shortage > 0 ? 'WAITING_FINANCE' : 'READY_FOR_STAFF';
           await client.query(
-            'UPDATE purchase_requisition_lines SET route_status = $2, review_note = $3, updated_at = NOW() WHERE id = $1',
-            [line.id, routeStatus, decision.note],
+            `UPDATE purchase_requisition_lines
+                SET route_status = $2, finance_quantity = $3, review_note = '', updated_at = NOW()
+              WHERE id = $1`,
+            [line.id, routeStatus, shortage],
           );
-          approved.push(line.item_name);
-        } else {
+          if (shortage > 0) shortageNames.push(`${line.item_name} (${shortage} to buy)`);
+          else heldNames.push(line.item_name);
+        }
+        historyNote = `GSO Head approved the entire request. ${heldNames.length ? `Reserved in-stock items: ${heldNames.join(', ')}. ` : ''}${shortageNames.length ? `Shortage items for Finance: ${shortageNames.join('; ')}. No item can be issued until every requested item is available.` : 'All requested items are reserved and ready for GSO Staff issuance.'}${note ? ` Note: ${note}` : ''}`;
+      } else {
+        for (const line of lines) {
           await releasePurchaseLineStock(client, line.id);
           await client.query(
             `UPDATE purchase_requisition_lines
                 SET route_status = 'REJECTED', reserved_quantity = 0, finance_quantity = 0,
                     review_note = $2, updated_at = NOW()
               WHERE id = $1`,
-            [line.id, decision.note],
+            [line.id, note],
           );
-          declined.push(`${line.item_name} (${decision.note})`);
         }
+        historyNote = `GSO Head declined the entire request: ${note}`;
       }
-      historyNote = [
-        approved.length && `GSO Head approved: ${approved.join(', ')}.`,
-        declined.length && `Declined: ${declined.join('; ')}.`,
-      ].filter(Boolean).join(' ');
     }
 
     const routeStatuses = (await client.query(

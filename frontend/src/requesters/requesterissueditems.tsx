@@ -33,6 +33,28 @@ function formatDate(value: string | null | undefined) {
   }).format(date)
 }
 
+// Individually tracked units with the same item, holder, place, purpose and status become one card.
+// Other tracking modes are never merged, so their quantities and remaining counts stay exact.
+type IssuedGroup = { item: IssuedItem; quantity: number; codes: string[]; tags: NonNullable<IssuedItem['tags']> }
+function groupIssuedItems(batch: RequesterIssuanceApproval): IssuedGroup[] {
+  const groups = new Map<string, IssuedGroup>()
+  batch.items.forEach((item) => {
+    const key = item.trackingMode === 'individual'
+      ? [item.itemName, item.recipientEmployeeCode, item.recipientLocation, item.recipientPurpose, itemStatus(batch, item)]
+        .map((value) => String(value || '').trim().toLowerCase()).join('|')
+      : `single:${item.issuanceId}`
+    const existing = groups.get(key)
+    if (existing) {
+      existing.quantity += Number(item.quantity) || 0
+      existing.codes.push(item.itemCode)
+      existing.tags.push(...(item.tags || []))
+    } else {
+      groups.set(key, { item, quantity: Number(item.quantity) || 0, codes: [item.itemCode], tags: [...(item.tags || [])] })
+    }
+  })
+  return [...groups.values()]
+}
+
 function itemStatus(batch: RequesterIssuanceApproval, item: IssuedItem) {
   if (item.issueBehavior === 'returnable' && item.trackingMode === 'quantity'
     && Number(item.quantity) - Number(item.returnedQuantity || 0) <= 0) return 'Returned'
@@ -70,6 +92,8 @@ export default function RequesterIssuedItems() {
   const [batches, setBatches] = useState<RequesterIssuanceApproval[]>([])
   const [requests, setRequests] = useState<ServiceRequest[]>([])
   const [filter, setFilter] = useState<ItemFilter>('All items')
+  const [search, setSearch] = useState('')
+  const [dateFilter, setDateFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [returningRequest, setReturningRequest] = useState('')
@@ -92,10 +116,17 @@ export default function RequesterIssuedItems() {
   }, [])
 
   const issuanceItems = useMemo(() => batches.flatMap((batch) => batch.items.map((item) => ({ batch, item }))), [batches])
-  const visibleBatches = useMemo(() => batches.map((batch) => ({
-    ...batch,
-    items: filter === 'All items' ? batch.items : batch.items.filter((item) => itemCategory(item) === filter),
-  })).filter((batch) => batch.items.length > 0), [batches, filter])
+  const visibleBatches = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return batches
+      .filter((batch) => !dateFilter || new Date(batch.decidedAt || batch.requestedAt).toLocaleDateString('en-CA') === dateFilter)
+      .map((batch) => ({
+        ...batch,
+        items: batch.items.filter((item) => (filter === 'All items' || itemCategory(item) === filter)
+          && (!query || [item.itemName, item.itemCode, item.recipientEmployeeName, item.recipientEmployeeCode, item.recipientLocation].join(' ').toLowerCase().includes(query))),
+      }))
+      .filter((batch) => batch.items.length > 0)
+  }, [batches, filter, search, dateFilter])
   const activePerUnitCount = issuanceItems.reduce((count, { batch, item }) =>
     count + (batch.status === 'Issued' && item.trackingMode === 'individual' && item.status !== 'Returned' ? Number(item.quantity) : 0), 0)
   const distributedConsumableCount = issuanceItems.reduce((count, { batch, item }) =>
@@ -151,10 +182,10 @@ export default function RequesterIssuedItems() {
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Issued items summary" aria-busy={loading}>
         {[
           { label: 'Assigned items', value: activePerUnitCount, detail: 'Individually tracked equipment assigned across your department', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'asset' as const },
-          { label: 'Consumables issued', value: distributedConsumableCount, detail: 'Units distributed for your department', tone: 'border-violet-100 bg-violet-50 text-violet-700', icon: 'supplies' as const },
-          { label: 'Reusable stock to return', value: reusableOutstandingCount, detail: 'Outstanding quantity from GSO', tone: 'border-amber-100 bg-amber-50 text-amber-700', icon: 'return' as const },
-          { label: 'Records', value: totalRecords, detail: 'Issuance and borrowing line items', tone: 'border-emerald-100 bg-emerald-50 text-emerald-700', icon: 'records' as const },
-        ].map((metric) => <article key={metric.label} className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-200/55 transition hover:-translate-y-0.5 hover:shadow-md">
+          { label: 'Consumables issued', value: distributedConsumableCount, detail: 'Units distributed for your department', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'supplies' as const },
+          { label: 'Reusable stock to return', value: reusableOutstandingCount, detail: 'Outstanding quantity from GSO', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'return' as const },
+          { label: 'Records', value: totalRecords, detail: 'Issuance and borrowing line items', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'records' as const },
+        ].map((metric) => <article key={metric.label} className="rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-50/60 via-white to-white p-5 transition hover:-translate-y-0.5 hover:shadow-md shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
           <div className="flex items-start justify-between gap-3">
             <div><p className="text-xs font-bold text-slate-500">{metric.label}</p><p className="mt-2 text-3xl font-black tracking-tight text-slate-900">{loading ? '—' : metric.value.toLocaleString('en-PH')}</p></div>
             <span className={'grid h-11 w-11 place-items-center rounded-xl border shadow-sm shadow-slate-900/5 ' + metric.tone}><UiIcon name={metric.icon} /></span>
@@ -163,19 +194,35 @@ export default function RequesterIssuedItems() {
         </article>)}
       </section>
 
-      <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-200/55 sm:p-5">
+      <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <span className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">GSO issuance</span>
             <h2 className="mt-1 text-lg font-black tracking-tight text-slate-900">Issuance history</h2>
-            <p className="mt-1 text-xs text-slate-500">Item details, quantities, status, and return schedule.</p>
+            <p className="mt-1 text-xs text-slate-500">Items issued to you.</p>
           </div>
           <span className="w-fit rounded-lg bg-blue-50 px-3 py-2 text-[0.68rem] font-extrabold text-blue-700">{loading ? 'Loading records' : issuanceItems.length + ' item records'}</span>
         </div>
 
-        <div className="mt-4 inline-flex max-w-full flex-wrap gap-1 rounded-2xl bg-slate-100 p-1" role="group" aria-label="Filter issuance items">
+        <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div className="inline-flex max-w-full flex-wrap gap-1 rounded-2xl bg-slate-100 p-1" role="group" aria-label="Filter issuance items">
           {filters.map((option) => <button key={option} type="button" onClick={() => setFilter(option)} aria-pressed={filter === option} className={'rounded-xl border px-3 py-2 text-[0.68rem] font-extrabold transition ' + (filter === option ? 'border-blue-100 bg-blue-600 text-white shadow-sm' : 'border-transparent text-slate-600 hover:bg-white hover:text-slate-900')}>{option}</button>)}
         </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block w-full sm:w-56">
+            <span className="mb-1 block text-[0.62rem] font-extrabold text-slate-700">Search</span>
+            <span className="relative block">
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Item, code, or staff" className="h-10 w-full rounded-xl border-2 border-slate-300 bg-white pl-9 pr-3 text-xs font-medium text-slate-900 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+            </span>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[0.62rem] font-extrabold text-slate-700">Filter by date</span>
+            <input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} aria-label="Filter issuances by date" className="h-10 w-full rounded-xl border-2 border-slate-300 bg-white px-3 text-xs font-semibold text-slate-900 shadow-sm outline-none transition hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+          </label>
+          {(search || dateFilter) && <button type="button" onClick={() => { setSearch(''); setDateFilter('') }} className="h-10 rounded-xl border-2 border-slate-300 bg-white px-3 text-xs font-extrabold text-slate-700 shadow-sm hover:bg-slate-50">Clear</button>}
+        </div>
+      </div>
 
         {loading ? <div className="grid min-h-48 place-items-center text-sm font-bold text-slate-400">Loading your issuance history...</div>
           : visibleBatches.length === 0 ? <div className="mt-4 grid min-h-52 place-items-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center">
@@ -185,7 +232,7 @@ export default function RequesterIssuedItems() {
               <p className="mt-1 max-w-sm text-xs leading-relaxed text-slate-500">Items recorded for your requester account by GSO will appear here.</p>
             </div>
           </div>
-            : <div className="mt-4 space-y-4">{visibleBatches.map((batch) => <article key={batch.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/40">
+            : <div className="mt-4 space-y-4">{visibleBatches.map((batch) => <article key={batch.id} className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3.5 sm:px-5">
                 <div>
                   <p className="text-sm font-extrabold text-slate-900">Issuance record <span className="text-blue-700">#{batch.id}</span></p>
@@ -194,28 +241,28 @@ export default function RequesterIssuedItems() {
                 <span className={'rounded-full px-3 py-1.5 text-[0.62rem] font-extrabold ' + statusTone(batch.status)}>{batch.status}</span>
               </div>
 
-              <div className="space-y-3 p-4 sm:p-5">{batch.items.map((item) => {
-                const category = itemCategory(item)
+              <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 sm:p-4">{groupIssuedItems(batch).map(({ item, quantity }) => {
                 const currentStatus = itemStatus(batch, item)
+                const isReturned = currentStatus === 'Returned'
                 const remaining = Math.max(Number(item.quantity) - Number(item.returnedQuantity || 0), 0)
-                return <div key={item.issuanceId} className="rounded-xl border border-slate-200 bg-white p-3.5 sm:p-4">
+                return <div key={item.issuanceId} className={`rounded-xl border-2 p-3.5 shadow-sm transition ${isReturned ? 'border-dashed border-slate-300 bg-slate-50/80' : 'border-slate-300/80 bg-white hover:border-blue-200'}`}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-extrabold text-slate-900">{item.itemName}</h3>
-                        <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-[0.58rem] font-extrabold text-slate-600">{category}</span>
+                        <h3 className="text-sm font-black text-slate-900">{item.itemName}</h3>
+                        
                       </div>
-                      <p className="mt-1.5 text-xs font-semibold text-slate-600">{item.itemCode}<span className="px-1.5 text-slate-300">·</span>{item.quantity} {item.unitOfMeasure}{item.issueBehavior === 'returnable' && item.trackingMode === 'quantity' ? <span className="text-amber-700"><span className="px-1.5 text-slate-300">·</span>{remaining} remaining</span> : null}</p>
+                      <p className="mt-1.5 break-words text-xs font-semibold text-slate-600">{quantity} {item.unitOfMeasure}{item.issueBehavior === 'returnable' && item.trackingMode === 'quantity' ? <span className="text-amber-700"><span className="px-1.5 text-slate-300">·</span>{remaining} remaining</span> : null}</p>
                       <p className="mt-1 text-xs font-bold text-blue-700">Assigned to {item.recipientEmployeeName} · {item.recipientEmployeeCode}</p>
                       {(item.recipientLocation || item.recipientPurpose) && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-500">{[item.recipientLocation, item.recipientPurpose].filter(Boolean).join(' · ')}</p>}
                     </div>
-                    <span className={'shrink-0 rounded-full px-3 py-1.5 text-[0.62rem] font-extrabold ' + statusTone(currentStatus)}>{currentStatus}</span>
+                    <span className={'shrink-0 rounded-full border px-2.5 py-0.5 text-[0.6rem] font-extrabold ' + statusTone(currentStatus)}>{currentStatus}</span>
                   </div>
-                  {(item.condition || item.notes) && <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3 text-[0.68rem] text-slate-500">
+                  {isReturned && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[0.68rem] font-bold text-emerald-800">Surrendered to GSO{item.returnedAt ? ` · ${formatDate(item.returnedAt)}` : ''}{item.returnedByName ? ` · brought in by ${item.returnedByName}` : ''}{item.returnCondition ? ` · ${item.returnCondition}` : ''}</p>}
+                  {item.condition && <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-[0.65rem] text-slate-500">
                     {item.condition && <p>Condition: <span className="font-bold text-slate-700">{item.condition}</span></p>}
-                    {item.notes && <p className="leading-relaxed">Note: <span className="font-medium text-slate-700">{item.notes}</span></p>}
+                    
                   </div>}
-                  {item.tags && item.tags.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Assigned unit barcodes">{item.tags.map((tag) => <span key={item.issuanceId + '-' + tag.tagCode} className="rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1.5 text-[0.62rem] font-bold text-blue-800">Unit {tag.unitNumber}<span className="px-1 text-blue-300">·</span>{tag.tagCode}</span>)}</div>}
                 </div>
               })}</div>
 
@@ -229,7 +276,7 @@ export default function RequesterIssuedItems() {
             </article>)}</div>}
       </section>
 
-      {requestBorrowings.length > 0 && <section className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-200/55 sm:p-5">
+      {requestBorrowings.length > 0 && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div><span className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-emerald-700">Request Center</span><h2 className="mt-1 text-lg font-black tracking-tight text-slate-900">Borrowing request records</h2><p className="mt-1 text-xs text-slate-500">Requests, item quantities, and return dates.</p></div>
           <a href="/requester/my-requests" className="inline-flex items-center gap-1 text-xs font-extrabold text-blue-700 hover:underline">My requests <UiIcon name="arrow" className="h-3.5 w-3.5" /></a>
@@ -237,7 +284,7 @@ export default function RequesterIssuedItems() {
         <div className="mt-4 space-y-3">{requestBorrowings.map((request) => {
           const hasOutstandingItems = request.assets.some((asset) => !asset.returnedAt)
           const canRequestReturn = request.status === 'Issued' && hasOutstandingItems
-          return <article key={request.id} className="rounded-2xl border border-slate-200 p-4 transition hover:border-blue-200 sm:p-5">
+          return <article key={request.id} className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 transition hover:border-blue-200 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-extrabold text-slate-900">{request.title}</p>

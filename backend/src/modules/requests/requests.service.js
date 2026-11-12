@@ -51,12 +51,12 @@ async function notifyPurchaseRequester(request, status, note = '') {
   const declinedText = declined.length ? ` Declined items: ${declined.join('; ')}.` : '';
   const messages = {
     'Needs Information': `GSO needs more information before continuing. Sign in to A.S.SET and reply to this requisition.${note ? ` Details: ${note}` : ''}`,
-    Approved: `Your requested items are approved and reserved. GSO Staff will prepare the issuance; check My Requests for each item.${declinedText}`,
-    Rejected: `The GSO Head declined this requisition.${declinedText}`,
+    Approved: `The GSO Head approved the complete request. All requested items are reserved, so GSO Staff can prepare the full issuance.${declinedText}`,
+    Rejected: `The GSO Head declined the complete requisition.${declinedText}`,
     Completed: `Your requisition is complete. Check My Requests for each item.${declinedText}`,
-    'GSO Endorsed': `The GSO Head approved buying the items that are not in stock. GSO will send the purchase request to Finance; items already in stock are prepared by GSO Staff.${declinedText}`,
-    'Sent to Finance': 'The GSO Head sent this requisition to Finance. GSO Staff will buy the items and add them to GSO inventory; you will be told when they are ready for release.',
-    'Stock Received': 'The purchased items are now in GSO inventory and reserved for you. GSO Staff will prepare the issuance.',
+    'GSO Endorsed': 'The GSO Head approved the complete request. Only the shortage quantities will be sent to Finance; in-stock items remain reserved. GSO cannot issue any part until every requested item is available.',
+    'Sent to Finance': 'The GSO Head sent the shortage quantities to Finance. In-stock items remain reserved, and GSO Staff will issue the complete request only after every requested item has arrived.',
+    'Stock Received': 'All requested quantities are now in GSO inventory and reserved for you. GSO Staff can prepare the complete issuance.',
     'Delivery Undone': 'GSO Staff corrected a delivery record, so the purchased items are not ready yet. GSO will update you again.',
   };
   const message = messages[status];
@@ -65,7 +65,7 @@ async function notifyPurchaseRequester(request, status, note = '') {
   const notificationTitles = {
     'Needs Information': 'GSO needs more information',
     Approved: 'Purchase requisition approved',
-    Rejected: 'Purchase requisition declined',
+    Rejected: 'Entire purchase requisition declined',
     Completed: 'Purchase requisition completed',
     'GSO Endorsed': 'Purchase approved by GSO Head',
     'Sent to Finance': 'Purchase request sent to Finance',
@@ -116,12 +116,17 @@ async function notifyPurchaseRequester(request, status, note = '') {
 async function notifyGsoStaffPurchase(request, stage) {
   const notifications = {
     endorsed: {
-      title: 'Purchase requisition approved by GSO Head',
-      message: `${request.referenceNo} is approved for purchase. The GSO Head will send it to Finance; you can buy the items after that.`,
+      title: 'Entire request approved by GSO Head',
+      message: `${request.referenceNo}: the complete request is approved. Only shortage quantities go to Finance; in-stock items stay reserved, and nothing may be issued until every requested item is available.`,
     },
     sentToFinance: {
       title: 'Purchase sent to Finance: you can buy now',
-      message: `${request.referenceNo}: the GSO Head sent the purchase to Finance. Collect the funds, buy the items, add them in Item Master Data, then link the delivery.`,
+      message: `${request.referenceNo}: the GSO Head sent only the shortage quantities to Finance. Add the bought items in Item Master Data using the requested category and exact name; matching stock is reserved automatically. Confirm a manual link only when the names are similar. The whole request stays on hold until all requested items are available.`,
+    },
+    readyToIssue: {
+      title: 'Entire purchase requisition is ready to issue',
+      message: `${request.referenceNo}: every requested item is now reserved. Open Main Issuance to issue the complete request.`,
+      href: '/gso/main-issuance',
     },
   };
   const notification = notifications[stage];
@@ -131,7 +136,7 @@ async function notifyGsoStaffPurchase(request, stage) {
       roleKey: 'GSO_STAFF',
       type: 'PURCHASE_REQUISITION',
       ...notification,
-      href: '/gso/purchase-requisitions',
+      href: notification.href || '/gso/purchase-requisitions',
       dedupeKey: `purchase-staff:${request.id}:${stage}:${request.updatedAt ? new Date(request.updatedAt).getTime() : Date.now()}`,
     });
   } catch (error) {
@@ -337,8 +342,9 @@ async function createRequest(input, user) {
     });
     const employee = await requesterIdentityRepository.getVerifiedEmployeeSummary(user.id);
     if (!employee) invalid('Hindi makita ang aktibong verified employee record. Makipag-ugnayan sa GSO.', 403);
-    const hasPlannedRecipients = validated.formData.items.some((item) => item.plannedRecipients.length > 0);
-    const departmentStaff = hasPlannedRecipients
+    const hasEmployeePlannedRecipients = validated.formData.items
+      .some((item) => item.plannedRecipients.some((recipient) => recipient.destinationType === 'employee'));
+    const departmentStaff = hasEmployeePlannedRecipients
       ? await requesterIdentityRepository.listVerifiedDepartmentEmployees(user.id)
       : [];
     const departmentStaffByCode = new Map(departmentStaff.map((staff) => [String(staff.employeeCode).trim().toLowerCase(), staff]));
@@ -362,6 +368,17 @@ async function createRequest(input, user) {
         itemName: item.itemName,
         description: item.description,
         plannedRecipients: item.plannedRecipients.map((recipient) => {
+          if (recipient.destinationType !== 'employee') {
+            return {
+              ...recipient,
+              // A room is the item's location, while the verified requester stays
+              // accountable for it as the Employee Head who submitted the request.
+              employeeCode: employee.employeeCode,
+              employeeName: employee.employeeName,
+              email: employee.email,
+              position: employee.position,
+            };
+          }
           const staff = departmentStaffByCode.get(recipient.employeeCode.trim().toLowerCase());
           if (!staff) invalid(`${recipient.employeeCode} ay hindi active staff sa verified department ng requester. Pumili ulit sa department staff list.`);
           return {
@@ -395,6 +412,10 @@ async function listRequesterDepartmentStaff(user) {
 
 async function listMine(user) {
   return requestsRepository.listMine(user.id);
+}
+
+async function listMyActivity(user) {
+  return auditRepository.listUserActivity(user.id);
 }
 
 async function getMine(idValue, user) {
@@ -521,15 +542,21 @@ async function staffReviewPurchaseRequisition(idValue, input, user) {
     await notifyHead(request, {
       key: `head-approval:${id}:${Date.now()}`,
       title: 'Purchase requisition needs your decision',
-      message: `GSO Staff sent ${waitingForHead.length} item${waitingForHead.length === 1 ? '' : 's'} for your approval (${request.formData?.departmentOrganization || request.requesterName || 'requester'}).`,
+      message: `GSO Staff sent the complete request (${waitingForHead.length} item line${waitingForHead.length === 1 ? '' : 's'}) for one approval decision (${request.formData?.departmentOrganization || request.requesterName || 'requester'}). Any in-stock quantities are reserved; do not issue any part while an item is short.`,
     });
   }
   await auditRequest(request, user, {
     action: 'updated',
     reason: input.action === 'NEEDS_INFORMATION'
       ? `GSO Staff asked the requester for more information: ${note}`
-      : `GSO Staff routed the items${waitingForHead.length ? `; ${waitingForHead.length} sent to the GSO Head for approval` : ''}.${note ? ` Note: ${note}` : ''}`,
-    newValues: { routes: Object.values(expectedRoutes) },
+      : `GSO Staff checked and routed the complete requisition${waitingForHead.length ? `; the whole request is with the GSO Head across ${waitingForHead.length} line(s)` : ''}.${note ? ` Note: ${note}` : ''}`,
+    newValues: { routes: (request.purchaseLines || []).map((line) => ({
+      lineId: line.id,
+      itemName: line.itemName,
+      routeStatus: line.routeStatus,
+      reservedQuantity: line.reservedQuantity,
+      financeQuantity: line.financeQuantity,
+    })) },
   });
   return { request, requesterNotified };
 }
@@ -572,17 +599,68 @@ async function recordPurchaseDeliveries(input, user) {
   });
   // Optional extra detail: the delivery itself is the record that the purchase happened.
   const receiptReference = text(input.receiptReference, 'Resibo/invoice number', 120, { optional: true });
+  const result = await savePurchaseDeliveries({ deliveries, receiptReference, user, automatic: false });
+  return result.requests;
+}
+
+async function savePurchaseDeliveries({ deliveries, receiptReference, user, automatic }) {
   const result = await requestsRepository.recordPurchaseDeliveries({ deliveries, receiptReference, changedBy: user.id });
   for (const request of result.requests) {
-    if (result.approvedRequestIds.includes(String(request.id))) await notifyPurchaseRequester(request, 'Stock Received');
+    if (result.approvedRequestIds.includes(String(request.id))) {
+      await notifyPurchaseRequester(request, 'Stock Received');
+      await notifyGsoStaffPurchase(request, 'readyToIssue');
+    }
     const linked = deliveries.filter((delivery) => (request.purchaseLines || []).some((line) => String(line.id) === delivery.lineId));
     await auditRequest(request, user, {
       action: 'received',
-      reason: `GSO Staff linked a delivery for ${linked.length} item${linked.length === 1 ? '' : 's'}.${receiptReference ? ` Receipt: ${receiptReference}.` : ''}`,
-      newValues: { deliveries: linked, receiptReference: receiptReference || null },
+      reason: `${automatic ? 'Item Master Data automatically reserved the newly received stock for' : 'GSO Staff linked a delivery for'} ${linked.length} item${linked.length === 1 ? '' : 's'}.${receiptReference ? ` Receipt: ${receiptReference}.` : ''}`,
+      newValues: { deliveries: linked, receiptReference: receiptReference || null, automatic },
     });
   }
-  return result.requests;
+  return result;
+}
+
+// Exact category/name matches can be reserved as soon as the GSO Staff records the purchased stock.
+// Similar names remain in the manual delivery-link screen because staff must confirm that they are the same item.
+async function autoReserveReceivedPurchaseStock({ items, receiptReference = '', user }) {
+  const received = new Map();
+  for (const item of items || []) {
+    const itemId = idOf(item?.itemId, 'inventory record');
+    const quantity = Number(item?.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1) continue;
+    received.set(itemId, (received.get(itemId) || 0) + quantity);
+  }
+  if (received.size === 0) return { deliveries: [], readyRequests: [] };
+
+  const lines = await requestsRepository.listAwaitingDeliveries({ itemIds: [...received.keys()] });
+  const deliveries = [];
+  for (const line of lines) {
+    let needed = Number(line.remainingQuantity || 0);
+    for (const candidate of line.candidates || []) {
+      if (needed <= 0 || candidate.match !== 'EXACT') continue;
+      const availableFromReceipt = received.get(String(candidate.itemId)) || 0;
+      const availableNow = Number(candidate.availableQuantity || 0);
+      const quantity = Math.min(needed, availableFromReceipt, availableNow);
+      if (quantity < 1) continue;
+      deliveries.push({ lineId: String(line.lineId), itemId: String(candidate.itemId), quantity, confirmSimilarName: false });
+      received.set(String(candidate.itemId), availableFromReceipt - quantity);
+      needed -= quantity;
+    }
+  }
+  if (deliveries.length === 0) return { deliveries: [], readyRequests: [] };
+
+  const result = await savePurchaseDeliveries({
+    deliveries,
+    receiptReference,
+    user,
+    automatic: true,
+  });
+  return {
+    deliveries,
+    readyRequests: result.requests
+      .filter((request) => result.approvedRequestIds.includes(String(request.id)))
+      .map((request) => ({ id: String(request.id), referenceNo: request.referenceNo })),
+  };
 }
 
 async function undoPurchaseDelivery(idValue, receiptIdValue, user) {
@@ -602,11 +680,27 @@ async function undoPurchaseDelivery(idValue, receiptIdValue, user) {
   return result.request;
 }
 
+function purchaseLineReadyForStaffIssuance(line) {
+  return ['READY_FOR_STAFF', 'PARTIALLY_ISSUED'].includes(line.routeStatus)
+    && Number(line.financeQuantity || 0) === 0
+    && Number(line.reservedQuantity || 0) >= Number(line.requestedQuantity || 0);
+}
+
+function purchaseRequestReadyForStaffIssuance(request) {
+  const lines = request?.purchaseLines;
+  const allLinesAreAvailable = Array.isArray(lines) && lines.length > 0 && lines.every((line) => (
+    ['READY_FOR_STAFF', 'PARTIALLY_ISSUED', 'HANDOVER_PENDING', 'ISSUED'].includes(line.routeStatus)
+      && Number(line.financeQuantity || 0) === 0
+      && Number(line.reservedQuantity || 0) >= Number(line.requestedQuantity || 0)
+  ));
+  return allLinesAreAvailable && lines.some(purchaseLineReadyForStaffIssuance);
+}
+
 async function getStaffPurchaseRequisitionForIssuance(idValue) {
   const request = await requestsRepository.getById(null, validateRequestId(idValue));
-  if (!request || request.requestType !== 'PURCHASE_REQUISITION'
-    || !request.purchaseLines?.some((line) => ['READY_FOR_STAFF', 'PARTIAL_STOCK', 'HANDOVER_PENDING', 'PARTIALLY_ISSUED'].includes(line.routeStatus))) {
-    invalid('Walang item na naka-queue para sa GSO Staff issuance.', 404);
+  if (!request || request.requestType !== 'PURCHASE_REQUISITION') invalid('Hindi makita ang purchase requisition.', 404);
+  if (!purchaseRequestReadyForStaffIssuance(request)) {
+    invalid('Hindi pa kumpleto ang stock ng buong request. Walang item na puwedeng i-issue.', 409);
   }
   return request;
 }
@@ -614,28 +708,19 @@ async function getStaffPurchaseRequisitionForIssuance(idValue) {
 async function reviewPurchaseRequisition(idValue, input, user) {
   const id = validateRequestId(idValue);
   if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang purchase requisition decision.');
-  if (!['DECIDE', 'NEEDS_INFORMATION'].includes(input.action)) invalid('Magpasya sa mga item o humingi ng detalye sa requester.');
+  if (!['DECIDE', 'NEEDS_INFORMATION'].includes(input.action)) invalid('Magpasya sa buong request o humingi ng detalye sa requester.');
   const note = text(input.note, 'Note', 2000, { optional: true });
   if (input.action === 'NEEDS_INFORMATION' && !note) invalid('Isulat kung anong detalye ang kailangan mula sa requester.');
-  let decisions = [];
+  let decision = null;
   if (input.action === 'DECIDE') {
-    if (!Array.isArray(input.decisions) || input.decisions.length === 0 || input.decisions.length > 100) {
-      invalid('Magpasya para sa bawat item na naghihintay ng approval.');
-    }
-    decisions = input.decisions.map((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) invalid('Hindi valid ang item decision.');
-      const lineId = String(entry.lineId ?? '');
-      if (!/^\d{1,18}$/.test(lineId) || !['APPROVE', 'DECLINE'].includes(entry.decision)) invalid('Hindi valid ang item decision.');
-      const lineNote = text(entry.note, 'Dahilan', 1000, { optional: true });
-      if (entry.decision === 'DECLINE' && !lineNote) invalid('Ilagay ang dahilan sa bawat item na idedecline.');
-      return { lineId, decision: entry.decision, note: lineNote };
-    });
-    if (new Set(decisions.map((decision) => decision.lineId)).size !== decisions.length) invalid('May nadobleng item decision.');
+    if (!['APPROVE', 'DECLINE'].includes(input.decision)) invalid('Piliin kung ia-approve o ide-decline ang buong request.');
+    decision = input.decision;
+    if (decision === 'DECLINE' && !note) invalid('Ilagay ang dahilan kung bakit idinedecline ang buong request.');
   }
   const request = await requestsRepository.reviewPurchaseRequisition({
     id,
     action: input.action,
-    decisions,
+    decision,
     note,
     changedBy: user.id,
   });
@@ -643,21 +728,25 @@ async function reviewPurchaseRequisition(idValue, input, user) {
   if (request.status === 'GSO Endorsed') await notifyGsoStaffPurchase(request, 'endorsed');
   // The Head has decided, so the "needs your decision" reminder is done.
   await resolveNotices(`head-approval:${id}:`);
-  const approved = decisions.filter((decision) => decision.decision === 'APPROVE').length;
-  const declined = decisions.length - approved;
-  if (input.action === 'DECIDE') {
+  if (input.action === 'DECIDE' && request.status !== 'GSO Endorsed') {
+    const shortageLines = (request.purchaseLines || []).filter((line) => Number(line.financeQuantity || 0) > 0);
+    const approvedMessage = decision === 'DECLINE'
+      ? `GSO Head declined the entire request${note ? `: ${note}` : '.'}`
+      : shortageLines.length
+        ? `GSO Head approved the entire request. ${shortageLines.length} item line(s) are going to Finance; all in-stock items remain reserved. Nothing can be issued until every requested item is available.`
+        : 'GSO Head approved the entire request. All requested items are reserved and ready for GSO Staff issuance.';
     await notifyStaff(request, {
       key: `staff-head-decided:${id}:${Date.now()}`,
-      title: declined && !approved ? 'GSO Head declined the items' : 'GSO Head decided on the items',
-      message: `${approved} approved, ${declined} declined. ${request.status === 'Approved' ? 'The approved items are ready for issuance.' : 'Open the requisition to see each item.'}`,
+      title: decision === 'DECLINE' ? 'GSO Head declined the request' : 'GSO Head approved the entire request',
+      message: approvedMessage,
     });
   }
   await auditRequest(request, user, {
-    action: input.action === 'NEEDS_INFORMATION' ? 'updated' : declined && !approved ? 'rejected' : 'approved',
+    action: input.action === 'NEEDS_INFORMATION' ? 'updated' : decision === 'DECLINE' ? 'rejected' : 'approved',
     reason: input.action === 'NEEDS_INFORMATION'
       ? `GSO Head asked the requester for more information: ${note}`
-      : `GSO Head decided: ${approved} item${approved === 1 ? '' : 's'} approved, ${declined} declined.${note ? ` Note: ${note}` : ''}`,
-    newValues: { decisions },
+      : `GSO Head ${decision === 'APPROVE' ? 'approved' : 'declined'} the entire purchase requisition.${note ? ` Note: ${note}` : ''}`,
+    newValues: { decision },
   });
   return { request, requesterNotified };
 }
@@ -757,7 +846,9 @@ async function sendPurchaseRequisitionToFinance(idValue, input, user) {
 async function getForGso(idValue) {
   const request = await requestsRepository.getById(null, validateRequestId(idValue));
   if (!request) invalid('Hindi makita ang request.', 404);
-  if (request.requestType === 'PURCHASE_REQUISITION' && request.status !== 'Approved') invalid('Approved purchase requisitions lang ang nasa GSO Staff issuance queue.', 404);
+  if (request.requestType === 'PURCHASE_REQUISITION' && !purchaseRequestReadyForStaffIssuance(request)) {
+    invalid('Hindi pa kumpleto ang stock ng buong request. Walang item na puwedeng i-issue.', 409);
+  }
   return request;
 }
 
@@ -842,6 +933,7 @@ module.exports = {
   createRequest,
   listRequesterDepartmentStaff,
   listMine,
+  listMyActivity,
   getMine,
   cancelMine,
   respondMine,
@@ -853,6 +945,7 @@ module.exports = {
   getStaffPurchaseRequisitionForIssuance,
   listAwaitingPurchaseDeliveries,
   recordPurchaseDeliveries,
+  autoReserveReceivedPurchaseStock,
   undoPurchaseDelivery,
   reviewPurchaseRequisition,
   sendPurchaseRequisitionToFinance,

@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   listInventoryCategories,
+  listInventoryCategoryItemNames,
   listInventoryItems,
+  updateInventoryCategoryItemNamePolicy,
   type InventoryCategory,
+  type InventoryCategoryItemName,
   type InventoryChangeRecord,
   type InventoryItemRecord,
 } from '../gso/inventoryApi'
@@ -186,6 +189,16 @@ function InventoryItemDetails({ item, onClose }: { item: InventoryItemRecord; on
 export default function GsoHeadItemMaster() {
   const [items, setItems] = useState<InventoryItemRecord[]>([])
   const [categories, setCategories] = useState<InventoryCategory[]>([])
+  const [approvalRules, setApprovalRules] = useState<InventoryCategoryItemName[]>([])
+  const [approvalRuleDrafts, setApprovalRuleDrafts] = useState<Record<string, {
+    approvalPolicy: 'GSO_HEAD' | 'STAFF_ISSUE'
+    staffIssueMaxQuantity: string
+    reason: string
+  }>>({})
+  const [approvalRuleSearch, setApprovalRuleSearch] = useState('')
+  const [savingApprovalRuleId, setSavingApprovalRuleId] = useState('')
+  const [approvalRuleMessage, setApprovalRuleMessage] = useState('')
+  const [approvalRuleError, setApprovalRuleError] = useState('')
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('all')
   const [itemName, setItemName] = useState('all')
@@ -198,11 +211,17 @@ export default function GsoHeadItemMaster() {
 
   useEffect(() => {
     let active = true
-    Promise.all([listInventoryItems(), listInventoryCategories()])
-      .then(([inventory, categoryRows]) => {
+    Promise.all([listInventoryItems(), listInventoryCategories(), listInventoryCategoryItemNames()])
+      .then(([inventory, categoryRows, itemNameRows]) => {
         if (!active) return
         setItems(inventory)
         setCategories(categoryRows)
+        setApprovalRules(itemNameRows)
+        setApprovalRuleDrafts(Object.fromEntries(itemNameRows.map((itemName) => [itemName.id, {
+          approvalPolicy: itemName.approvalPolicy,
+          staffIssueMaxQuantity: itemName.staffIssueMaxQuantity == null ? '' : String(itemName.staffIssueMaxQuantity),
+          reason: '',
+        }])))
       })
       .catch((reason: unknown) => {
         if (active) setError(reason instanceof Error ? reason.message : 'Unable to load inventory master data.')
@@ -233,8 +252,95 @@ export default function GsoHeadItemMaster() {
   }, [acquiredDate, category, conditionStatus, itemName, items, search, trackingMode])
 
   const exportFilters = { date: acquiredDate, category, itemName, condition: conditionStatus, tracking: trackingMode, search: search.trim() }
+  const filteredApprovalRules = approvalRules.filter((rule) =>
+    `${rule.category} ${rule.name}`.toLocaleLowerCase().includes(approvalRuleSearch.trim().toLocaleLowerCase()),
+  )
+
+  async function saveApprovalRule(itemName: InventoryCategoryItemName) {
+    const draft = approvalRuleDrafts[itemName.id]
+    if (!draft || !draft.reason.trim()) {
+      setApprovalRuleError('Maglagay ng dahilan para maitala kung bakit binago ang approval rule.')
+      setApprovalRuleMessage('')
+      return
+    }
+    setSavingApprovalRuleId(itemName.id)
+    setApprovalRuleError('')
+    setApprovalRuleMessage('')
+    try {
+      const saved = await updateInventoryCategoryItemNamePolicy(itemName.id, {
+        approvalPolicy: draft.approvalPolicy,
+        staffIssueMaxQuantity: draft.approvalPolicy === 'STAFF_ISSUE' && draft.staffIssueMaxQuantity.trim()
+          ? Number(draft.staffIssueMaxQuantity)
+          : null,
+        reason: draft.reason.trim(),
+      })
+      setApprovalRules((current) => current.map((row) => row.id === itemName.id ? { ...row, ...saved } : row))
+      setApprovalRuleDrafts((current) => ({
+        ...current,
+        [itemName.id]: {
+          approvalPolicy: saved.approvalPolicy || draft.approvalPolicy,
+          staffIssueMaxQuantity: saved.staffIssueMaxQuantity == null ? '' : String(saved.staffIssueMaxQuantity),
+          reason: '',
+        },
+      }))
+      setApprovalRuleMessage(`Na-save ang approval rule para sa ${itemName.name}.`)
+    } catch (reason) {
+      setApprovalRuleError(reason instanceof Error ? reason.message : 'Hindi na-save ang approval rule. Subukan muli.')
+    } finally {
+      setSavingApprovalRuleId('')
+    }
+  }
 
   return <div className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+    <section className="border-b border-slate-200 bg-blue-50/45 px-5 py-5 sm:px-7 sm:py-6" aria-labelledby="requisition-approval-rules-title">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="max-w-3xl">
+          <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.15em] text-blue-700">Purchase requisitions</p>
+          <h2 id="requisition-approval-rules-title" className="mt-1 text-lg font-black tracking-tight text-slate-900">Item approval rules</h2>
+          <p className="mt-1 text-sm leading-relaxed text-slate-600">Choose which in-stock items GSO Staff may issue directly. Items that require Head approval go to your review; an item shortage always goes to you for purchase approval.</p>
+        </div>
+        <label className="block w-full xl:max-w-xs">
+          <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Find a saved item name</span>
+          <input type="search" value={approvalRuleSearch} onChange={(event) => setApprovalRuleSearch(event.target.value)} placeholder="Category or item name" className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 shadow-sm outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
+        </label>
+      </div>
+      {approvalRuleError && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">{approvalRuleError}</p>}
+      {approvalRuleMessage && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-semibold text-emerald-800">{approvalRuleMessage}</p>}
+      <div className="mt-4 max-h-136 space-y-3 overflow-y-auto pr-1">
+        {filteredApprovalRules.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-xs font-semibold text-slate-500">{approvalRules.length ? 'Walang item name na tumugma sa search.' : 'Wala pang saved item names. Magdagdag muna ng item name sa GSO Item Master Data.'}</p>
+          : filteredApprovalRules.map((itemName) => {
+            const draft = approvalRuleDrafts[itemName.id]
+            if (!draft) return null
+            const isDirty = draft.approvalPolicy !== itemName.approvalPolicy
+              || (draft.approvalPolicy === 'STAFF_ISSUE' && (draft.staffIssueMaxQuantity || '') !== (itemName.staffIssueMaxQuantity == null ? '' : String(itemName.staffIssueMaxQuantity)))
+            return <article key={itemName.id} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm sm:p-4 xl:grid-cols-[minmax(0,1fr)_minmax(13rem,0.8fr)_9rem_minmax(12rem,0.9fr)_auto] xl:items-end">
+              <div className="min-w-0">
+                <p className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{itemName.category}</p>
+                <h3 className="mt-1 truncate text-sm font-extrabold text-slate-900">{itemName.name}</h3>
+                <p className="mt-1 text-[0.62rem] font-medium text-slate-500">{itemName.approvalPolicy === 'GSO_HEAD' ? 'Head approval required' : 'Staff can choose the route'}</p>
+              </div>
+              <label className="block"><span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">In-stock route</span><select value={draft.approvalPolicy} onChange={(event) => {
+                const approvalPolicy = event.target.value as 'GSO_HEAD' | 'STAFF_ISSUE'
+                setApprovalRuleDrafts((current) => ({ ...current, [itemName.id]: { ...draft, approvalPolicy, staffIssueMaxQuantity: approvalPolicy === 'GSO_HEAD' ? '' : draft.staffIssueMaxQuantity } }))
+                setApprovalRuleError('')
+                setApprovalRuleMessage('')
+              }} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100"><option value="STAFF_ISSUE">GSO Staff may choose</option><option value="GSO_HEAD">Require GSO Head approval</option></select></label>
+              <label className="block"><span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Staff limit</span><input type="number" min={1} max={1000} step={1} value={draft.staffIssueMaxQuantity} onChange={(event) => {
+                setApprovalRuleDrafts((current) => ({ ...current, [itemName.id]: { ...draft, staffIssueMaxQuantity: event.target.value } }))
+                setApprovalRuleError('')
+                setApprovalRuleMessage('')
+              }} disabled={draft.approvalPolicy === 'GSO_HEAD'} placeholder="No limit" aria-label={`GSO Staff quantity limit for ${itemName.name}`} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold text-slate-800 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400" /></label>
+              <label className="block"><span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Reason for change</span><input value={draft.reason} onChange={(event) => {
+                setApprovalRuleDrafts((current) => ({ ...current, [itemName.id]: { ...draft, reason: event.target.value } }))
+                setApprovalRuleError('')
+                setApprovalRuleMessage('')
+              }} maxLength={1000} placeholder="Required to save" aria-label={`Reason for approval rule change for ${itemName.name}`} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /></label>
+              <button type="button" onClick={() => void saveApprovalRule(itemName)} disabled={!isDirty || !draft.reason.trim() || savingApprovalRuleId !== ''} className="h-10 rounded-xl bg-blue-700 px-4 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-45">{savingApprovalRuleId === itemName.id ? 'Saving…' : 'Save rule'}</button>
+            </article>
+          })}
+      </div>
+      <p className="mt-3 text-[0.65rem] leading-relaxed text-slate-500">Staff limit is optional. When set, requests above that quantity need your approval. The rule is recorded in the item name’s policy history.</p>
+    </section>
     <section className="flex flex-col gap-5 border-b border-slate-200 px-5 py-5 sm:px-7 sm:py-6 xl:flex-row xl:items-center xl:justify-between" aria-label="Inventory report controls">
       <div className="min-w-0"><h2 className="text-lg font-black tracking-tight text-slate-900">Full Inventory Master List</h2><p className="mt-1 text-sm text-slate-500">Select a row to see its details and condition history. Exports include only the rows shown.</p><span className="mt-3 inline-flex rounded-xl bg-blue-50 px-3 py-2 text-xs font-extrabold text-blue-700">{loading ? 'Loading inventory…' : `${filteredItems.length.toLocaleString('en-PH')} item${filteredItems.length === 1 ? '' : 's'} found`}</span></div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

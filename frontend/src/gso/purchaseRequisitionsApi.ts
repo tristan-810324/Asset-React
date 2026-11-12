@@ -14,7 +14,7 @@ export async function getStaffPurchaseRequisition(id: string) {
 // `routes` are the routes the staff member saw; the server refuses if stock or a rule changed since.
 export async function staffReviewPurchaseRequisition(
   id: string,
-  input: { action: 'ROUTE'; routes: Record<string, StaffRoute>; note: string } | { action: 'NEEDS_INFORMATION'; note: string },
+  input: { action: 'ROUTE'; routes: Record<string, StaffRoute>; note?: string } | { action: 'NEEDS_INFORMATION'; note: string },
 ) {
   return apiRequest<{ request: ServiceRequest; requesterNotified: boolean | null }>(`/requests/purchase-requisitions/${encodeURIComponent(id)}/staff-review`, {
     method: 'PATCH',

@@ -27,15 +27,6 @@ type ActivityEvent = {
   unread?: boolean
 }
 
-const toneClasses = {
-  blue: 'bg-blue-50 text-blue-700',
-  green: 'bg-emerald-50 text-emerald-700',
-  amber: 'bg-amber-50 text-amber-800',
-  rose: 'bg-rose-50 text-rose-700',
-}
-
-const toneIcons = { blue: '↻', green: '✓', amber: '!', rose: '×' }
-
 function formatBorrowSchedule(value: string | null | undefined) {
   if (!value) return 'Not set'
   const includesTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)
@@ -248,7 +239,7 @@ export default function RequesterNotifications() {
 
       {error && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</p>}
 
-      <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm shadow-slate-200/55">
+      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-4 sm:px-5">
           <div>
             <h2 className="text-sm font-black text-slate-900">Activity timeline</h2>
@@ -285,30 +276,26 @@ export default function RequesterNotifications() {
               </div>
             </div>
           ) : (
-            <ol>
+            <ol className="max-h-[32rem] space-y-2.5 overflow-y-auto pb-1 pr-1">
               {visibleEvents.map((event) => {
                 const noticeId = event.noticeId
                 const unread = Boolean(event.unread)
                 return (
-                  <li key={event.key} className={`relative flex gap-3 border-b border-slate-100 py-4 last:border-0 ${unread ? 'bg-blue-50/50 px-3 sm:px-4' : ''}`}>
-                    <span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm font-black ${toneClasses[event.tone]}`}>{toneIcons[event.tone]}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className={`text-xs ${unread ? 'font-black text-slate-900' : 'font-extrabold text-slate-700'}`}>
-                          {unread && <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-blue-600 align-middle" aria-label="Unread" />}
-                          {event.title}
-                        </p>
-                        <time className="text-[0.62rem] font-semibold text-slate-400">{new Date(event.at).toLocaleString('en-PH')}</time>
-                      </div>
-                      <p className="mt-1 text-xs leading-relaxed text-slate-600">{event.details}</p>
-                      <p className="mt-1 text-[0.62rem] font-bold text-slate-400">{event.source}</p>
+                  <li key={event.key} className={`rounded-xl border-2 p-4 shadow-sm transition ${unread ? 'border-blue-200 bg-blue-50/40' : 'border-slate-300/80 bg-white'}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <p className="text-sm font-black text-slate-900">{event.title}</p>
+                      <time className="text-[0.62rem] font-semibold text-slate-400">{new Date(event.at).toLocaleString('en-PH')}</time>
+                    </div>
+                    <p title={event.details} className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-600">{event.details}</p>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                      <p className="text-[0.62rem] font-medium text-slate-400">{event.source}{unread && <span className="ml-2 font-extrabold text-blue-700">New</span>}</p>
                       {(event.href || (unread && noticeId !== undefined)) && (
-                        <div className="mt-2 flex flex-wrap items-center gap-3">
+                        <div className="flex items-center gap-2">
                           {unread && noticeId !== undefined && (
-                            <button type="button" onClick={() => markRead(noticeId)} className="text-[0.65rem] font-extrabold text-slate-500 hover:text-slate-800">Mark as read</button>
+                            <button type="button" onClick={() => markRead(noticeId)} className="rounded-lg border-2 border-slate-300 bg-white px-3 py-1.5 text-[0.65rem] font-extrabold text-slate-700 hover:bg-slate-50">Mark as read</button>
                           )}
                           {event.href && (
-                            <a href={event.href} onClick={() => { if (unread && noticeId !== undefined) markRead(noticeId) }} className="text-[0.65rem] font-extrabold text-blue-700 hover:underline">Open →</a>
+                            <a href={event.href} onClick={() => { if (unread && noticeId !== undefined) markRead(noticeId) }} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700">Open <span aria-hidden="true">→</span></a>
                           )}
                         </div>
                       )}

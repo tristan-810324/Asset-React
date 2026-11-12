@@ -324,24 +324,41 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       );
       requisition = requisitionResult.rows[0];
       if (!requisition || requisition.request_type !== 'PURCHASE_REQUISITION') throw notFound('Hindi makita ang purchase requisition.');
-      if (requisition.status !== 'Approved') throw conflict('Only approved purchase requisitions can be issued through Main Issuance.');
+      const issuableRequisitionStatuses = new Set([
+        'Approved', 'Under Review', 'GSO Endorsed', 'Finance Handoff Pending',
+        'Finance Handoff Failed', 'Sent to Finance', 'Finance Response Recorded',
+      ]);
+      if (!issuableRequisitionStatuses.has(requisition.status)) {
+        throw conflict('Walang active purchase requisition stage na puwedeng i-issue sa Main Issuance.');
+      }
       if (String(requisition.form_data?.requesterEmployeeCode || '').trim().toLowerCase() !== employee.employee_code.trim().toLowerCase()) {
         throw conflict('Hindi tugma ang employee sa purchase requisition. Piliin ang tamang recipient.');
       }
       const lineIds = requestedItems.map((item) => item.purchaseRequisitionLineId);
       if (lineIds.some((lineId) => !lineId)) throw conflict('Pumili lamang ng item na nakalaan sa requisition na ito.');
-      const lineResult = await client.query(
-        `SELECT id, request_id, route_status, reserved_quantity, finance_quantity, issued_quantity
+      const requestLinesResult = await client.query(
+        `SELECT id, request_id, route_status, requested_quantity, reserved_quantity, finance_quantity, issued_quantity
            FROM purchase_requisition_lines
-          WHERE request_id = $1 AND id = ANY($2::BIGINT[])
-          ORDER BY id FOR UPDATE`,
-        [purchaseRequisitionId, lineIds],
+          WHERE request_id = $1
+          ORDER BY line_number FOR UPDATE`,
+        [purchaseRequisitionId],
       );
-      if (lineResult.rowCount !== new Set(lineIds.map(String)).size
-        || lineResult.rows.some((line) => !['READY_FOR_STAFF', 'PARTIAL_STOCK', 'PARTIALLY_ISSUED'].includes(line.route_status))) {
-        throw conflict('May item na hindi na ready para sa staff issuance. I-refresh ang queue.');
+      const availableForWholeRequest = new Set(['READY_FOR_STAFF', 'PARTIALLY_ISSUED', 'HANDOVER_PENDING', 'ISSUED']);
+      const allRequestLinesReady = requestLinesResult.rows.length > 0 && requestLinesResult.rows.every((line) => (
+        availableForWholeRequest.has(line.route_status)
+          && Number(line.finance_quantity) === 0
+          && Number(line.reserved_quantity) >= Number(line.requested_quantity)
+      ));
+      if (!allRequestLinesReady) {
+        throw conflict('Hindi pa kumpleto ang stock ng buong request. Walang item na puwedeng i-issue hanggang ready ang bawat requested item.');
       }
-      for (const line of lineResult.rows) requisitionLinesById.set(String(line.id), line);
+      const requestLinesById = new Map(requestLinesResult.rows.map((line) => [String(line.id), line]));
+      const selectedLines = lineIds.map((lineId) => requestLinesById.get(String(lineId)));
+      if (selectedLines.some((line) => !line)
+        || selectedLines.some((line) => !['READY_FOR_STAFF', 'PARTIALLY_ISSUED'].includes(line.route_status))) {
+        throw conflict('May napiling item na hindi na ready para sa staff issuance. I-refresh ang queue.');
+      }
+      for (const line of selectedLines) requisitionLinesById.set(String(line.id), line);
     } else if (requestedItems.some((item) => item.purchaseRequisitionLineId)) {
       throw conflict('May purchase requisition item reference na walang request context. I-refresh ang queue.');
     } else if (requestedItems.some((item) => item.recipientAllocations.length > 0)) {
@@ -625,6 +642,8 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         const finalRequestNote = isPerUnitPickup
           ? 'All approved requisition items are prepared for pickup by GSO; barcode labels are ready.'
           : 'All approved requisition items have been issued by GSO Staff.';
+        const deliveredTo = await requisitionDeliverySummary(client, purchaseRequisitionId);
+        const noteWithDelivery = deliveredTo ? `${finalRequestNote} Delivered to: ${deliveredTo}.` : finalRequestNote;
         const completed = await client.query(
           `UPDATE service_requests
               SET status = $2,
@@ -638,7 +657,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
           await client.query(
             `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
              VALUES ($1, $2, $3, $4, $5)`,
-            [purchaseRequisitionId, requisition.status, finalRequestStatus, finalRequestNote, requestedByUserId],
+            [purchaseRequisitionId, requisition.status, finalRequestStatus, noteWithDelivery, requestedByUserId],
           );
         }
       }
@@ -911,6 +930,20 @@ async function listMyIssuanceActivity(userId) {
                 'condition', issue.item_condition,
                 'quantity', issue.quantity,
                 'returnedQuantity', issue.returned_quantity,
+                'returnedAt', (
+                  SELECT MAX(COALESCE(ret.decided_at, ret.requested_at)) FROM employee_issuance_returns AS ret
+                   WHERE ret.issuance_id = issue.id AND ret.status NOT IN ('Voided', 'Lost')
+                ),
+                'returnedByName', (
+                  SELECT NULLIF(BTRIM(ret.returned_by_name), '') FROM employee_issuance_returns AS ret
+                   WHERE ret.issuance_id = issue.id AND ret.status NOT IN ('Voided', 'Lost')
+                   ORDER BY COALESCE(ret.decided_at, ret.requested_at) DESC, ret.id DESC LIMIT 1
+                ),
+                'returnCondition', (
+                  SELECT ret.return_condition FROM employee_issuance_returns AS ret
+                   WHERE ret.issuance_id = issue.id AND ret.status NOT IN ('Voided', 'Lost')
+                   ORDER BY COALESCE(ret.decided_at, ret.requested_at) DESC, ret.id DESC LIMIT 1
+                ),
                 'unitOfMeasure', issue.unit_of_measure,
                 'notes', issue.notes,
                 'tags', COALESCE((
@@ -959,6 +992,8 @@ async function listMyDepartmentReturnActivity(userId) {
             inventory.item_code AS "itemCode",
             COALESCE(NULLIF(inventory.item_name, ''), inventory.description) AS "itemName",
             COALESCE(return_record.tag_snapshot->>'tagCode', tag.tag_code) AS "tagCode",
+            issue.recipient_location AS "recipientLocation",
+            issue.recipient_purpose AS "recipientPurpose",
             staff.department
        FROM requester_identity_profiles AS profile
         JOIN employees AS head
@@ -972,7 +1007,6 @@ async function listMyDepartmentReturnActivity(userId) {
       WHERE profile.user_id = $1
         AND profile.verification_status = 'Verified'
         AND head.status = 'Active'
-        AND staff.id <> head.id
         AND return_record.status NOT IN ('Voided', 'Lost')
       ORDER BY COALESCE(return_record.decided_at, return_record.requested_at) DESC,
                return_record.id DESC
@@ -984,7 +1018,8 @@ async function listMyDepartmentReturnActivity(userId) {
 
 async function getMyDepartmentIssuanceSummary(userId) {
   const result = await pool.query(
-    `SELECT COALESCE(SUM(issue.quantity), 0)::INTEGER AS "totalIssuedUnits"
+    `SELECT COALESCE(SUM(issue.quantity), 0)::INTEGER AS "totalIssuedUnits",
+            COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)::INTEGER AS "remainingUnits"
        FROM requester_identity_profiles AS profile
        JOIN employees AS head
          ON lower(trim(head.employee_code)) = lower(trim(profile.employee_code))
@@ -1004,6 +1039,21 @@ async function getMyDepartmentIssuanceSummary(userId) {
 // A requisition is handed over to its requesting head first.  This workspace lets that
 // verified head record the final staff member who actually receives every tagged unit.
 
+
+// "Building C — Raise lab (9), Itss office (1)": where the requisition's units were handed over, for the requester's timeline.
+async function requisitionDeliverySummary(client, requestId) {
+  const result = await client.query(
+    `SELECT COALESCE(NULLIF(BTRIM(issue.recipient_location), ''), 'No location recorded') AS location,
+            SUM(issue.quantity)::INTEGER AS quantity
+       FROM employee_issuances AS issue
+       JOIN purchase_requisition_lines AS line ON line.id = issue.purchase_requisition_line_id
+      WHERE line.request_id = $1
+      GROUP BY 1
+      ORDER BY 1`,
+    [requestId],
+  );
+  return result.rows.map((row) => `${row.location} (${row.quantity})`).join(', ');
+}
 
 async function getIssuanceBatch(batchId) {
   const batchResult = await pool.query(
@@ -1503,7 +1553,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
           );
           await client.query(
             `UPDATE purchase_requisition_lines
-                SET route_status = CASE WHEN finance_quantity > 0 THEN 'PARTIAL_STOCK' ELSE 'READY_FOR_STAFF' END,
+                SET route_status = CASE WHEN finance_quantity > 0 THEN 'WAITING_FOR_PURCHASE' ELSE 'READY_FOR_STAFF' END,
                     updated_at = NOW()
               WHERE id = $1 AND route_status = 'HANDOVER_PENDING'`,
             [item.purchase_requisition_line_id],
@@ -1587,7 +1637,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
           );
           await client.query(
             `UPDATE purchase_requisition_lines
-                SET route_status = CASE WHEN finance_quantity > 0 THEN 'PARTIAL_STOCK' ELSE 'READY_FOR_STAFF' END,
+                SET route_status = CASE WHEN finance_quantity > 0 THEN 'WAITING_FOR_PURCHASE' ELSE 'READY_FOR_STAFF' END,
                     updated_at = NOW()
               WHERE id = $1 AND route_status = 'HANDOVER_PENDING'`,
             [item.purchase_requisition_line_id],
@@ -1692,6 +1742,8 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
           const finalRequestNote = autoPreparePickup
             ? 'All approved requisition items are prepared for pickup by GSO; barcode labels are ready.'
             : 'All approved requisition items have been issued by GSO Staff.';
+          const deliveredTo = await requisitionDeliverySummary(client, batch.purchase_requisition_id);
+          const noteWithDelivery = deliveredTo ? `${finalRequestNote} Delivered to: ${deliveredTo}.` : finalRequestNote;
           const updatedRequest = await client.query(
             `UPDATE service_requests
                 SET status = $2,
@@ -1705,7 +1757,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
             await client.query(
               `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
                VALUES ($1, $2, $3, $4, $5)`,
-              [batch.purchase_requisition_id, batch.purchase_requisition_status, finalRequestStatus, finalRequestNote, autoPreparePickup ? null : requesterUserId ?? gsoUserId ?? null],
+              [batch.purchase_requisition_id, batch.purchase_requisition_status, finalRequestStatus, noteWithDelivery, autoPreparePickup ? null : requesterUserId ?? gsoUserId ?? null],
             );
           }
         }

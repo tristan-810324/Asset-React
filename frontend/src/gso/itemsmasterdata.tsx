@@ -908,7 +908,8 @@ export default function ItemsMasterData() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [isSavingItem, setIsSavingItem] = useState(false)
   const [inventoryLoadError, setInventoryLoadError] = useState('')
-  // Right after stock is added, the purchase requests waiting for that item can be linked to it.
+  // Exact matches are reserved by the API after stock is saved. This prompt remains for similar names,
+  // or for any remaining quantity that staff must deliberately link.
   const [deliveryPrompt, setDeliveryPrompt] = useState<{
     itemIds: string[]
     lines: AwaitingDeliveryLine[]
@@ -920,15 +921,41 @@ export default function ItemsMasterData() {
     window.alert(`${title}\n\n${message}`)
   }
 
-  const notifyAction = (title: string, message: string) => {
+  const notifyAction = (title: string, message: string, action: { actionLabel?: string; href?: string } = {}) => {
     addGsoNotification({
       module: 'Inventory',
       title,
       message,
-      actionLabel: 'View inventory',
-      href: '/gso/items',
+      actionLabel: action.actionLabel || 'View inventory',
+      href: action.href || '/gso/items',
     })
     showActionAlert(message, title)
+  }
+
+  const announceReadyRequisitions = (record: InventoryItemRecord) => {
+    const ready = record.purchaseReconciliation?.readyRequests || []
+    if (ready.length === 0) return false
+    const references = ready.map((request) => request.referenceNo).join(', ')
+    const href = ready.length === 1
+      ? `/gso/main-issuance?purchaseRequisitionId=${encodeURIComponent(ready[0].id)}`
+      : '/gso/main-issuance'
+    notifyAction(
+      'Purchase requisition ready to issue',
+      `${references} now has every requested item reserved. Open Main Issuance to issue the complete request.`,
+      { actionLabel: 'Open Main Issuance', href },
+    )
+    return true
+  }
+
+  const refreshInventoryItems = async () => {
+    try {
+      const refreshed = (await listInventoryItems()).map(mapInventoryRecord)
+      setItems(refreshed)
+      setSelectedItem((current) => current?.id ? refreshed.find((item) => item.id === current.id) || current : current)
+      return refreshed
+    } catch {
+      return null
+    }
   }
 
   const offerDeliveryLink = async (itemIds: string[], restocked: { quantity: number; unit: string; name: string }, receiptReference: string) => {
@@ -1341,8 +1368,11 @@ export default function ItemsMasterData() {
       setItems((current) => current.map((item) => item.id === updatedItem.id ? updatedItem : item))
       setSelectedItem(updatedItem)
       setShowItemEditModal(false)
-      notifyAction('Inventory item updated', `"${updatedItem.name}" (${updatedItem.code}) was updated successfully.`)
+      if (!announceReadyRequisitions(savedRecord)) {
+        notifyAction('Inventory item updated', `"${updatedItem.name}" (${updatedItem.code}) was updated successfully.`)
+      }
       if (quantity > previousQuantity && updatedItem.id) {
+        await refreshInventoryItems()
         await offerDeliveryLink([updatedItem.id], { quantity: quantity - previousQuantity, unit: updatedItem.unit, name: updatedItem.name }, '')
       }
     } catch (error) {
@@ -1415,9 +1445,12 @@ export default function ItemsMasterData() {
         setItems(nextItems)
         setSelectedItem((current) => current?.id === updatedItem.id ? updatedItem : current)
         setInventoryLoadError('')
-        handleClearForm(nextItems, formData.category)
+        const refreshedItems = await refreshInventoryItems()
+        handleClearForm(refreshedItems || nextItems, formData.category)
         closeAddItemModal()
-        notifyAction('Quantity-tracked stock restocked', `${quantity} ${updatedItem.unit} were added to ${updatedItem.code}. The delivery was saved in receipt history.`)
+        if (!announceReadyRequisitions(updatedRecord)) {
+          notifyAction('Quantity-tracked stock restocked', `${quantity} ${updatedItem.unit} were added to ${updatedItem.code}. The delivery was saved in receipt history.`)
+        }
         await offerDeliveryLink(updatedItem.id ? [updatedItem.id] : [], { quantity, unit: updatedItem.unit, name: updatedItem.name }, formData.receiptReference.trim())
         return
       }
@@ -1458,16 +1491,19 @@ export default function ItemsMasterData() {
       const nextItems = [...newItems, ...items.filter((item) => !newItemCodes.has(item.code.toLowerCase()))]
       setItems(nextItems)
       setInventoryLoadError('')
-      handleClearForm(nextItems, formData.category)
+      const refreshedItems = await refreshInventoryItems()
+      handleClearForm(refreshedItems || nextItems, formData.category)
       closeAddItemModal()
-      notifyAction(
-        isIndividualTracking
-          ? (quantity === 1 ? 'Asset added' : 'Assets added')
-          : 'Quantity-tracked stock added',
-        isIndividualTracking
-          ? `${quantity} ${quantity === 1 ? 'individually tracked item was' : 'individually tracked items were'} added. Barcode labels are available after issuance approval.`
-          : `${quantity} ${formData.unitOfMeasure.trim() || 'piece'} of ${formData.itemName.trim()} were added as quantity-tracked stock (${bulkCodeRange?.display || itemCodes[0]}).`,
-      )
+      if (!announceReadyRequisitions(savedRecords[0])) {
+        notifyAction(
+          isIndividualTracking
+            ? (quantity === 1 ? 'Asset added' : 'Assets added')
+            : 'Quantity-tracked stock added',
+          isIndividualTracking
+            ? `${quantity} ${quantity === 1 ? 'individually tracked item was' : 'individually tracked items were'} added. Barcode labels are available after issuance approval.`
+            : `${quantity} ${formData.unitOfMeasure.trim() || 'piece'} of ${formData.itemName.trim()} were added as quantity-tracked stock (${bulkCodeRange?.display || itemCodes[0]}).`,
+        )
+      }
       await offerDeliveryLink(
         newItems.flatMap((item) => item.id ? [item.id] : []),
         { quantity, unit: formData.unitOfMeasure.trim() || 'piece', name: formData.itemName.trim() },
@@ -3059,7 +3095,7 @@ export default function ItemsMasterData() {
           onClose={() => setDeliveryPrompt(null)}
           onLinked={(message) => {
             setDeliveryPrompt(null)
-            listInventoryItems().then((records) => setItems(records.map(mapInventoryRecord))).catch(() => undefined)
+            void refreshInventoryItems()
             notifyAction('Deliveries linked', message)
           }}
         />

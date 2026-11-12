@@ -5,6 +5,7 @@ const nodemailer = require('nodemailer');
 const env = require('../../config/env');
 const authRepository = require('./auth.repository');
 const { normalizeEmail, validatePassword, validateChallengeId } = require('./auth.validation');
+const { otpEmailHtml } = require('./auth.email');
 
 const invalidLoginMessage = 'Email or password is incorrect.';
 const resetMessage = 'If an active account matches that email, a verification code has been sent.';
@@ -126,6 +127,7 @@ async function requestEmailVerificationOtp(user) {
       to: user.email,
       subject: 'A.SSET account verification code',
       text: `Your A.SSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not try to sign in, ignore this email.`,
+      html: otpEmailHtml({ heading: 'Verify your email', intro: 'Use this code to finish signing in to your A.SSET account.', otp, outro: 'If you did not try to sign in, you can safely ignore this email.' }),
     });
   } catch (error) {
     await authRepository.invalidateToken(challengeId);
@@ -177,6 +179,7 @@ async function resendEmailVerificationOtp({ challengeId, ipAddress }) {
       to: user.email,
       subject: 'A.SSET account verification code',
       text: `Your new A.SSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not request this, ignore this email.`,
+      html: otpEmailHtml({ heading: 'Your new verification code', intro: 'You asked for a new code to verify your A.SSET account. Your earlier code no longer works.', otp, outro: 'If you did not request this, you can safely ignore this email.' }),
     });
   } catch (error) {
     await authRepository.invalidateToken(nextChallengeId);
@@ -288,6 +291,7 @@ async function requestPasswordReset({ email, ipAddress }) {
       to: user.email,
       subject: 'A.SSET password reset code',
       text: `Your A.SSET password reset code is ${otp}. It expires in 5 minutes and can only be used once. If you did not request this, ignore this email.`,
+      html: otpEmailHtml({ heading: 'Reset your password', intro: 'Use this code to reset the password for your A.SSET account.', otp, outro: 'If you did not request a password reset, you can safely ignore this email. Your password will not change.' }),
     });
   } catch (error) {
     await authRepository.invalidateToken(challengeId);

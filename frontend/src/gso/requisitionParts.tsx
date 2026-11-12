@@ -60,9 +60,9 @@ export function TabBar<T extends string>({ tabs, active, onChange, label, accent
 }
 
 function Fact({ label, value, tone = 'text-slate-800' }: { label: string; value: ReactNode; tone?: string }) {
-  return <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2">
-    <dt className="text-[0.55rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt>
-    <dd className={`mt-0.5 truncate text-xs font-bold ${tone}`}>{value}</dd>
+  return <div className="min-w-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 shadow-sm shadow-slate-200/60">
+    <dt className="text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">{label}</dt>
+    <dd className={`mt-1 truncate text-sm font-black ${tone}`}>{value}</dd>
   </div>
 }
 
@@ -87,19 +87,26 @@ export function RequestSummary({ request, statusLabel, statusTone }: { request: 
       <Fact label="Items" value={`${linesOf(request).length} item${linesOf(request).length === 1 ? '' : 's'}`} />
     </dl>
     {urgent && <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[0.68rem] font-semibold text-rose-800"><span className="font-extrabold">Urgent:</span> {formText(form.urgentReason) || 'No reason given.'}</p>}
-    {(purpose || remarks) && <div className="mt-2 rounded-xl border border-slate-100 bg-white px-3 py-2.5">
+    {(purpose || remarks) && <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm shadow-slate-200/60">
       {purpose && <p className="text-[0.68rem] leading-relaxed text-slate-700"><span className="font-extrabold text-slate-500">Purpose: </span>{purpose}</p>}
       {remarks && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-600"><span className="font-extrabold text-slate-500">Remarks: </span>{remarks}</p>}
     </div>}
   </div>
 }
 
+function QuantityTile({ label, value, tone }: { label: string; value: number; tone: string }) {
+  return <div className={`rounded-xl border px-3 py-2 ${tone}`}>
+    <p className="text-[0.58rem] font-extrabold uppercase tracking-wide opacity-75">{label}</p>
+    <p className="mt-0.5 text-lg font-black leading-none">{value}</p>
+  </div>
+}
+
 export function QuantityChips({ line }: { line: PurchaseRequisitionLine }) {
-  return <div className="mt-2 flex flex-wrap gap-1.5 text-[0.6rem] font-bold">
-    <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">Requested {line.requestedQuantity}</span>
-    {line.reservedQuantity > 0 && <span className="rounded-md bg-emerald-50 px-2 py-1 text-emerald-800">Reserved {line.reservedQuantity}</span>}
-    {line.financeQuantity > 0 && <span className="rounded-md bg-indigo-50 px-2 py-1 text-indigo-800">To buy {line.financeQuantity}</span>}
-    {line.issuedQuantity > 0 && <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-800">Issued {line.issuedQuantity}</span>}
+  return <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <QuantityTile label="Requested" value={line.requestedQuantity} tone="border-slate-200 bg-slate-50 text-slate-800" />
+    {line.reservedQuantity > 0 && <QuantityTile label="Reserved" value={line.reservedQuantity} tone="border-emerald-100 bg-emerald-50 text-emerald-800" />}
+    {line.financeQuantity > 0 && <QuantityTile label="To buy" value={line.financeQuantity} tone="border-indigo-100 bg-indigo-50 text-indigo-800" />}
+    {line.issuedQuantity > 0 && <QuantityTile label="Issued" value={line.issuedQuantity} tone="border-blue-100 bg-blue-50 text-blue-800" />}
   </div>
 }
 

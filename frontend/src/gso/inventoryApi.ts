@@ -50,6 +50,18 @@ export type InventoryReceiptRecord = {
   createdAt: string
 }
 
+export type PurchaseStockReconciliation = {
+  deliveries: Array<{
+    lineId: string
+    itemId: string
+    quantity: number
+  }>
+  readyRequests: Array<{
+    id: string
+    referenceNo: string
+  }>
+}
+
 // Dates are Manila wall-clock text ("YYYY-MM-DDTHH:mm"), or a plain date on older and requester records.
 export type InventoryCurrentBorrower = {
   id: string
@@ -95,6 +107,7 @@ export type InventoryItemRecord = {
   createdBy: string | null
   changeHistory: InventoryChangeRecord[]
   currentBorrowers: InventoryCurrentBorrower[]
+  purchaseReconciliation?: PurchaseStockReconciliation
 }
 
 export type NewInventoryItem = {

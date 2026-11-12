@@ -9,10 +9,10 @@ import { listPurchaseRequisitions, reviewPurchaseRequisition, sendPurchaseRequis
 type Tab = 'approval' | 'finance' | 'staff' | 'closed'
 
 const TABS: Record<Tab, { label: string; hint: string; empty: string; needsAction: boolean }> = {
-  approval: { label: 'For your approval', hint: 'GSO Staff already checked stock. Decide each item they sent you.', empty: 'Nothing is waiting for your approval.', needsAction: true },
+  approval: { label: 'For your approval', hint: 'GSO Staff checked the request. Approve or decline the complete request as one package.', empty: 'Nothing is waiting for your approval.', needsAction: true },
   finance: { label: 'Send to Finance', hint: 'Purchases you approved. Email the requisition PDF to Finance; after that, GSO Staff buy the items.', empty: 'No approved purchases to send.', needsAction: true },
   staff: { label: 'With GSO Staff', hint: 'Stock checks, buying, deliveries, and issuance handled by GSO Staff. No action needed from you.', empty: 'Nothing is with GSO Staff.', needsAction: false },
-  closed: { label: 'Closed', hint: 'Completed, declined, or cancelled requisitions.', empty: 'No closed requisitions yet.', needsAction: false },
+  closed: { label: 'Closed', hint: 'Completed, declined, cancelled, or fully label-printed requisitions.', empty: 'No closed requisitions yet.', needsAction: false },
 }
 const TAB_ORDER = Object.keys(TABS) as Tab[]
 
@@ -20,12 +20,14 @@ function tabFor(request: ServiceRequest): Tab {
   if (request.status === 'Under Review' && countLines(request, ['WAITING_GSO_HEAD'])) return 'approval'
   if (['GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed'].includes(request.status)) return 'finance'
   if (['Completed', 'Rejected', 'Cancelled'].includes(request.status)) return 'closed'
+  // Once every unit label is printed, GSO Staff has handed the request over for pickup.
+  if (request.status === 'Ready for Pickup' && request.labelsAllPrinted) return 'closed'
   return 'staff'
 }
 
 function chipFor(request: ServiceRequest) {
   const tab = tabFor(request)
-  if (tab === 'approval') return { label: `${countLines(request, ['WAITING_GSO_HEAD'])} to decide`, tone: 'bg-amber-50 text-amber-800' }
+  if (tab === 'approval') return { label: `Whole request · ${linesOf(request).length} items`, tone: 'bg-amber-50 text-amber-800' }
   if (request.status === 'Finance Handoff Failed') return { label: 'Email failed', tone: 'bg-rose-50 text-rose-700' }
   if (request.status === 'Finance Handoff Pending') return { label: 'Sending…', tone: 'bg-blue-50 text-blue-700' }
   if (tab === 'finance') return { label: 'Ready to send', tone: 'bg-indigo-50 text-indigo-700' }
@@ -40,26 +42,18 @@ function chipFor(request: ServiceRequest) {
 function staffStageText(request: ServiceRequest) {
   if (request.status === 'Submitted') return 'GSO Staff is checking stock. Items that need you will appear in “For your approval”.'
   if (request.status === 'Needs Information') return 'Waiting for the requester to answer a question. Their reply goes back to GSO Staff for a fresh stock check.'
-  if (request.status === 'Approved') return 'Approved items are reserved. GSO Staff hands them over through Main Issuance.'
-  if (request.status === 'Sent to Finance') return 'You sent this to Finance. GSO Staff buy the items, add them in Item Master Data, and link each delivery. Delivered items show under each item below.'
-  if (request.status === 'Completed') return 'Every approved item was issued.'
-  if (request.status === 'Rejected') return 'Every item was declined.'
+  if (request.status === 'Approved') return 'The entire request is approved and fully reserved. GSO Staff can issue it through Main Issuance.'
+  if (request.status === 'Sent to Finance') return 'You sent the shortage lines to Finance. Stocked items stay reserved; GSO Staff can issue nothing until every requested item has arrived.'
+  if (request.status === 'Completed') return 'Every item in the approved request was issued.'
+  if (request.status === 'Rejected') return 'The entire request was declined.'
   if (request.status === 'Cancelled') return 'The requester cancelled this requisition.'
   return 'GSO Staff is handling this requisition.'
 }
 
-type Choice = { decision: 'APPROVE' | 'DECLINE' | ''; note: string }
-
-function approveMeans(line: PurchaseRequisitionLine) {
-  if (line.financeQuantity > 0 && line.reservedQuantity > 0) return `GSO Staff issues the ${line.reservedQuantity} in stock; ${line.financeQuantity} go to “Send to Finance”.`
-  if (line.financeQuantity > 0) return `All ${line.financeQuantity} go to “Send to Finance” for purchase.`
-  return `GSO Staff issues the ${line.reservedQuantity} reserved unit(s).`
-}
-
-function DecisionCard({ line, choice, onChange }: { line: PurchaseRequisitionLine; choice: Choice; onChange: (choice: Choice) => void }) {
+function DecisionCard({ line }: { line: PurchaseRequisitionLine }) {
   const approval = headApproval(line)
   const reserved = line.allocations.filter((allocation) => allocation.status === 'Reserved')
-  return <article className={`rounded-xl border-2 bg-white p-3.5 transition ${choice.decision === 'APPROVE' ? 'border-emerald-300' : choice.decision === 'DECLINE' ? 'border-rose-300' : 'border-slate-200'}`}>
+  return <article className="rounded-xl border border-slate-200 bg-white p-3.5">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="text-sm font-extrabold text-slate-900">{line.itemName} <span className="font-bold text-slate-500">× {line.requestedQuantity}</span></p>
@@ -71,53 +65,44 @@ function DecisionCard({ line, choice, onChange }: { line: PurchaseRequisitionLin
     <QuantityChips line={line} />
     {reserved.length > 0 && <p className="mt-1.5 text-[0.6rem] font-semibold text-slate-500">Held from {reserved.map((allocation) => `${allocation.itemCode} (${allocation.quantity} ${allocation.unitOfMeasure})`).join(', ')}</p>}
     {line.specifications && <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[0.65rem] leading-relaxed text-slate-600">{line.specifications}</p>}
-    <div className="mt-3 grid grid-cols-2 gap-2" role="radiogroup" aria-label={`Decision for ${line.itemName}`}>
-      <button type="button" role="radio" aria-checked={choice.decision === 'APPROVE'} onClick={() => onChange({ ...choice, decision: 'APPROVE' })} className={`rounded-xl border px-3 py-2 text-xs font-extrabold transition ${choice.decision === 'APPROVE' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-emerald-300 hover:text-emerald-700'}`}>✓ Approve</button>
-      <button type="button" role="radio" aria-checked={choice.decision === 'DECLINE'} onClick={() => onChange({ ...choice, decision: 'DECLINE' })} className={`rounded-xl border px-3 py-2 text-xs font-extrabold transition ${choice.decision === 'DECLINE' ? 'border-rose-600 bg-rose-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-rose-300 hover:text-rose-700'}`}>✕ Decline</button>
-    </div>
-    {choice.decision === 'APPROVE' && <p className="mt-2 text-[0.63rem] font-semibold text-emerald-800">{approveMeans(line)}</p>}
-    {choice.decision === 'DECLINE' && <label className="mt-2 block">
-      <span className="mb-1 block text-[0.6rem] font-extrabold uppercase tracking-wide text-rose-700">Reason · the requester sees this</span>
-      <input autoFocus value={choice.note} onChange={(event) => onChange({ ...choice, note: event.target.value })} maxLength={1000} className="h-10 w-full rounded-lg border border-rose-200 bg-white px-3 text-xs font-semibold outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100" placeholder="For example: the department already has enough units." />
-      <span className="mt-1 block text-[0.6rem] text-slate-500">Any reserved stock is released back to inventory.</span>
-    </label>}
+    {line.financeQuantity > 0
+      ? <p className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-2 text-[0.66rem] font-semibold leading-relaxed text-indigo-900">If the complete request is approved, buy {line.financeQuantity} unit(s). Any available units remain reserved, and this requisition cannot be issued until every requested item is available.</p>
+      : <p className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-2 text-[0.66rem] font-semibold leading-relaxed text-emerald-900">This item is held as part of the complete request. GSO Staff will not issue it separately while another item is still missing.</p>}
   </article>
 }
 
 function DecisionPanel({ request, onSaved }: { request: ServiceRequest; onSaved: (message: string) => void }) {
-  const pending = linesOf(request).filter((line) => line.routeStatus === 'WAITING_GSO_HEAD')
-  const handled = linesOf(request).filter((line) => line.routeStatus !== 'WAITING_GSO_HEAD')
-  const [choices, setChoices] = useState<Record<string, Choice>>({})
+  const items = linesOf(request)
+  const [decision, setDecision] = useState<'APPROVE' | 'DECLINE' | ''>('')
+  const [note, setNote] = useState('')
   const [mode, setMode] = useState<'decide' | 'ask'>('decide')
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const choiceOf = (line: PurchaseRequisitionLine): Choice => choices[line.id] || { decision: '', note: '' }
-  const decidedCount = pending.filter((line) => choiceOf(line).decision === 'APPROVE' || (choiceOf(line).decision === 'DECLINE' && choiceOf(line).note.trim())).length
-  const approved = pending.filter((line) => choiceOf(line).decision === 'APPROVE').length
-  const declined = pending.filter((line) => choiceOf(line).decision === 'DECLINE').length
-  const missingReasons = pending.filter((line) => choiceOf(line).decision === 'DECLINE' && !choiceOf(line).note.trim()).length
+  const shortageLines = items.filter((line) => line.financeQuantity > 0)
+  const heldUnits = items.reduce((sum, line) => sum + line.reservedQuantity, 0)
+  const shortageUnits = shortageLines.reduce((sum, line) => sum + line.financeQuantity, 0)
 
   async function submit(action: 'DECIDE' | 'NEEDS_INFORMATION') {
-    const approvedLines = pending.filter((line) => choiceOf(line).decision === 'APPROVE')
-    const purchases = approvedLines.filter((line) => line.financeQuantity > 0).length
-    const fromStock = approvedLines.filter((line) => line.reservedQuantity > 0).length
+    if (action === 'DECIDE' && !decision) return
+    if (action === 'DECIDE' && decision === 'DECLINE' && !note.trim()) return
     setBusy(true)
     setError('')
     try {
       const result = action === 'DECIDE'
         ? await reviewPurchaseRequisition(request.id, {
           action,
-          decisions: pending.map((line) => ({ lineId: line.id, decision: choiceOf(line).decision === 'DECLINE' ? 'DECLINE' : 'APPROVE', note: choiceOf(line).note.trim() })),
+          decision: decision as 'APPROVE' | 'DECLINE',
+          note: note.trim(),
         })
         : await reviewPurchaseRequisition(request.id, { action, note: question.trim() })
       const parts = action === 'NEEDS_INFORMATION'
         ? ['question sent to the requester']
-        : [
-          purchases && `${purchases} purchase(s) moved to “Send to Finance”`,
-          fromStock && `${fromStock} item(s) went to GSO Staff for issuance`,
-          declined && `${declined} declined`,
-        ].filter(Boolean)
+        : decision === 'DECLINE'
+          ? ['the entire request was declined']
+          : shortageUnits > 0
+            ? [`the entire request was approved; ${shortageUnits} shortage unit(s) go to Finance`, `${heldUnits} in-stock unit(s) stay reserved`, 'nothing can be issued until every requested item is available']
+            : ['the entire request was approved', 'all requested stock is reserved and ready for GSO Staff issuance']
       onSaved(`${result.request.referenceNo}: ${parts.join('; ')}.${result.requesterNotified ? ' The requester was emailed.' : ''}`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to save your decisions.')
@@ -132,7 +117,7 @@ function DecisionPanel({ request, onSaved }: { request: ServiceRequest; onSaved:
         <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-amber-900">Question for the requester</span>
         <textarea autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') setMode('decide') }} maxLength={2000} className="min-h-20 w-full resize-y rounded-xl border border-amber-200 bg-white p-3 text-xs font-medium outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100" placeholder="What do you need to know before deciding?" />
       </label>
-      <p className="mt-1.5 text-[0.62rem] leading-relaxed text-amber-900/80">The {pending.length} waiting item(s) go back to the requester, and their reserved stock is released. After they reply, GSO Staff checks stock again.</p>
+      <p className="mt-1.5 text-[0.62rem] leading-relaxed text-amber-900/80">The complete request goes back to the requester, and every reserved item is released. After they reply, GSO Staff checks the whole request again.</p>
       {error && <div className="mt-3"><Banner tone="error">{error}</Banner></div>}
       <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <button type="button" disabled={busy} onClick={() => { setMode('decide'); setError('') }} className="rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Back</button>
@@ -143,27 +128,33 @@ function DecisionPanel({ request, onSaved }: { request: ServiceRequest; onSaved:
 
   return <section className="mt-4" aria-label="Your decisions">
     <div className="flex flex-wrap items-end justify-between gap-2">
-      <div><h4 className="text-xs font-extrabold text-slate-800">Needs your decision · {pending.length} item(s)</h4><p className="mt-0.5 text-[0.62rem] text-slate-500">Approve or decline each item. Declines need a reason.</p></div>
-      <button type="button" onClick={() => setChoices(Object.fromEntries(pending.map((line) => [line.id, { decision: 'APPROVE', note: '' }])))} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-emerald-800 hover:bg-emerald-100">Approve all</button>
+      <div><h4 className="text-xs font-extrabold text-slate-800">One decision for the entire request · {items.length} item(s)</h4><p className="mt-0.5 text-[0.62rem] text-slate-500">Approving or declining applies to every item below.</p></div>
     </div>
     <div className="mt-2 space-y-2">
-      {pending.map((line) => <DecisionCard key={line.id} line={line} choice={choiceOf(line)} onChange={(choice) => setChoices((current) => ({ ...current, [line.id]: choice }))} />)}
+      {items.map((line) => <DecisionCard key={line.id} line={line} />)}
     </div>
-
-    {handled.length > 0 && <div className="mt-4">
-      <h4 className="text-xs font-extrabold text-slate-800">Already handled by GSO Staff</h4>
-      <div className="mt-2 divide-y divide-slate-100 rounded-xl border border-slate-200 bg-slate-50/50">
-        {handled.map((line) => <div key={line.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"><span className="text-xs font-bold text-slate-700">{line.itemName} <span className="font-semibold text-slate-500">× {line.requestedQuantity}</span></span><LineStatusBadge status={line.routeStatus} /></div>)}
-      </div>
-    </div>}
 
     <div className="sticky bottom-0 mt-4 rounded-2xl border-2 border-slate-300/80 bg-white/95 p-3.5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 backdrop-blur">
       {error && <div className="mb-3"><Banner tone="error">{error}</Banner></div>}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-[0.68rem] font-semibold text-slate-600"><span className="font-extrabold text-slate-900">{decidedCount} of {pending.length}</span> decided{approved ? ` · ${approved} approve` : ''}{declined ? ` · ${declined} decline` : ''}{missingReasons > 0 && <span className="text-rose-700"> · {missingReasons} decline{missingReasons === 1 ? ' needs a reason' : 's need reasons'}</span>}</p>
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold leading-relaxed text-amber-950">
+        {shortageUnits > 0
+          ? `${shortageUnits} unit(s) across ${shortageLines.length} item line(s) need to be purchased. ${heldUnits} available unit(s) remain reserved. Even after approval, no part of this request can be issued until every line is complete.`
+          : 'All items are in stock. The GSO Head decision still applies to the complete request.'}
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Decision for the complete purchase requisition">
+        <button type="button" role="radio" aria-checked={decision === 'APPROVE'} disabled={busy} onClick={() => setDecision('APPROVE')} className={`rounded-xl border px-3 py-2.5 text-xs font-extrabold transition ${decision === 'APPROVE' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-emerald-300 hover:text-emerald-700'}`}>Approve entire request</button>
+        <button type="button" role="radio" aria-checked={decision === 'DECLINE'} disabled={busy} onClick={() => setDecision('DECLINE')} className={`rounded-xl border px-3 py-2.5 text-xs font-extrabold transition ${decision === 'DECLINE' ? 'border-rose-600 bg-rose-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-rose-300 hover:text-rose-700'}`}>Decline entire request</button>
+      </div>
+      {decision === 'DECLINE' && <label className="mt-3 block">
+        <span className="mb-1 block text-[0.6rem] font-extrabold uppercase tracking-wide text-rose-700">Reason · the requester sees this</span>
+        <textarea autoFocus value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} className="min-h-20 w-full resize-y rounded-xl border border-rose-200 bg-white p-3 text-xs font-semibold outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100" placeholder="Explain why the complete request is declined." />
+        <span className="mt-1 block text-[0.6rem] text-slate-500">Any reserved stock for the request will be released.</span>
+      </label>}
+      <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[0.68rem] font-semibold text-slate-600">Your decision will apply to all {items.length} requested item(s).</p>
         <div className="flex flex-col-reverse gap-2 sm:flex-row">
           <button type="button" disabled={busy} onClick={() => { setMode('ask'); setError('') }} className="rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-700 transition hover:border-amber-300 hover:text-amber-800 disabled:opacity-50">Ask requester first</button>
-          <button type="button" disabled={busy || decidedCount !== pending.length} onClick={() => void submit('DECIDE')} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : 'Submit decisions'}</button>
+          <button type="button" disabled={busy || !decision || (decision === 'DECLINE' && !note.trim())} onClick={() => void submit('DECIDE')} className={`rounded-xl px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${decision === 'DECLINE' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>{busy ? 'Saving…' : decision === 'DECLINE' ? 'Decline entire request' : 'Approve entire request'}</button>
         </div>
       </div>
     </div>
@@ -220,7 +211,7 @@ function SendToFinancePanel({ request, onSaved }: { request: ServiceRequest; onS
 
   return <section className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4" aria-label="Send to Finance">
     <p className="text-sm font-black text-indigo-950">Send the purchase request to Finance</p>
-    <p className="mt-1 text-[0.68rem] leading-relaxed text-indigo-900/80">Finance receives a PDF with only the items to buy; items already in stock stay with GSO Staff. Finance releases the funds outside A.S.SET, so you do not record a reply here. Once you send it, GSO Staff can buy the items.</p>
+    <p className="mt-1 text-[0.68rem] leading-relaxed text-indigo-900/80">Finance receives a PDF with only the shortage quantities to buy. Any items already in stock remain reserved for this request, and nothing can be issued until every requested item is fully available. Finance releases the funds outside A.S.SET, so you do not record a reply here. Once you send it, GSO Staff can buy the shortage items.</p>
     <ul className="mt-3 divide-y divide-indigo-100 rounded-xl border border-indigo-100 bg-white">
       {toBuy.map((line) => <li key={line.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2"><span className="text-xs font-bold text-slate-800">{line.itemName}</span><span className="text-[0.65rem] font-extrabold text-indigo-800">Buy {line.financeQuantity}{line.reservedQuantity > 0 ? ` · ${line.reservedQuantity} from stock` : ''}</span></li>)}
     </ul>

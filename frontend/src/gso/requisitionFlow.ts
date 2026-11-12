@@ -32,10 +32,10 @@ export const LINE_STATUS: Record<string, { label: string; tone: string }> = {
   WAITING_STAFF_REVIEW: { label: 'Stock check', tone: 'bg-blue-50 text-blue-700' },
   WAITING_GSO_HEAD: { label: 'Waiting for GSO Head', tone: 'bg-amber-50 text-amber-800' },
   NEEDS_INFORMATION: { label: 'Waiting for requester', tone: 'bg-amber-50 text-amber-800' },
-  READY_FOR_STAFF: { label: 'Ready to issue', tone: 'bg-emerald-50 text-emerald-700' },
-  PARTIAL_STOCK: { label: 'Stock ready · rest to buy', tone: 'bg-emerald-50 text-emerald-700' },
+  READY_FOR_STAFF: { label: 'Reserved for request', tone: 'bg-emerald-50 text-emerald-700' },
+  PARTIAL_STOCK: { label: 'Partial delivery · waiting for rest', tone: 'bg-amber-50 text-amber-800' },
   WAITING_FINANCE: { label: 'Approved for purchase', tone: 'bg-indigo-50 text-indigo-700' },
-  WAITING_FOR_PURCHASE: { label: 'Waiting for purchase', tone: 'bg-indigo-50 text-indigo-700' },
+  WAITING_FOR_PURCHASE: { label: 'Waiting for full quantity', tone: 'bg-indigo-50 text-indigo-700' },
   HANDOVER_PENDING: { label: 'Handover pending', tone: 'bg-sky-50 text-sky-700' },
   PARTIALLY_ISSUED: { label: 'Partly issued', tone: 'bg-emerald-50 text-emerald-700' },
   ISSUED: { label: 'Issued', tone: 'bg-slate-100 text-slate-700' },
@@ -43,12 +43,31 @@ export const LINE_STATUS: Record<string, { label: string; tone: string }> = {
   CANCELLED: { label: 'Cancelled', tone: 'bg-slate-100 text-slate-500' },
 }
 
-// Items with reserved stock that GSO Staff can hand over now.
-export const ISSUABLE_STATUSES = ['READY_FOR_STAFF', 'PARTIAL_STOCK', 'PARTIALLY_ISSUED', 'HANDOVER_PENDING']
+// A purchase line is not issuable until its complete requested quantity is in stock.
+export function purchaseLineReadyForIssuance(line: PurchaseRequisitionLine) {
+  return ['READY_FOR_STAFF', 'PARTIALLY_ISSUED'].includes(line.routeStatus)
+    && Number(line.financeQuantity || 0) === 0
+    && Number(line.reservedQuantity || 0) >= Number(line.requestedQuantity || 0)
+}
+
+// A request enters Main Issuance only when every requested line is fully reserved.
+export function purchaseRequisitionReadyForIssuance(request: ServiceRequest) {
+  const lines = linesOf(request)
+  const complete = lines.length > 0 && lines.every((line) => (
+    ['READY_FOR_STAFF', 'PARTIALLY_ISSUED', 'HANDOVER_PENDING', 'ISSUED'].includes(line.routeStatus)
+      && Number(line.financeQuantity || 0) === 0
+      && Number(line.reservedQuantity || 0) >= Number(line.requestedQuantity || 0)
+  ))
+  return complete && lines.some(purchaseLineReadyForIssuance)
+}
+
 export const FINANCE_STATUSES = ['GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed', 'Sent to Finance']
 
 export const linesOf = (request: ServiceRequest) => request.purchaseLines || []
 export const countLines = (request: ServiceRequest, statuses: string[]) => linesOf(request).filter((line) => statuses.includes(line.routeStatus)).length
+export const countIssuableLines = (request: ServiceRequest) => purchaseRequisitionReadyForIssuance(request)
+  ? linesOf(request).filter(purchaseLineReadyForIssuance).length
+  : 0
 
 // What a waiting item asks the GSO Head to approve, and why it could not go straight to GSO Staff.
 export function headApproval(line: PurchaseRequisitionLine): { route: StaffRoute; reason: string } {
@@ -56,11 +75,17 @@ export function headApproval(line: PurchaseRequisitionLine): { route: StaffRoute
     return {
       route: 'PURCHASE',
       reason: line.reservedQuantity > 0
-        ? `Only ${line.reservedQuantity} in stock. ${line.reservedQuantity} reserved now; ${line.financeQuantity} to buy.`
+        ? `Only ${line.reservedQuantity} in stock. ${line.reservedQuantity} held for this request; ${line.financeQuantity} to buy.`
         : `No usable stock. All ${line.financeQuantity} must be bought.`,
     }
   }
-  return { route: 'HEAD_ISSUE', reason: 'In stock. GSO Staff asked you to check it before they issue it.' }
+  if (line.approvalPolicy === 'GSO_HEAD') {
+    return { route: 'HEAD_ISSUE', reason: 'This item requires GSO Head approval; the decision covers the complete request.' }
+  }
+  if (line.staffIssueMaxQuantity !== null && line.requestedQuantity > line.staffIssueMaxQuantity) {
+    return { route: 'HEAD_ISSUE', reason: `This request exceeds the ${line.staffIssueMaxQuantity}-unit GSO Staff limit; the decision covers the complete request.` }
+  }
+  return { route: 'HEAD_ISSUE', reason: 'GSO Staff asked for approval; the decision covers the complete request.' }
 }
 
 // Whether GSO Staff may still choose between issuing an item now and asking the GSO Head.

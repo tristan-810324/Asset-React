@@ -147,7 +147,7 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Overview', icon: 'grid', href: '/gso' },
   { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
-  { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/main-issuance', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
+  { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/purchase-requisitions', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
   { kind: 'link', name: 'Borrowing Requests', icon: 'clipboard-plus', href: '/gso/borrowing-requests' },
   {
     kind: 'group',
@@ -278,6 +278,7 @@ export function GsoPageHeader({
   onAction: (label: string) => void
 }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const accountMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -358,26 +359,37 @@ export function GsoPageHeader({
                   </div>
                 </div>
                 <div className="px-1 py-2">
-                  <p className="px-2.5 pb-1.5 pt-1 text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Settings</p>
-                  <a
-                    href="/gso/profile"
-                    role="menuitem"
-                    aria-current={onProfilePage ? 'page' : undefined}
-                    onClick={() => setAccountMenuOpen(false)}
-                    className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-700'}`}
-                  >
-                    <NavigationIcon name="user" className={`h-4 w-4 ${onProfilePage ? 'text-blue-600' : 'text-slate-400'}`} />
-                    Profile
-                  </a>
-                  <a
-                    href="/gso/audit-logs"
-                    role="menuitem"
-                    onClick={() => setAccountMenuOpen(false)}
+                  <button
+                    type="button"
+                    aria-expanded={settingsOpen}
+                    onClick={() => setSettingsOpen((open) => !open)}
                     className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
                   >
-                    <NavigationIcon name="history" className="h-4 w-4 text-slate-400" />
-                    Audit Trail
-                  </a>
+                    <NavigationIcon name="user" className="h-4 w-4 text-slate-400" />
+                    Settings
+                    <NavigationIcon name="chevron-down" className={`ml-auto h-3.5 w-3.5 text-slate-400 transition ${settingsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {settingsOpen && (
+                    <div className="ml-4 mt-1 space-y-0.5 border-l-2 border-blue-100 pl-2">
+                      <a
+                        href="/gso/profile"
+                        role="menuitem"
+                        aria-current={onProfilePage ? 'page' : undefined}
+                        onClick={() => setAccountMenuOpen(false)}
+                        className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'}`}
+                      >
+                        Profile
+                      </a>
+                      <a
+                        href="/gso/audit-logs"
+                        role="menuitem"
+                        onClick={() => setAccountMenuOpen(false)}
+                        className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-blue-50 hover:text-blue-700"
+                      >
+                        Recent activity
+                      </a>
+                    </div>
+                  )}
                 </div>
                 <div className="border-t border-slate-100 px-1 pb-1 pt-1">
                   <button

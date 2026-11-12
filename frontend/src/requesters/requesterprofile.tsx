@@ -24,7 +24,7 @@ function RequesterProfileContent() {
       <div className="relative"><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">Staff identity</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Your requester profile</h1><p className="mt-2 text-sm font-medium leading-relaxed text-blue-100">I-verify ang staff details mo sa GSO para makapagpadala ng service request.</p></div>
     </section>
 
-    <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
       <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 p-5 sm:p-6">
         <div className="flex items-center gap-4">{identity?.pictureData ? <img src={identity.pictureData} alt="Requester profile" className="h-14 w-14 rounded-2xl object-cover" /> : <span className="grid h-14 w-14 place-items-center rounded-2xl bg-blue-100 text-lg font-black text-blue-700">{user?.name?.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase() || 'RQ'}</span>}<div><h2 className="text-base font-black text-slate-900">{user?.name || 'Requester'}</h2><p className="mt-1 text-xs font-semibold text-slate-500">{user?.email || 'Signed-in requester account'}</p></div></div>
         {identity && <span className={`rounded-full border px-3 py-1.5 text-xs font-extrabold ${statusStyles[identity.status]}`}>{identity.status === 'Incomplete' ? 'Details needed' : identity.status}</span>}
@@ -45,14 +45,14 @@ function RequesterProfileContent() {
             ['Department / office', identity.department],
             ['Position', identity.position],
             ['Contact number', identity.contactNumber],
-          ].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 p-4"><dt className="text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-2 text-sm font-bold text-slate-800">{value}</dd></div>)}
+          ].map(([label, value]) => <div key={label} className="rounded-xl border-2 border-slate-300/80 bg-white p-4 shadow-sm"><dt className="text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-2 text-sm font-bold text-slate-800">{value}</dd></div>)}
         </dl>}
-        {identity.status === 'Verified' && !showForm && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4 sm:px-6"><button type="button" onClick={() => setEditing(true)} className="rounded-xl border border-blue-200 px-4 py-2.5 text-sm font-extrabold text-blue-700 transition hover:bg-blue-50">Update identity details</button><button type="button" onClick={openIdentityPrompt} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-extrabold text-slate-700 transition hover:bg-slate-200">Verification status</button></div>}
+        {identity.status === 'Verified' && !showForm && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-5 py-4 sm:px-6"><button type="button" onClick={() => setEditing(true)} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700">Update identity details</button><button type="button" onClick={openIdentityPrompt} className="rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-extrabold text-slate-700 shadow-sm transition hover:bg-slate-50">Verification status</button></div>}
       </>}
     </section>
 
-    {!identityLoading && showForm && <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-      <div className="mb-5"><h2 className="text-lg font-black text-slate-900">{identity?.status === 'Needs Correction' ? 'Update staff details' : 'Complete staff details'}</h2><p className="mt-1 text-sm leading-relaxed text-slate-500">GSO will review your full name, employee code, department, position, contact number, and account email before verification.</p></div>
+    {!identityLoading && showForm && <section className="mt-4 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+      <div className="mb-5"><h2 className="text-lg font-black text-slate-900">{identity?.status === 'Needs Correction' ? 'Update staff details' : 'Complete staff details'}</h2><p className="mt-1 text-xs text-slate-500">GSO will verify these details.</p></div>
       <RequesterIdentityForm profile={identity} accountEmail={user?.email || ''} onSaved={async () => { await refreshIdentity(); setEditing(false) }} onCancel={identity?.status === 'Verified' ? () => setEditing(false) : undefined} />
     </section>}
   </div>

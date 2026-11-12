@@ -103,9 +103,19 @@ function validateCreateIssuanceBatch(input) {
       };
     });
     if (recipientAllocations.length > 0) {
-      const recipientCodes = recipientAllocations.map((allocation) => allocation.employeeCode.toLowerCase());
-      if (new Set(recipientCodes).size !== recipientCodes.length) {
-        throw httpError(400, 'Pagsamahin sa iisang allocation row ang quantity para sa parehong employee.');
+      const headCode = employeeCode.toLowerCase();
+      const recipientKeys = recipientAllocations.map((allocation) => {
+        const recipientCode = allocation.employeeCode.toLowerCase();
+        // Department room and stock allocations are intentionally held by the
+        // requisition head. Allow more than one head allocation when each one
+        // identifies a different actual location or purpose.
+        if (recipientCode === headCode) {
+          return `${recipientCode}|${allocation.location.toLowerCase()}|${allocation.purpose.toLowerCase()}`;
+        }
+        return recipientCode;
+      });
+      if (new Set(recipientKeys).size !== recipientKeys.length) {
+        throw httpError(400, 'Pagsamahin sa iisang allocation row ang parehong recipient at destination.');
       }
       if (recipientAllocations.reduce((sum, allocation) => sum + allocation.quantity, 0) !== quantity) {
         throw httpError(400, 'Dapat eksaktong tumugma ang kabuuang recipient allocation sa issuance quantity.');

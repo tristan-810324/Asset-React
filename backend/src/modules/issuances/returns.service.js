@@ -6,13 +6,21 @@ const returnsRepository = require('./returns.repository');
 const notificationsRepository = require('../notifications/notifications.repository');
 
 // In-app notices for a return. They never block the return itself, so a failure is only logged.
-async function notifyReturnRecorded({ employeeCode, requesterTitle, requesterMessage, requesterKey, headMessage, headKey }) {
+async function notifyReturnRecorded({ employeeCode, requesterTitle, requesterMessage, requesterKey, departmentHeadMessage, headMessage, headKey }) {
   try {
     const requesterUserId = await notificationsRepository.userIdForEmployeeCode(employeeCode);
     if (requesterUserId) {
       await notificationsRepository.createUserNotification({
         userId: requesterUserId, type: 'RETURN', title: requesterTitle, message: requesterMessage,
         href: '/requester/issued-items', dedupeKey: requesterKey,
+      });
+    }
+    // The department head who handed the item out is told about every return, not only lost or typed ones.
+    const departmentHeadUserId = await notificationsRepository.headUserIdForEmployeeCode(employeeCode);
+    if (departmentHeadUserId && departmentHeadUserId !== requesterUserId) {
+      await notificationsRepository.createUserNotification({
+        userId: departmentHeadUserId, type: 'RETURN', title: 'Item returned to GSO', message: departmentHeadMessage,
+        href: '/requester/my-requests', dedupeKey: `${requesterKey}:department-head`,
       });
     }
     if (headMessage) {
@@ -239,6 +247,7 @@ async function createEmployeeReturn(input, user) {
     requesterTitle: 'Return recorded',
     requesterMessage: `GSO recorded ${returnedQuantity} ${unit} of ${returned.description} returned by you.${lostQuantity ? ` ${lostQuantity} reported lost and still your responsibility until settled.` : ''}`,
     requesterKey: `requester-return:bulk:${returned.id}`,
+    departmentHeadMessage: `${returnedQuantity} ${unit} of ${returned.description} (${returned.item_code}) was returned to GSO from staff ${returned.employee_code}.`,
     headMessage: lostQuantity ? {
       title: 'Item reported lost',
       message: `${lostQuantity} ${unit} of ${returned.description} (${returned.item_code}) was reported lost. Review the audit entry.`,
@@ -335,6 +344,7 @@ async function confirmScannedTagReturn(tagCodeValue, input, user) {
       ? `${result.itemName} (${result.tagCode}) was recorded as lost while assigned to you. It stays your responsibility until GSO records a settlement.`
       : `GSO received ${result.itemName} (${result.tagCode}) from you. Your return is complete.`,
     requesterKey: `requester-return:${result.id}`,
+    departmentHeadMessage: `${result.itemName} (${result.tagCode}) was ${isLost ? 'reported lost' : 'returned to GSO'} from staff ${result.employeeCode}.`,
     headMessage: flagged ? {
       title: isLost ? 'Item reported lost' : 'Return entered by typing the code',
       message: isLost

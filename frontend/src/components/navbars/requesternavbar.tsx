@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AuthUser } from '../../auth/authApi'
 import { listServerNotifications, onNotificationsChanged } from '../../auth/notificationsApi'
 
-export type RequesterPage = 'Home' | 'Request Center' | 'My Requests' | 'My Issued Items' | 'Notifications' | 'Return Items' | 'Profile'
+export type RequesterPage = 'Home' | 'Request Center' | 'My Requests' | 'My Issued Items' | 'Notifications' | 'Return Items' | 'Profile' | 'My Activities'
 
-type IconName = 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'file' | 'grid' | 'menu' | 'package' | 'return' | 'user' | 'users'
+type IconName = 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'file' | 'grid' | 'logout' | 'menu' | 'package' | 'return' | 'user' | 'users'
 
 const iconPaths: Record<IconName, ReactNode> = {
   bell: <><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></>,
@@ -14,6 +14,7 @@ const iconPaths: Record<IconName, ReactNode> = {
   file: <><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z" /><path d="M13 3v7h7M8 14h8M8 17h8" /></>,
   grid: <><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1" /><rect x="14" y="3.5" width="6.5" height="6.5" rx="1" /><rect x="3.5" y="14" width="6.5" height="6.5" rx="1" /><rect x="14" y="14" width="6.5" height="6.5" rx="1" /></>,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  logout: <><path d="M10 17l5-5-5-5m5 5H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>,
   package: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 8 9 5 9-5M3 8v9l9 5 9-5V8M12 13v9" /></>,
   return: <><path d="M9 14 4 9l5-5" /><path d="M4 9h9a7 7 0 0 1 0 14h-2" /></>,
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
@@ -35,7 +36,6 @@ const navigation: Array<{ name: RequesterPage; label: string; icon: IconName; hr
 
 export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { currentPage: RequesterPage; mobileMenuOpen: boolean; onClose: () => void }) {
   const currentPath = window.location.pathname.replace(/^\/borrower(?=\/|$)/, '/requester')
-
   return <>
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-y-auto bg-[#071b35] px-5 py-6 text-slate-300 shadow-2xl shadow-slate-900/20 transition-transform duration-300 lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`} aria-label="Requester navigation">
       <div className="flex items-center justify-between px-2">
@@ -56,10 +56,9 @@ export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { cur
         })}
       </nav>
 
-      <div className="mt-auto rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/80 to-slate-900/70 p-4">
-        <div className="flex items-center gap-2 text-blue-200"><span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">Requester workspace</span></div>
-        <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">Submit school service requests, track GSO decisions, and manage your active borrowings.</p>
-        <a href="/requester/request-center" onClick={onClose} className="mt-3 inline-block text-xs font-extrabold text-white transition hover:text-blue-200">Start a request <span aria-hidden="true">→</span></a>
+      <div className="mt-auto mb-2 overflow-hidden rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/50 via-slate-900/40 to-slate-950/60 px-4 py-4 text-center shadow-lg shadow-slate-950/40 sm:p-5">
+        <img src="/dyci_img/dyci_logo.jpg" alt="Dr. Yanga's Colleges logo" className="mx-auto h-auto w-full max-w-[8.5rem] object-contain sm:max-w-[9.5rem]" />
+        <p className="mt-1 text-[0.6rem] font-semibold leading-relaxed text-blue-200/75">Asset management system for Dr. Yanga's Colleges</p>
       </div>
     </aside>
     {mobileMenuOpen && <button type="button" className="fixed inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] lg:hidden" aria-label="Close navigation menu" onClick={onClose} />}
@@ -71,6 +70,7 @@ export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignO
   const accountMenuRef = useRef<HTMLDivElement>(null)
   const [unreadCount, setUnreadCount] = useState(0)
   const initials = user?.name?.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase() || 'BR'
+  const onProfilePage = /\/profile$/.test(window.location.pathname)
 
   useEffect(() => {
     let active = true
@@ -108,8 +108,8 @@ export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignO
           </button>
           {accountMenuOpen && <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/20">
             <div className="flex items-center gap-3 border-b border-slate-100 px-3 py-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span><div className="min-w-0"><p className="truncate text-xs font-extrabold text-slate-800">{user?.name || 'Requester'}</p><p className="mt-1 truncate text-[0.65rem] font-semibold text-slate-500">{user?.email || 'School account'}</p></div></div>
-            <div className="border-b border-slate-100 px-1 py-2"><p className="px-2.5 pb-1.5 pt-1 text-[0.58rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Account</p><a href="/requester/profile" role="menuitem" onClick={() => setAccountMenuOpen(false)} className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"><Icon name="user" className="h-4 w-4 text-slate-400" /> My profile</a><a href="/requester/my-requests" role="menuitem" onClick={() => setAccountMenuOpen(false)} className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"><Icon name="clipboard" className="h-4 w-4 text-slate-400" /> My requests</a></div>
-            <button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onSignOut() }} className="mt-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"><Icon name="close" className="h-4 w-4" /> Sign out</button>
+            <div className="px-1 py-2"><p className="px-2.5 pb-1.5 pt-1 text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Settings</p><a href="/requester/profile" role="menuitem" aria-current={onProfilePage ? 'page' : undefined} onClick={() => setAccountMenuOpen(false)} className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-700'}`}><Icon name="user" className={`h-4 w-4 ${onProfilePage ? 'text-blue-600' : 'text-slate-400'}`} />Edit profile</a><a href="/requester/my-activities" role="menuitem" aria-current={pageName === 'My Activities' ? 'page' : undefined} onClick={() => setAccountMenuOpen(false)} className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold transition ${pageName === 'My Activities' ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-700'}`}><Icon name="bell" className={`h-4 w-4 ${pageName === 'My Activities' ? 'text-blue-600' : 'text-slate-400'}`} />My activities</a></div>
+            <div className="border-t border-slate-100 px-1 pb-1 pt-1"><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onSignOut() }} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"><Icon name="logout" className="h-4 w-4" />Logout</button></div>
           </div>}
         </div>
       </div>

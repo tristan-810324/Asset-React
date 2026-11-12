@@ -1,4 +1,5 @@
 const inventoryRepository = require('./inventory.repository');
+const requestsService = require('../requests/requests.service');
 const {
   validateCreateInventoryItem,
   validateCreateInventoryItems,
@@ -27,12 +28,35 @@ async function listItems() {
   return inventoryRepository.listItems();
 }
 
+// Stock is already committed before this runs. A reconciliation failure must never make a saved
+// inventory receipt look unsuccessful; unmatched or similar names stay available for manual linking.
+async function reconcileReceivedPurchaseStock(items, receiptReference, user) {
+  try {
+    return await requestsService.autoReserveReceivedPurchaseStock({ items, receiptReference, user });
+  } catch (error) {
+    console.error('New inventory stock could not be automatically linked to a purchase requisition.', {
+      code: error.code,
+      message: error.message,
+    });
+    return { deliveries: [], readyRequests: [] };
+  }
+}
+
+function withPurchaseReconciliation(item, reconciliation) {
+  return { ...item, purchaseReconciliation: reconciliation };
+}
+
 async function createItem(input, user) {
   const item = validateCreateInventoryItem(input);
 
   try {
     const createdItem = await inventoryRepository.createItem({ ...item, createdByUserId: user.id });
-    return { ...createdItem, createdBy: user.name };
+    const purchaseReconciliation = await reconcileReceivedPurchaseStock(
+      [{ itemId: createdItem.id, quantity: item.quantity }],
+      item.receiptReference,
+      user,
+    );
+    return withPurchaseReconciliation({ ...createdItem, createdBy: user.name }, purchaseReconciliation);
   } catch (error) {
     if (error.code === 'CATEGORY_NOT_FOUND') {
       throw Object.assign(new Error(error.message), { status: 400 });
@@ -55,7 +79,12 @@ async function createItems(input, user) {
 
   try {
     const createdItems = await inventoryRepository.createItems(items, { createdByUserId: user.id });
-    return createdItems.map((item) => ({ ...item, createdBy: user.name }));
+    const purchaseReconciliation = await reconcileReceivedPurchaseStock(
+      createdItems.map((item) => ({ itemId: item.id, quantity: item.quantity })),
+      items[0]?.receiptReference || '',
+      user,
+    );
+    return createdItems.map((item) => withPurchaseReconciliation({ ...item, createdBy: user.name }, purchaseReconciliation));
   } catch (error) {
     if (error.code === 'CATEGORY_NOT_FOUND') {
       throw Object.assign(new Error(error.message), { status: 400 });
@@ -76,14 +105,25 @@ async function createItems(input, user) {
 async function restockItem(idValue, input, user) {
   const id = validateId(idValue, 'item ID');
   const receipt = validateRestockInventoryItem(input);
-  return inventoryRepository.restockItem(id, { ...receipt, recordedByUserId: user.id });
+  const restockedItem = await inventoryRepository.restockItem(id, { ...receipt, recordedByUserId: user.id });
+  const purchaseReconciliation = await reconcileReceivedPurchaseStock(
+    [{ itemId: restockedItem.id, quantity: receipt.quantity }],
+    receipt.receiptReference,
+    user,
+  );
+  return withPurchaseReconciliation(restockedItem, purchaseReconciliation);
 }
 
 async function updateItem(idValue, input, user) {
   const id = validateId(idValue, 'item ID');
   const item = validateUpdateInventoryItem(input);
   try {
-    return await inventoryRepository.updateItem(id, item, { changedByUserId: user.id });
+    const updatedItem = await inventoryRepository.updateItem(id, item, { changedByUserId: user.id });
+    const { stockIncreaseQuantity = 0, ...savedItem } = updatedItem;
+    const purchaseReconciliation = Number(stockIncreaseQuantity) > 0
+      ? await reconcileReceivedPurchaseStock([{ itemId: savedItem.id, quantity: stockIncreaseQuantity }], '', user)
+      : { deliveries: [], readyRequests: [] };
+    return withPurchaseReconciliation(savedItem, purchaseReconciliation);
   } catch (error) {
     if (error.code === 'CATEGORY_NOT_FOUND') {
       throw Object.assign(new Error(error.message), { status: 400 });

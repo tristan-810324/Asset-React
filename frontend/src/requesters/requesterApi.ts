@@ -122,6 +122,8 @@ export type ServiceRequest = {
   requesterEmail: string
   assets: RequestAsset[]
   history: RequestHistory[]
+  labelsAllPrinted?: boolean
+  returnedItems?: Array<{ id: string; itemName: string; itemCode: string; tagCode: string | null; quantity: number; unitOfMeasure: string; employeeName: string; condition: string; status: string; returnedAt: string }>
   purchaseLines?: PurchaseRequisitionLine[]
 }
 
@@ -209,6 +211,9 @@ export type RequesterIssuanceApproval = {
     condition: string
     quantity: number
     returnedQuantity?: number
+    returnedAt?: string | null
+    returnedByName?: string | null
+    returnCondition?: string | null
     unitOfMeasure: string
     notes: string
     tags?: Array<{ tagCode: string; unitNumber: number }>
@@ -246,10 +251,13 @@ export type RequesterDepartmentReturn = {
   itemName: string
   tagCode: string | null
   department: string
+  recipientLocation?: string
+  recipientPurpose?: string
 }
 
 export type RequesterDepartmentIssuanceSummary = {
   totalIssuedUnits: number
+  remainingUnits?: number
 }
 
 export async function listRequesterDepartments() {
@@ -283,6 +291,21 @@ export function listRequesterDepartmentStaff() {
 
 export function listMyRequests() {
   return apiRequest<{ requests: ServiceRequest[] }>('/requests/mine').then((data) => data.requests)
+}
+
+export type RequesterActivity = {
+  id: string
+  entityType: string
+  entityName: string
+  entityKey: string
+  action: string
+  reason: string
+  flag: string | null
+  changedAt: string
+}
+
+export function listMyActivity() {
+  return apiRequest<{ activities: RequesterActivity[] }>('/requests/mine/activity').then((data) => data.activities)
 }
 
 export function listMyPendingIssuanceBatches() {

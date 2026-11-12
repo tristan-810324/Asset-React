@@ -748,7 +748,10 @@ async function updateItem(id, item, { changedByUserId }) {
 
     const itemWithHistory = await getItemById(client, id);
     await client.query('COMMIT');
-    return itemWithHistory;
+    return {
+      ...itemWithHistory,
+      stockIncreaseQuantity: Math.max(0, Number(itemWithHistory.quantity) - Number(previous.quantity)),
+    };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

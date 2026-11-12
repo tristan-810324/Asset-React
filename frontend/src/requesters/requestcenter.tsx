@@ -40,7 +40,8 @@ function RequestCenterContent() {
   const verified = identity?.status === 'Verified'
   return (
     <div>
-      <section className="relative overflow-hidden rounded-2xl bg-linear-to-br from-[#092447] via-[#123c70] to-[#24558f] p-4 text-white shadow-xl shadow-blue-950/15 sm:rounded-3xl sm:p-8">
+      <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+        <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
         <div className="relative max-w-3xl">
           <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-blue-200" /> School services</span>
           <h1 className="mt-3 text-xl font-black tracking-tight sm:mt-4 sm:text-3xl">Choose a request</h1>
@@ -91,8 +92,8 @@ function RequestCenterContent() {
             </a>
           ))}
 
-          <article className="flex min-h-48 flex-col rounded-2xl border-2 border-dashed border-slate-300 bg-linear-to-br from-slate-100 via-white to-blue-100/45 p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-            <span className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm shadow-slate-200/70"><Icon name="truck" /></span>
+          <article className="flex min-h-48 flex-col rounded-2xl border-2 border-dashed border-slate-300 bg-linear-to-br from-blue-50/60 via-white to-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+            <span className="grid h-11 w-11 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700 shadow-sm shadow-blue-900/5"><Icon name="truck" /></span>
             <span className="mt-2 text-sm font-black leading-tight tracking-tight text-slate-700 sm:mt-3 sm:text-base">Vehicle / Other Services</span>
             <span className="mt-1.5 hidden flex-1 text-xs font-medium leading-relaxed text-slate-500 lg:block">Official forms and approvals still required.</span>
             <span className="mt-3 inline-flex w-fit rounded-full bg-slate-200 px-2.5 py-1 text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-600">Not available</span>

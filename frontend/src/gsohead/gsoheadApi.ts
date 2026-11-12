@@ -26,12 +26,10 @@ export async function listPurchaseRequisitions(input: { status?: string; search?
   return result.requests
 }
 
-export type HeadItemDecision = { lineId: string; decision: 'APPROVE' | 'DECLINE'; note: string }
-
-// The GSO Head decides every item GSO Staff sent up, or asks the requester for details first.
+// The GSO Head makes one decision for the complete purchase requisition.
 export async function reviewPurchaseRequisition(
   id: string,
-  input: { action: 'DECIDE'; decisions: HeadItemDecision[] } | { action: 'NEEDS_INFORMATION'; note: string },
+  input: { action: 'DECIDE'; decision: 'APPROVE' | 'DECLINE'; note?: string } | { action: 'NEEDS_INFORMATION'; note: string },
 ) {
   return apiRequest<PurchaseRequisitionActionResult>(`/requests/purchase-requisitions/${encodeURIComponent(id)}/review`, {
     method: 'PATCH',

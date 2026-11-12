@@ -14,19 +14,17 @@ import {
 } from './purchaseRequisitionsApi'
 import {
   FINANCE_STATUSES,
-  ISSUABLE_STATUSES,
-  ROUTES,
   canRecordDelivery,
   categoryLabel,
+  countIssuableLines,
   countLines,
   deliveryOpen,
   formText,
   inventoryCategoryMatches,
   inventoryMatchesLine,
   linesOf,
-  staffDecides,
 } from './requisitionFlow'
-import { Banner, DeliveryRecords, EmptyState, HistoryList, LineStatusBadge, QuantityChips, RequestSummary, RoutePill, fieldInput, fieldLabel } from './requisitionParts'
+import { Banner, DeliveryRecords, EmptyState, LineStatusBadge, QuantityChips, RequestSummary, RoutePill, fieldInput, fieldLabel } from './requisitionParts'
 
 type Tab = 'review' | 'waiting'
 type StepStatus = 'current' | 'upcoming' | 'done'
@@ -87,20 +85,22 @@ function tabsFor(request: ServiceRequest): Tab[] {
   const tabs: Tab[] = []
   if (request.status === 'Submitted' && countLines(request, ['WAITING_STAFF_REVIEW'])) tabs.push('review')
   if (deliveryOpen(request) && linesOf(request).some(canRecordDelivery)) tabs.push('waiting')
+  const hasWaitingLine = linesOf(request).some((line) => ['WAITING_GSO_HEAD', 'WAITING_FINANCE', 'WAITING_FOR_PURCHASE', 'PARTIAL_STOCK', 'NEEDS_INFORMATION'].includes(line.routeStatus))
   // Once GSO has prepared every individually tracked item, the requisition leaves this
   // checking workspace. Its pickup status and barcode labels live in Main Issuance.
-  if (!tabs.length && !['Completed', 'Rejected', 'Ready for Pickup'].includes(request.status) && countLines(request, ISSUABLE_STATUSES) === 0) tabs.push('waiting')
+  if (!tabs.length && !['Completed', 'Rejected', 'Ready for Pickup'].includes(request.status)
+    && (hasWaitingLine || countIssuableLines(request) === 0)) tabs.push('waiting')
   return tabs
 }
 
 // Who has the request now, in words a staff member can act on.
 function waitingOn(request: ServiceRequest) {
-  if (request.status === 'Under Review') return { label: 'With GSO Head', tone: 'bg-amber-50 text-amber-800', detail: `The GSO Head is deciding ${countLines(request, ['WAITING_GSO_HEAD'])} item(s). Approved stock comes back to "Ready to issue".` }
+  if (request.status === 'Under Review') return { label: 'With GSO Head', tone: 'bg-amber-50 text-amber-800', detail: `The GSO Head is deciding the complete request (${countLines(request, ['WAITING_GSO_HEAD'])} item line(s)). Available units stay reserved; nothing is issued separately.` }
   if (request.status === 'Needs Information') return { label: 'With requester', tone: 'bg-amber-50 text-amber-800', detail: 'Waiting for the requester to answer. Their reply brings the request back to "To check".' }
-  if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `The GSO Head sent the purchase to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Buy the items, add them in Item Master Data, then record the delivery here.` }
-  if (FINANCE_STATUSES.includes(request.status)) return { label: 'Purchase approved', tone: 'bg-indigo-50 text-indigo-700', detail: 'The GSO Head approved the purchase and will send it to Finance. You can buy the items after that.' }
+  if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `The GSO Head sent only the shortage quantities to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Stocked items remain reserved; do not issue anything until every requested line is complete.` }
+  if (FINANCE_STATUSES.includes(request.status)) return { label: 'Purchase approved', tone: 'bg-indigo-50 text-indigo-700', detail: 'The complete request is approved. Buy only the shortage quantities; the full request stays on hold until all items arrive.' }
   if (request.status === 'Completed') return { label: 'Completed', tone: 'bg-slate-100 text-slate-600', detail: 'Every approved item was issued.' }
-  if (request.status === 'Rejected') return { label: 'Declined', tone: 'bg-rose-50 text-rose-700', detail: 'The GSO Head declined every item.' }
+  if (request.status === 'Rejected') return { label: 'Declined', tone: 'bg-rose-50 text-rose-700', detail: 'The GSO Head declined the entire request.' }
   return { label: request.status, tone: 'bg-slate-100 text-slate-600', detail: 'Waiting for the next update.' }
 }
 
@@ -118,39 +118,20 @@ function ConditionIcon({ ok }: { ok: boolean }) {
 }
 
 const STAFF_CHOICES: Array<{ route: StaffRoute; title: string; detail: string; on: string; dot: string }> = [
-  { route: 'ISSUE', title: 'Issue now', detail: 'You reserve it and hand it over.', on: 'border-emerald-500 bg-emerald-50', dot: 'border-emerald-600 bg-emerald-600' },
-  { route: 'HEAD_ISSUE', title: 'Ask GSO Head first', detail: 'Reserved while the Head decides.', on: 'border-amber-400 bg-amber-50', dot: 'border-amber-500 bg-amber-500' },
+  { route: 'ISSUE', title: 'Issue the full request now', detail: 'Reserve the complete request and prepare it in Main Issuance.', on: 'border-emerald-500 bg-emerald-50', dot: 'border-emerald-600 bg-emerald-600' },
+  { route: 'HEAD_ISSUE', title: 'Ask GSO Head first', detail: 'The Head approves or declines the complete request.', on: 'border-amber-400 bg-amber-50', dot: 'border-amber-500 bg-amber-500' },
 ]
 
 // The conditions behind an item's route, checked against live stock.
 // When the item is in stock, the staff member chooses: issue now or ask the GSO Head first.
-function StockCheckCard({ line, check, route, onChoose }: {
+function StockCheckCard({ line, check, route }: {
   line: PurchaseRequisitionLine
   check: PurchaseRequisitionStockCheck
   route: StaffRoute
-  onChoose: (route: StaffRoute) => void
 }) {
-  const shortage = line.requestedQuantity - check.reservedQuantity
-  const conditions = [
-    {
-      ok: check.matches.length > 0,
-      label: 'Matches inventory',
-      detail: check.matches.length ? check.matches.map((match) => match.itemCode).join(', ') : 'No inventory record with this name and category',
-    },
-    {
-      ok: check.availableQuantity >= line.requestedQuantity,
-      label: 'Enough stock',
-      detail: `${check.availableQuantity} available · ${line.requestedQuantity} requested`,
-    },
-  ]
-  const result = route === 'ISSUE'
-    ? `Reserve ${check.reservedQuantity} now. You issue it in Main Issuance; the GSO Head is not asked.`
-    : route === 'HEAD_ISSUE'
-      ? `Reserve ${check.reservedQuantity} now. You issue it once the GSO Head approves.`
-      : check.reservedQuantity > 0
-        ? `Reserve ${check.reservedQuantity} now and ask the GSO Head to approve buying ${shortage}.`
-        : `Ask the GSO Head to approve buying all ${shortage}.`
-  return <article className="rounded-xl border border-slate-200 bg-white p-4 transition-shadow hover:shadow-sm">
+  const matched = check.matches.length > 0
+  const enoughStock = check.availableQuantity >= line.requestedQuantity
+  return <article className="rounded-xl border border-slate-200 bg-white p-3.5 transition-shadow hover:shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="text-sm font-extrabold text-slate-900">{line.itemName} <span className="font-bold text-slate-500">× {line.requestedQuantity}</span></p>
@@ -159,25 +140,16 @@ function StockCheckCard({ line, check, route, onChoose }: {
       <RoutePill route={route} />
     </div>
     {line.specifications && <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[0.65rem] leading-relaxed text-slate-600">{line.specifications}</p>}
-    <ul className="mt-3 grid gap-2 sm:grid-cols-2" aria-label={`Conditions for ${line.itemName}`}>
-      {conditions.map((condition) => <li key={condition.label} className={`rounded-xl border px-3 py-2.5 ${condition.ok ? 'border-emerald-100 bg-emerald-50/70' : 'border-slate-200 bg-slate-50'}`}>
-        <p className={`flex items-center gap-1.5 text-[0.68rem] font-extrabold ${condition.ok ? 'text-emerald-800' : 'text-slate-700'}`}><ConditionIcon ok={condition.ok} />{condition.label}</p>
-        <p className="mt-1 wrap-break-word text-[0.62rem] leading-snug text-slate-500">{condition.detail}</p>
-      </li>)}
-    </ul>
-    {staffDecides(check.options) && <div className="mt-3">
-      <p className="mb-1.5 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Choose route</p>
-      <div className="grid gap-1 rounded-xl border border-slate-300 bg-slate-100 p-1 sm:grid-cols-2" role="radiogroup" aria-label={`Route for ${line.itemName}`}>
-        {STAFF_CHOICES.map((choice) => {
-          const selected = route === choice.route
-          return <button key={choice.route} type="button" role="radio" aria-checked={selected} onClick={() => onChoose(choice.route)} className={`flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selected ? 'bg-white text-blue-800 shadow-sm' : 'text-slate-700 hover:bg-white/70'}`}>
-            <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border-2 ${selected ? choice.dot : 'border-slate-300 bg-white'}`}>{selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}</span>
-            <span><span className="block text-xs font-extrabold">{choice.title}</span><span className="mt-0.5 block text-[0.62rem] text-slate-500">{choice.detail}</span></span>
-          </button>
-        })}
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 ${matched ? 'border-emerald-100 bg-emerald-50/70 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+        <ConditionIcon ok={matched} />
+        <span className="text-[0.68rem] font-extrabold">{matched ? `Matches inventory · ${check.matches.length} item${check.matches.length === 1 ? '' : 's'}` : 'No inventory match'}</span>
       </div>
-    </div>}
-    <p className={`mt-3 rounded-xl border px-3 py-2.5 text-[0.68rem] font-semibold leading-relaxed ${ROUTES[route].tone}`}><span className="font-extrabold">Result: </span>{result}</p>
+      <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 ${enoughStock ? 'border-emerald-100 bg-emerald-50/70 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+        <ConditionIcon ok={enoughStock} />
+        <span className="text-[0.68rem] font-extrabold">{enoughStock ? `Enough stock · ${check.availableQuantity} available` : `Not enough stock · ${line.requestedQuantity - check.availableQuantity} short`}</span>
+      </div>
+    </div>
   </article>
 }
 
@@ -192,7 +164,6 @@ function LineCard({ line, children, onUndo }: { line: PurchaseRequisitionLine; c
     </div>
     <QuantityChips line={line} />
     {line.reviewNote && ['REJECTED', 'NEEDS_INFORMATION'].includes(line.routeStatus) && <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[0.65rem] leading-relaxed text-slate-700"><span className="font-extrabold">{line.routeStatus === 'REJECTED' ? 'GSO Head reason: ' : 'Question: '}</span>{line.reviewNote}</p>}
-    {line.allocations.some((allocation) => allocation.status === 'Reserved') && <p className="mt-2 text-[0.6rem] font-semibold text-slate-500">Reserved from {line.allocations.filter((allocation) => allocation.status === 'Reserved').map((allocation) => `${allocation.itemCode} (${allocation.quantity - allocation.fulfilledQuantity} ${allocation.unitOfMeasure})`).join(', ')}</p>}
     <DeliveryRecords line={line} onUndo={onUndo} />
     {children}
   </article>
@@ -255,7 +226,11 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
     setError('')
     try {
       await recordPurchaseDeliveries({ deliveries: [{ lineId: line.id, itemId, quantity: amount }], receiptReference: reference.trim() })
-      onReceived(`${amount} ${chosen?.unitOfMeasure || ''} ${line.itemName} recorded for ${request.referenceNo}. It is now in “Ready to issue”; hand it over in Main Issuance.`)
+      const remainingAfterReceipt = line.financeQuantity - amount
+      const otherShortages = linesOf(request).some((entry) => entry.id !== line.id && entry.financeQuantity > 0)
+      onReceived(remainingAfterReceipt > 0 || otherShortages
+        ? `${amount} ${chosen?.unitOfMeasure || ''} ${line.itemName} recorded for ${request.referenceNo}. The remaining shortages must arrive before GSO can issue any item in this request.`
+        : `${amount} ${chosen?.unitOfMeasure || ''} ${line.itemName} recorded for ${request.referenceNo}. Every requested item is now available; the complete request is ready in Main Issuance.`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to record the delivery.')
     } finally {
@@ -277,7 +252,7 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
         <StepBadge step={1} />
         <div className="min-w-0 flex-1">
           <p className="text-xs font-extrabold text-slate-900">Put it in Item Master Data</p>
-          <p className="mt-1 text-xs leading-relaxed text-slate-600">Already listed? <span className="font-bold text-slate-800">Restock</span> it with the quantity you bought. New item? <span className="font-bold text-slate-800">Add</span> it named <span className="font-extrabold text-slate-900">“{line.itemName}”</span> under <span className="font-bold text-slate-800">{categoryName}</span> so it matches this request.</p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-600">Already listed? <span className="font-bold text-slate-800">Restock</span> it with the quantity you bought. New item? <span className="font-bold text-slate-800">Add</span> it using the exact name <span className="font-extrabold text-slate-900">“{line.itemName}”</span> under <span className="font-bold text-slate-800">{categoryName}</span>. An exact match is reserved automatically; confirm a manual link only when the name is similar.</p>
           <p className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-[0.68rem] leading-relaxed text-indigo-900"><span className="font-extrabold">Choose tracking mode:</span> use <span className="font-bold">Track each item separately</span> when every item needs its own barcode and record. Use <span className="font-bold">Track as quantity</span> when matching items share one stock count.</p>
           <div className="mt-2.5 flex flex-wrap gap-2">
             <button type="button" onClick={() => window.open('/gso/items', '_blank')} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-extrabold text-white shadow-sm transition hover:bg-indigo-700">
@@ -313,7 +288,7 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
           {referenceFromStock && <p className="mt-1.5 text-[0.65rem] text-slate-500">Filled in from the latest restock in Item Master Data. Change it if this delivery has a different receipt.</p>}
           {error && <div className="mt-3"><Banner tone="error">{error}</Banner></div>}
           <div className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className={`text-[0.68rem] leading-relaxed ${problem ? 'text-slate-500' : 'font-semibold text-emerald-700'}`}>{problem || `Saved with your account and the time. ${amount} ${chosen?.unitOfMeasure || ''} will be ready to issue.`}</p>
+            <p className={`text-[0.68rem] leading-relaxed ${problem ? 'text-slate-500' : 'font-semibold text-emerald-700'}`}>{problem || `Saved with your account and the time. This delivery remains reserved until the full request is available.`}</p>
             <button type="button" disabled={Boolean(problem) || busy} onClick={() => void save()} className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : 'Record delivery'}</button>
           </div>
         </div>
@@ -324,22 +299,23 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
 
 function routedMessage(request: ServiceRequest) {
   const toHead = countLines(request, ['WAITING_GSO_HEAD'])
-  return `${request.referenceNo} routed. ${toHead ? `${toHead} item(s) sent to the GSO Head.` : 'Approved stock is now available in Main Issuance.'}`
+  return `${request.referenceNo} routed. ${toHead ? `The entire request (${toHead} item line(s)) is with the GSO Head. In-stock items stay reserved until the full request is ready.` : 'The complete request is available in Main Issuance.'}`
 }
 
 function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest; onSaved: (message: string) => void; onRefresh: () => void }) {
   const checks = linesOf(request).flatMap((line) => line.routeStatus === 'WAITING_STAFF_REVIEW' && line.stockCheck ? [{ line, check: line.stockCheck }] : [])
-  const [choices, setChoices] = useState<Record<string, StaffRoute>>({})
-  // A choice that stock or a rule no longer allows falls back to the item's default route.
-  const routeOf = (line: PurchaseRequisitionLine, check: PurchaseRequisitionStockCheck) => {
-    const chosen = choices[line.id]
-    return chosen && check.options.includes(chosen) ? chosen : check.route
+  const [packageRoute, setPackageRoute] = useState<'ISSUE' | 'HEAD_ISSUE'>('ISSUE')
+  const requestHasShortage = checks.some(({ line, check }) => check.reservedQuantity < line.requestedQuantity)
+  const canChooseRequestRoute = !requestHasShortage && checks.every(({ check }) => check.options.includes('ISSUE'))
+  const requestNeedsHeadApproval = requestHasShortage || !canChooseRequestRoute || packageRoute === 'HEAD_ISSUE'
+  const routeOf = (line: PurchaseRequisitionLine, check: PurchaseRequisitionStockCheck): StaffRoute => {
+    if (check.reservedQuantity < line.requestedQuantity) return 'PURCHASE'
+    return requestNeedsHeadApproval ? 'HEAD_ISSUE' : 'ISSUE'
   }
   const count = (route: StaffRoute) => checks.filter(({ line, check }) => routeOf(line, check) === route).length
-  const toHead = count('HEAD_ISSUE') + count('PURCHASE')
-  const choosable = checks.filter(({ check }) => staffDecides(check.options)).length
+  const toHead = requestNeedsHeadApproval ? checks.length : 0
+  const choosable = canChooseRequestRoute ? 1 : 0
   const [mode, setMode] = useState<'route' | 'ask'>('route')
-  const [note, setNote] = useState('')
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -351,8 +327,8 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
     try {
       if (action === 'ROUTE') {
         const routes = Object.fromEntries(checks.map(({ line, check }) => [line.id, routeOf(line, check)]))
-        const result = await staffReviewPurchaseRequisition(request.id, { action, routes, note: note.trim() })
-        if (countLines(result.request, ISSUABLE_STATUSES) > 0) {
+        const result = await staffReviewPurchaseRequisition(request.id, { action, routes })
+        if (countIssuableLines(result.request) > 0) {
           window.location.assign(`/gso/main-issuance?purchaseRequisitionId=${encodeURIComponent(request.id)}`)
           return
         }
@@ -374,12 +350,17 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
       status="current"
       titleId={`stock-check-${request.id}`}
       title="Check stock"
-      description={choosable > 0 ? 'Review available stock, then choose how each item should move.' : 'These items require the GSO Head’s decision.'}
+      description={requestHasShortage
+        ? 'At least one item is short. The GSO Head will decide on the complete request.'
+        : choosable > 0
+          ? 'Review stock, then choose whether to issue the full request or ask the GSO Head.'
+          : 'The GSO Head’s decision applies to the complete request.'}
     >
       <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">{checks.length} item{checks.length === 1 ? '' : 's'}</span>
     </WorkflowStepHeader>
+    {!requestHasShortage && requestNeedsHeadApproval && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs font-semibold leading-relaxed text-amber-950"><span className="font-extrabold">One request, one decision:</span> because at least one item needs GSO Head approval, all requested items wait for that decision and stay together for issuance.</div>}
     <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-2 sm:p-3">
-      {checks.map(({ line, check }) => <StockCheckCard key={line.id} line={line} check={check} route={routeOf(line, check)} onChoose={(route) => setChoices((current) => ({ ...current, [line.id]: route }))} />)}
+      {checks.map(({ line, check }) => <StockCheckCard key={line.id} line={line} check={check} route={routeOf(line, check)} />)}
     </div>
     <section className="mt-5 border-t border-slate-200 pt-5" aria-label="Confirm routing">
       <WorkflowStepHeader
@@ -387,27 +368,31 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
         status="upcoming"
         titleId={`route-confirmation-${request.id}`}
         title="Confirm route"
-        description="Review where each item will go before saving the stock check."
+        description="The route applies to this request as one package."
       />
       <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/60 p-4">
       {mode === 'route' ? <>
+        {canChooseRequestRoute && <div className="rounded-xl border border-slate-300 bg-slate-100 p-1" role="radiogroup" aria-label="Choose the route for the complete request">
+          {STAFF_CHOICES.map((choice) => {
+            const selected = packageRoute === choice.route
+            return <button key={choice.route} type="button" role="radio" aria-checked={selected} onClick={() => setPackageRoute(choice.route as 'ISSUE' | 'HEAD_ISSUE')} className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selected ? `${choice.on} text-slate-900 shadow-sm` : 'text-slate-700 hover:bg-white/70'}`}>
+              <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border-2 ${selected ? choice.dot : 'border-slate-300 bg-white'}`}>{selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}</span>
+              <span><span className="block text-xs font-extrabold">{choice.title}</span><span className="mt-0.5 block text-[0.62rem] text-slate-500">{choice.detail}</span></span>
+            </button>
+          })}
+        </div>}
         <div className="rounded-xl border border-blue-100 bg-white/80 p-3">
         <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Route summary</p>
         <ul className="mt-2 space-y-2">
           {(['ISSUE', 'HEAD_ISSUE', 'PURCHASE'] as StaffRoute[]).filter((route) => count(route) > 0).map((route) => <li key={route} className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
             <RoutePill route={route} />
-            <span>{count(route)} item(s) {route === 'ISSUE' ? 'ready for Main Issuance' : route === 'HEAD_ISSUE' ? 'sent to the GSO Head' : 'sent for purchase approval'}</span>
+            <span>{count(route)} item line(s) {route === 'ISSUE' ? 'reserved for the complete request' : route === 'HEAD_ISSUE' ? 'waiting for the whole-request decision' : 'short and included in the purchase decision'}</span>
           </li>)}
         </ul>
         </div>
-        {toHead > 0 && <label className="mt-3 block">
-          <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-600">Note for the GSO Head <span className="font-bold normal-case text-slate-400">(optional)</span></span>
-          <textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} className="min-h-20 w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-xs font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" placeholder="Context that helps the decision, such as a deadline or additional details." />
-        </label>}
         {error && <div className="mt-3 space-y-2"><Banner tone="error">{error}</Banner><button type="button" onClick={onRefresh} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[0.65rem] font-extrabold text-rose-700 hover:bg-rose-50">Refresh stock check</button></div>}
-        <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <button type="button" disabled={busy} onClick={() => { setMode('ask'); setError('') }} className="rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-700 transition hover:border-amber-300 hover:text-amber-800 disabled:opacity-50">Ask requester for details</button>
-          <button type="button" disabled={busy || checks.length === 0} onClick={() => void submit('ROUTE')} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : toHead ? 'Confirm routing' : 'Reserve stock for issuance'}</button>
+        <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+          <button type="button" disabled={busy || checks.length === 0} onClick={() => void submit('ROUTE')} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : toHead ? 'Send entire request to GSO Head' : 'Reserve full request for issuance'}</button>
         </div>
       </> : <>
         <label className="block">
@@ -537,17 +522,20 @@ export default function GsoPurchaseRequisitions() {
     : []
   const deliveryVisible = Boolean(selected && deliveryOpen(selected) && linesOf(selected).some(canRecordDelivery))
 
-  // Coming back from the Item Master Data tab shows the new or restocked item without a manual refresh.
+  // Coming back from Item Master Data refreshes the request stage; a matching purchase delivery may
+  // have just moved the complete request to Main Issuance.
   const watchesInventory = deliveryVisible
   useEffect(() => {
-    if (!watchesInventory) return
     const reload = () => {
-      listInventoryItems().then(setInventory).catch(() => undefined)
-      listAwaitingDeliveries().then(setAwaiting).catch(() => undefined)
+      void loadQueue()
+      if (watchesInventory) {
+        listInventoryItems().then(setInventory).catch(() => undefined)
+        listAwaitingDeliveries().then(setAwaiting).catch(() => undefined)
+      }
     }
     window.addEventListener('focus', reload)
     return () => window.removeEventListener('focus', reload)
-  }, [watchesInventory])
+  }, [loadQueue, watchesInventory])
 
   function chooseTab(next: Tab) {
     setChosenTab(next)
@@ -639,9 +627,7 @@ export default function GsoPurchaseRequisitions() {
                   </div>
                 </>}
 
-                {selectedTabs.includes('waiting') && !(deliveryOpen(selected) && linesOf(selected).some(canRecordDelivery)) && <div className="mt-4"><Banner tone={selected.status === 'Rejected' ? 'warning' : 'info'}>{waitingOn(selected).detail}</Banner></div>}
 
-                <HistoryList request={selected} />
               </>}
           </section>
         </section>

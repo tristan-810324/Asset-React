@@ -29,6 +29,11 @@ const listMine = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { requests } });
 });
 
+const listMyActivity = asyncHandler(async (req, res) => {
+  const activities = await requestsService.listMyActivity(req.user);
+  res.json({ success: true, data: { activities } });
+});
+
 const getMine = asyncHandler(async (req, res) => {
   const request = await requestsService.getMine(req.params.id, req.user);
   res.json({ success: true, data: { request } });
@@ -115,6 +120,7 @@ module.exports = {
   listRequesterDepartmentStaff,
   createRequest,
   listMine,
+  listMyActivity,
   getMine,
   cancelMine,
   respondMine,

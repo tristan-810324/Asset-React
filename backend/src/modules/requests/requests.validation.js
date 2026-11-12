@@ -19,6 +19,11 @@ const PURCHASE_CATEGORIES = new Set([
   'PUBLICATIONS',
 ]);
 
+const PLANNED_DISTRIBUTION_DESTINATIONS = new Set([
+  'employee',
+  'department_location',
+]);
+
 function invalid(message, status = 400) {
   throw Object.assign(new Error(message), { status });
 }
@@ -173,18 +178,61 @@ function validateCreateRequest(input) {
       const itemNameId = integer(row.itemNameId, 'saved item name id', { optional: true, minimum: 1 });
       if (catalogItemId !== null && itemNameId !== null) invalid('Pumili ng isang saved item source lamang.');
       const quantity = integer(row.quantity, 'item quantity', { minimum: 1 });
-      const plannedRecipients = row.plannedRecipients === undefined
-        ? []
-        : rows(row.plannedRecipients, 'planned recipients', (recipient) => ({
-          employeeCode: text(recipient.employeeCode, 'recipient employee code', 40),
-          quantity: integer(recipient.quantity, 'recipient quantity', { minimum: 1 }),
-          useLocation: text(recipient.useLocation, 'recipient use location', 200),
-          purpose: text(recipient.purpose, 'recipient purpose', 500),
-        }), { min: 0, max: 50 });
-      const recipientCodes = plannedRecipients.map((recipient) => recipient.employeeCode.trim().toLowerCase());
-      if (new Set(recipientCodes).size !== recipientCodes.length) invalid('Pumili lamang ng isang allocation row bawat employee sa bawat item.');
-      if (plannedRecipients.reduce((sum, recipient) => sum + recipient.quantity, 0) > quantity) {
+      const plannedRecipients = rows(row.plannedRecipients, 'item assignments', (recipient) => {
+        // Older payloads may omit the destination type; treat those as employee assignments.
+        const destinationType = recipient.destinationType === undefined || recipient.destinationType === null || recipient.destinationType === ''
+          ? 'employee'
+          : text(recipient.destinationType, 'assignment destination type', 40).toLowerCase();
+        if (!PLANNED_DISTRIBUTION_DESTINATIONS.has(destinationType)) {
+          invalid('Pumili ng employee o designated room bilang destination.');
+        }
+
+        const plannedRecipient = {
+          destinationType,
+          quantity: integer(recipient.quantity, 'assigned quantity', { minimum: 1 }),
+          purpose: text(recipient.purpose, 'recipient purpose', 500, { optional: true }),
+          employeeCode: '',
+          useLocation: '',
+          building: '',
+          room: '',
+        };
+
+        if (destinationType === 'employee') {
+          return {
+            ...plannedRecipient,
+            employeeCode: text(recipient.employeeCode, 'recipient employee code', 40),
+            useLocation: text(recipient.useLocation, 'recipient use location', 200),
+          };
+        }
+
+        if (destinationType === 'department_location') {
+          const building = text(recipient.building, 'building or unit', 80);
+          const room = text(recipient.room, 'room or shared area', 100);
+          const useLocation = `${building} — ${room}`;
+          if (useLocation.length > 200) invalid('recipient use location ay hindi dapat lumampas sa 200 characters.');
+          return {
+            ...plannedRecipient,
+            building,
+            room,
+            useLocation,
+          };
+        }
+
+        invalid('Pumili ng employee o designated room bilang destination.');
+      }, { min: 1, max: 50 });
+      const recipientKeys = plannedRecipients.map((recipient) => {
+        if (recipient.destinationType === 'employee') return `employee:${recipient.employeeCode.trim().toLowerCase()}`;
+        return `${recipient.destinationType}:${recipient.useLocation.trim().toLowerCase()}:${recipient.purpose.trim().toLowerCase()}`;
+      });
+      if (new Set(recipientKeys).size !== recipientKeys.length) {
+        invalid('Pagsamahin sa iisang allocation row ang parehong planned destination.');
+      }
+      const assignedQuantity = plannedRecipients.reduce((sum, recipient) => sum + recipient.quantity, 0);
+      if (assignedQuantity > quantity) {
         invalid('Hindi puwedeng lumampas sa requested quantity ang planned recipient allocation.');
+      }
+      if (assignedQuantity !== quantity) {
+        invalid('I-assign ang buong requested quantity sa employee o designated room bago isumite ang requisition.');
       }
       return {
         quantity,

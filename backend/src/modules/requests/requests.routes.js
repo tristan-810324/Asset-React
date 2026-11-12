@@ -11,6 +11,7 @@ router.get('/assets', requireRole('BORROWER'), requestsController.listAssets);
 router.get('/purchase-item-names', requireRole('BORROWER'), requestsController.listPurchaseItemNames);
 router.get('/requester-staff', requireRole('BORROWER'), requestsController.listRequesterDepartmentStaff);
 router.get('/mine', requireRole('BORROWER'), requestsController.listMine);
+router.get('/mine/activity', requireRole('BORROWER'), requestsController.listMyActivity);
 router.post('/', requireRole('BORROWER'), requestsController.createRequest);
 router.get('/mine/:id', requireRole('BORROWER'), requestsController.getMine);
 router.post('/mine/:id/cancel', requireRole('BORROWER'), requestsController.cancelMine);

@@ -113,7 +113,26 @@ async function userIdForEmployeeCode(employeeCode) {
   return result.rows[0]?.user_id ?? null;
 }
 
+// The verified department head (position "head") of the employee's department.
+async function headUserIdForEmployeeCode(employeeCode) {
+  const result = await pool.query(
+    `SELECT profile.user_id
+       FROM employees AS staff
+       JOIN employees AS head
+         ON lower(trim(head.department)) = lower(trim(staff.department)) AND head.status = 'Active'
+       JOIN requester_identity_profiles AS profile
+         ON lower(trim(profile.employee_code)) = lower(trim(head.employee_code))
+            AND profile.verification_status = 'Verified'
+      WHERE lower(trim(staff.employee_code)) = lower(trim($1))
+        AND lower(trim(profile.position)) = 'head'
+      ORDER BY profile.reviewed_at DESC NULLS LAST, profile.user_id
+      LIMIT 1`,
+    [employeeCode],
+  );
+  return result.rows[0]?.user_id ?? null;
+}
+
 module.exports = {
   listForUser, markRead, markAllRead, refreshOperationalNotifications,
-  createUserNotification, createRoleNotification, resolveByPrefix, userIdForEmployeeCode,
+  createUserNotification, createRoleNotification, resolveByPrefix, userIdForEmployeeCode, headUserIdForEmployeeCode,
 };

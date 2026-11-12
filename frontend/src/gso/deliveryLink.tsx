@@ -6,7 +6,7 @@ import {
   type AwaitingDeliveryLine,
   type DeliveryInput,
 } from './purchaseRequisitionsApi'
-import { categoryLabel } from './requisitionFlow'
+import { categoryLabel, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
 import { Banner, EmptyState, fieldInput, fieldLabel } from './requisitionParts'
 
 type PlannedPick = { itemId: string; itemCode: string; quantity: number; similar: boolean }
@@ -126,9 +126,17 @@ export function DeliveryChecklist({ lines, receiptDefault = '', restocked, skipL
     setBusy(true)
     setError('')
     try {
-      await recordPurchaseDeliveries({ deliveries, receiptReference: receipt.trim() })
+      const updatedRequests = await recordPurchaseDeliveries({ deliveries, receiptReference: receipt.trim() })
       const references = [...new Set(rows.map((line) => line.referenceNo))]
-      onLinked(`Linked ${units} ${unitLabel} to ${plural(references.length, 'request')} (${references.join(', ')}). They are now in “Ready to issue”; hand them over in Main Issuance.`)
+      const ready = updatedRequests.filter(purchaseRequisitionReadyForIssuance).map((request) => request.referenceNo)
+      const stillWaiting = updatedRequests.filter((request) => !purchaseRequisitionReadyForIssuance(request)).map((request) => request.referenceNo)
+      const readyText = ready.length
+        ? `${ready.join(', ')} ${ready.length === 1 ? 'is' : 'are'} now ready to issue in Main Issuance.`
+        : ''
+      const waitingText = stillWaiting.length
+        ? `${stillWaiting.join(', ')} ${stillWaiting.length === 1 ? 'still has' : 'still have'} another item or quantity waiting for purchase, so the complete request stays on hold.`
+        : ''
+      onLinked([`Linked ${units} ${unitLabel} to ${plural(references.length, 'request')} (${references.join(', ')}).`, readyText, waitingText].filter(Boolean).join(' '))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to record the deliveries.')
       setAsking(false)

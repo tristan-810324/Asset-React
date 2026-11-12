@@ -69,6 +69,20 @@ async function listLogs({ limit, offset, action, entityType, flag = 'all', searc
   };
 }
 
+// Everything one user did, newest first. Used for the requester's My Activities page.
+async function listUserActivity(userId, limit = 200) {
+  const result = await pool.query(
+    `SELECT log.id, log.entity_type AS "entityType", log.entity_name AS "entityName",
+            log.entity_key AS "entityKey", log.action, log.reason, log.flag, log.changed_at AS "changedAt"
+       FROM inventory_change_logs AS log
+      WHERE log.changed_by_user_id = $1
+      ORDER BY log.changed_at DESC, log.id DESC
+      LIMIT $2`,
+    [userId, limit],
+  );
+  return result.rows;
+}
+
 // Records one audit entry. Pass a transaction client when the change is part of one.
 async function writeLog(db, {
   entityType, entityKey, entityName, action, reason,
@@ -85,4 +99,4 @@ async function writeLog(db, {
   );
 }
 
-module.exports = { listLogs, writeLog };
+module.exports = { listLogs, listUserActivity, writeLog };

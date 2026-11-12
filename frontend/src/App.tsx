@@ -10,6 +10,7 @@ import MyRequests from './requesters/myrequests'
 import RequestDetail from './requesters/requestdetail'
 import RequesterProfile from './requesters/requesterprofile'
 import RequesterNotifications from './requesters/notifications'
+import MyActivities from './requesters/myactivities'
 import RequesterReturnItems from './requesters/requesterreturnitems'
 import RequesterIssuedItems from './requesters/requesterissueditems'
 import ITStaffDashboard from './itstaff/itstaffdashboard'
@@ -217,6 +218,9 @@ export default function App() {
   }
   if (path === '/requester/profile' || path === '/borrower/profile') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequesterProfile /></ProtectedDashboard>
+  }
+  if (path === '/requester/my-activities' || path === '/borrower/my-activities') {
+    return <ProtectedDashboard requiredRole="BORROWER"><MyActivities /></ProtectedDashboard>
   }
   if (path === '/requester/notifications' || path === '/borrower/notifications') {
     return <ProtectedDashboard requiredRole="BORROWER"><RequesterNotifications /></ProtectedDashboard>

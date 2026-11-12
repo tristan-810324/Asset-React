@@ -3,10 +3,22 @@
 const STAFF_ROUTES = new Set(['ISSUE', 'HEAD_ISSUE', 'PURCHASE']);
 
 // The routes GSO Staff may pick for an item; the first one is the default.
-// In stock: ISSUE (GSO Staff reserves and issues it) or HEAD_ISSUE (the GSO Head checks it first).
-// Not enough stock: PURCHASE (the GSO Head approves buying the shortage).
-function staffRouteOptions({ requestedQuantity, availableQuantity }) {
-  return availableQuantity < requestedQuantity ? ['PURCHASE'] : ['ISSUE', 'HEAD_ISSUE'];
+// In-stock items marked for the GSO Head, or above a staff quantity limit, must go to the Head.
+// Other in-stock items can be issued by GSO Staff or escalated. A shortage always needs purchase approval.
+function staffRouteOptions({
+  requestedQuantity,
+  availableQuantity,
+  approvalPolicy = 'STAFF_ISSUE',
+  staffIssueMaxQuantity = null,
+}) {
+  if (availableQuantity < requestedQuantity) return ['PURCHASE'];
+
+  const exceedsStaffLimit = staffIssueMaxQuantity !== null
+    && staffIssueMaxQuantity !== undefined
+    && requestedQuantity > Number(staffIssueMaxQuantity);
+  if (approvalPolicy === 'GSO_HEAD' || exceedsStaffLimit) return ['HEAD_ISSUE'];
+
+  return ['ISSUE', 'HEAD_ISSUE'];
 }
 
 const financeStatuses = new Set([

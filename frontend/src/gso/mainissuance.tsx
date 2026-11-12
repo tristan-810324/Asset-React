@@ -11,17 +11,18 @@ import {
   type EmployeeIssuanceBatchDetails,
   type EmployeeIssuanceRecord,
 } from './issuancesApi'
-import { createEmployee, listEmployeePositions, listEmployees, type EmployeeProfile, type EmployeeProfileInput } from './employeesApi'
+import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 import { getStaffPurchaseRequisition, listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
-import { linesOf, formText } from './requisitionFlow'
+import { linesOf, formText, purchaseLineReadyForIssuance, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
 import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
 import type { PurchaseRequisitionLine, ServiceRequest } from '../requesters/requesterApi'
 
 type InventoryFlow = 'individual' | 'consumable' | 'reusable'
 type InventoryTypeFilter = 'all' | 'individual' | 'consumable'
-type RecipientAllocation = { employeeCode: string; quantity: string; location: string; purpose: string }
-type PlannedRecipient = { employeeCode: string; employeeName?: string; quantity: number; useLocation: string; purpose: string }
+type PlannedDistributionDestination = 'employee' | 'department_location' | 'department_stock'
+type RecipientAllocation = { employeeCode: string; quantity: string; location: string; purpose: string; destinationType?: PlannedDistributionDestination }
+type PlannedRecipient = { employeeCode: string; employeeName?: string; quantity: number; useLocation: string; purpose: string; destinationType: PlannedDistributionDestination }
 type SelectedInventoryItem = { item: InventoryItemRecord; quantity: number }
 type IssuanceItemGroup = {
   key: string
@@ -182,11 +183,9 @@ function printRecipientSheet(batch: SubmittedBatch, requisitionReference: string
   return true
 }
 
-const MAIN_ISSUANCE_READY_STATUSES = ['READY_FOR_STAFF', 'PARTIAL_STOCK', 'PARTIALLY_ISSUED']
-
 function isReadyPurchaseRequisition(request: ServiceRequest) {
   return request.requestType === 'PURCHASE_REQUISITION'
-    && linesOf(request).some((line) => MAIN_ISSUANCE_READY_STATUSES.includes(line.routeStatus))
+    && purchaseRequisitionReadyForIssuance(request)
 }
 
 function inventoryItemGroupIdentity(item: InventoryItemRecord) {
@@ -202,18 +201,15 @@ function inventoryItemGroupIdentity(item: InventoryItemRecord) {
 
 function groupIssuanceItems(
   entries: SelectedInventoryItem[],
-  purchaseRequisitionLineIds: Record<string, string>,
   isRequisitionIssuance: boolean,
 ): IssuanceItemGroup[] {
   const groups = new Map<string, IssuanceItemGroup>()
   for (const entry of entries) {
-    const lineId = purchaseRequisitionLineIds[entry.item.id]
     const identity = inventoryItemGroupIdentity(entry.item)
-    const key = lineId
-      ? `line:${lineId}|${identity}`
-      : isRequisitionIssuance
-        ? `item:${entry.item.id}`
-        : `catalog:${identity}`
+    // Same item from several requisition lines is one assignment group, so the units show as a single total.
+    const requisitionIdentity = [entry.item.itemName || entry.item.description, entry.item.category]
+      .map((value) => String(value || '').trim().toLowerCase()).join('|')
+    const key = isRequisitionIssuance ? `requisition:${requisitionIdentity}` : `catalog:${identity}`
     const group = groups.get(key)
     if (group) {
       group.entries.push(entry)
@@ -235,6 +231,12 @@ function groupIssuanceItems(
   }))
 }
 
+function recipientAllocationIdentity(allocation: Pick<RecipientAllocation, 'employeeCode' | 'location' | 'purpose'>) {
+  return [allocation.employeeCode, allocation.location, allocation.purpose]
+    .map((value) => value.trim().toLowerCase())
+    .join('|')
+}
+
 function groupedRecipientAllocations(
   group: IssuanceItemGroup,
   recipientAllocations: Record<string, RecipientAllocation[]>,
@@ -244,7 +246,7 @@ function groupedRecipientAllocations(
     ;(recipientAllocations[item.id] || []).forEach((allocation, index) => {
       const employeeCode = allocation.employeeCode.trim()
       const key = employeeCode
-        ? `${employeeCode.toLowerCase()}|${allocation.location.trim().toLowerCase()}|${allocation.purpose.trim().toLowerCase()}`
+        ? recipientAllocationIdentity(allocation)
         : `empty:${item.id}:${index}`
       const existing = grouped.get(key)
       if (existing) existing.quantity = String((Number(existing.quantity) || 0) + (Number(allocation.quantity) || 0))
@@ -262,7 +264,7 @@ function allocateGroupRecipientsToItems(group: IssuanceItemGroup, allocations: R
       if (remaining <= 0) break
       const itemAllocations = byItem[item.id]
       const duplicateRecipient = allocation.employeeCode
-        && itemAllocations.some((row) => row.employeeCode.toLowerCase() === allocation.employeeCode.toLowerCase())
+        && itemAllocations.some((row) => recipientAllocationIdentity(row) === recipientAllocationIdentity(allocation))
       if (duplicateRecipient) continue
       const alreadyAllocated = itemAllocations.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0)
       const room = Math.max(quantity - alreadyAllocated, 0)
@@ -322,6 +324,9 @@ function plannedRecipientsForRequest(request: ServiceRequest | null, lineNumber:
   return recipients.flatMap((raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
     const recipient = raw as Record<string, unknown>
+    const destinationType: PlannedDistributionDestination = recipient.destinationType === 'department_location' || recipient.destinationType === 'department_stock'
+      ? recipient.destinationType
+      : 'employee'
     const employeeCode = typeof recipient.employeeCode === 'string' ? recipient.employeeCode.trim() : ''
     const quantity = Number(recipient.quantity)
     if (!employeeCode || !Number.isInteger(quantity) || quantity < 1) return []
@@ -331,6 +336,7 @@ function plannedRecipientsForRequest(request: ServiceRequest | null, lineNumber:
       quantity,
       useLocation: typeof recipient.useLocation === 'string' ? recipient.useLocation : '',
       purpose: typeof recipient.purpose === 'string' ? recipient.purpose : '',
+      destinationType,
     }]
   })
 }
@@ -345,14 +351,22 @@ function allocatePlannedRecipients(
   if (!line) return [{ employeeCode: headEmployeeCode, quantity: String(quantity), location: '', purpose: '' }]
   let planned = remainingPlansByLine.get(line.id)
   if (!planned) {
-    const issuedByEmployee = new Map<string, number>()
+    const issuedByRecipient = new Map<string, number>()
     for (const issued of line.issuedRecipients || []) {
-      const code = issued.employeeCode.trim().toLowerCase()
-      issuedByEmployee.set(code, (issuedByEmployee.get(code) || 0) + Number(issued.quantity || 0))
+      const key = recipientAllocationIdentity({
+        employeeCode: issued.employeeCode,
+        location: issued.useLocation || '',
+        purpose: issued.purpose || '',
+      })
+      issuedByRecipient.set(key, (issuedByRecipient.get(key) || 0) + Number(issued.quantity || 0))
     }
     planned = plannedRecipientsForRequest(request, line.lineNumber).map((recipient) => ({
       ...recipient,
-      remaining: Math.max(recipient.quantity - (issuedByEmployee.get(recipient.employeeCode.toLowerCase()) || 0), 0),
+      remaining: Math.max(recipient.quantity - (issuedByRecipient.get(recipientAllocationIdentity({
+        employeeCode: recipient.employeeCode,
+        location: recipient.useLocation,
+        purpose: recipient.purpose,
+      })) || 0), 0),
     })).filter((recipient) => recipient.remaining > 0)
     remainingPlansByLine.set(line.id, planned)
   }
@@ -366,6 +380,7 @@ function allocatePlannedRecipients(
       quantity: String(assignedQuantity),
       location: recipient.useLocation,
       purpose: recipient.purpose,
+      destinationType: recipient.destinationType,
     })
     recipient.remaining -= assignedQuantity
     remaining -= assignedQuantity
@@ -456,14 +471,10 @@ export default function MainIssuance() {
   const [showEmployeeItems, setShowEmployeeItems] = useState(false)
   const [selectedQuantities, setSelectedQuantities] = useState<Record<string, string>>({})
   const [recipientAllocations, setRecipientAllocations] = useState<Record<string, RecipientAllocation[]>>({})
+  // What the requester designated per item; shown read-only so GSO Staff can check it before assigning.
+  const [designatedRecipientsByItem, setDesignatedRecipientsByItem] = useState<Record<string, PlannedRecipient[]>>({})
   const [isRecipientAssignmentOpen, setIsRecipientAssignmentOpen] = useState(false)
   const [recipientEmployeeSearch, setRecipientEmployeeSearch] = useState('')
-  const [isManualRecipientFormOpen, setIsManualRecipientFormOpen] = useState(false)
-  const [manualRecipientDraft, setManualRecipientDraft] = useState({ employeeCode: '', firstName: '', middleName: '', lastName: '', suffix: '', email: '', position: '' })
-  const [employeePositions, setEmployeePositions] = useState<string[]>([])
-  const [isSavingManualRecipient, setIsSavingManualRecipient] = useState(false)
-  const [manualRecipientError, setManualRecipientError] = useState('')
-  const [manualRecipientSuccess, setManualRecipientSuccess] = useState('')
   const [recipientAssignmentChecks, setRecipientAssignmentChecks] = useState<Record<string, EmployeeIssuanceRecord['assignedItems']>>({})
   const [recipientAssignmentErrors, setRecipientAssignmentErrors] = useState<Record<string, string>>({})
   const [purchaseRequisitionLineIds, setPurchaseRequisitionLineIds] = useState<Record<string, string>>({})
@@ -506,12 +517,10 @@ export default function MainIssuance() {
       listInventoryItems(),
       listStaffPurchaseRequisitions().catch(() => []),
       selectedPurchaseRequisitionId ? getStaffPurchaseRequisition(selectedPurchaseRequisitionId) : Promise.resolve(null),
-      listEmployeePositions().catch(() => ({ positions: [] })),
     ])
-      .then(([employeeResult, inventoryResult, requisitionQueue, purchaseRequisition, positionResult]) => {
+      .then(([employeeResult, inventoryResult, requisitionQueue, purchaseRequisition, ]) => {
         if (!active) return
         setEmployees(employeeResult.employees)
-        setEmployeePositions(positionResult.positions.map((position) => position.name))
         setReadyRequisitions(requisitionQueue.filter(isReadyPurchaseRequisition))
         const requestEmployeeCode = purchaseRequisition
           ? formText(purchaseRequisition.formData.requesterEmployeeCode) || employeeCodeFromUrl
@@ -534,7 +543,7 @@ export default function MainIssuance() {
         if (purchaseRequisition) {
           const reservedByItem = new Map<string, { quantity: number; lineId: string; lineNumber: number }>()
           for (const line of purchaseRequisition.purchaseLines || []) {
-            if (!MAIN_ISSUANCE_READY_STATUSES.includes(line.routeStatus)) continue
+            if (!purchaseLineReadyForIssuance(line)) continue
             for (const allocation of line.allocations || []) {
               if (allocation.status !== 'Reserved') continue
               const remaining = Number(allocation.quantity) - Number(allocation.fulfilledQuantity || 0)
@@ -563,6 +572,11 @@ export default function MainIssuance() {
             .map(([itemId, reservation]) => [itemId, reservation.lineId])))
           const lineById = new Map((purchaseRequisition.purchaseLines || []).map((line) => [line.id, line]))
           const remainingPlansByLine = new Map<string, Array<PlannedRecipient & { remaining: number }>>()
+          setDesignatedRecipientsByItem(Object.fromEntries(items.map((item) => {
+            const reservation = reservedByItem.get(item.id)
+            const line = reservation ? lineById.get(reservation.lineId) : undefined
+            return [item.id, line ? plannedRecipientsForRequest(purchaseRequisition, line.lineNumber) : []]
+          })))
           setRecipientAllocations(Object.fromEntries(items.map((item) => {
             const reservation = reservedByItem.get(item.id)
             const line = reservation ? lineById.get(reservation.lineId) : undefined
@@ -606,6 +620,27 @@ export default function MainIssuance() {
 
     return () => { active = false }
   }, [selectedPurchaseRequisitionId])
+
+  // A purchased shortage can become ready while this screen is open in another tab.
+  // Refresh only the compact picker queue when staff returns here or opens the picker.
+  useEffect(() => {
+    const refreshReadyRequisitions = () => {
+      listStaffPurchaseRequisitions()
+        .then((requests) => setReadyRequisitions(requests.filter(isReadyPurchaseRequisition)))
+        .catch(() => undefined)
+    }
+    window.addEventListener('focus', refreshReadyRequisitions)
+    return () => window.removeEventListener('focus', refreshReadyRequisitions)
+  }, [])
+
+  useEffect(() => {
+    if (!isRequisitionPickerOpen) return
+    let active = true
+    listStaffPurchaseRequisitions()
+      .then((requests) => { if (active) setReadyRequisitions(requests.filter(isReadyPurchaseRequisition)) })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [isRequisitionPickerOpen])
 
   useEffect(() => {
     if (!selectedEmployeeCode) return
@@ -705,7 +740,7 @@ export default function MainIssuance() {
       || first.itemName.localeCompare(second.itemName)
       || first.itemCode.localeCompare(second.itemCode)), [categoryAndSearchInventory, inventoryTypeFilter])
   const filteredInventoryGroups = useMemo(
-    () => groupIssuanceItems(filteredInventory.map((item) => ({ item, quantity: item.availableQuantity })), purchaseRequisitionLineIds, isRequisitionIssuance),
+    () => groupIssuanceItems(filteredInventory.map((item) => ({ item, quantity: item.availableQuantity })), isRequisitionIssuance),
     [filteredInventory, purchaseRequisitionLineIds, isRequisitionIssuance],
   )
   const inventoryPageCount = Math.max(1, Math.ceil(filteredInventoryGroups.length / INVENTORY_PAGE_SIZE))
@@ -728,7 +763,7 @@ export default function MainIssuance() {
   const selectedReadyRequisitionDetails = useMemo(() => {
     const request = readyRequisitions.find((requisition) => requisition.id === selectedPurchaseRequisitionId)
     if (!request) return null
-    const readyLines = linesOf(request).filter((line) => MAIN_ISSUANCE_READY_STATUSES.includes(line.routeStatus))
+    const readyLines = linesOf(request).filter(purchaseLineReadyForIssuance)
     const reservedUnits = readyLines.reduce((total, line) => total + line.allocations
       .filter((allocation) => allocation.status === 'Reserved')
       .reduce((lineTotal, allocation) => lineTotal + Math.max(Number(allocation.quantity) - Number(allocation.fulfilledQuantity || 0), 0), 0), 0)
@@ -746,7 +781,7 @@ export default function MainIssuance() {
     return item ? [{ item, quantity: Number(quantityText || 0) }] : []
   }), [inventoryById, selectedQuantities])
   const selectedItemGroups = useMemo(
-    () => groupIssuanceItems(selectedItems, purchaseRequisitionLineIds, isRequisitionIssuance),
+    () => groupIssuanceItems(selectedItems, isRequisitionIssuance),
     [selectedItems, purchaseRequisitionLineIds, isRequisitionIssuance],
   )
   const selectedUnitCount = selectedItems.reduce((total, selection) => total + selection.quantity, 0)
@@ -828,10 +863,12 @@ export default function MainIssuance() {
   const invalidRecipientAllocation = isRequisitionIssuance && selectedItems.some(({ item, quantity }) => {
     const allocations = recipientAllocations[item.id] || []
     const total = allocations.reduce((sum, allocation) => sum + (Number(allocation.quantity) || 0), 0)
-    const codes = allocations.map((allocation) => allocation.employeeCode.trim().toLowerCase()).filter(Boolean)
+    const allocationIdentities = allocations
+      .filter((allocation) => Boolean(allocation.employeeCode.trim()))
+      .map((allocation) => recipientAllocationIdentity(allocation))
     return total !== quantity
       || allocations.some((allocation) => !assignableEmployees.some((employee) => employee.id === allocation.employeeCode))
-      || new Set(codes).size !== codes.length
+      || new Set(allocationIdentities).size !== allocationIdentities.length
       || allocations.some((allocation) => !Number.isInteger(Number(allocation.quantity)) || Number(allocation.quantity) < 1)
   })
   const assignedRecipientUnitCount = selectedItemGroups.reduce((total, group) => total
@@ -1027,51 +1064,6 @@ export default function MainIssuance() {
       location: '',
       purpose: '',
     }])
-  }
-
-  async function handleManualRecipientSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!selectedEmployee) {
-      setManualRecipientError('Choose the receiving head first so the new employee is added to the correct department.')
-      return
-    }
-    if (!employeePositions.includes(manualRecipientDraft.position)) {
-      setManualRecipientError('Choose a position from Employee Master Data.')
-      return
-    }
-
-    setIsSavingManualRecipient(true)
-    setManualRecipientError('')
-    setManualRecipientSuccess('')
-    try {
-      const input: EmployeeProfileInput = {
-        employeeCode: manualRecipientDraft.employeeCode.trim(),
-        firstName: manualRecipientDraft.firstName.trim(),
-        middleName: manualRecipientDraft.middleName.trim(),
-        lastName: manualRecipientDraft.lastName.trim(),
-        suffix: manualRecipientDraft.suffix.trim(),
-        email: manualRecipientDraft.email.trim(),
-        position: manualRecipientDraft.position,
-        department: selectedEmployee.department,
-        status: 'Active',
-      }
-      const { employee } = await createEmployee(input)
-      setEmployees((current) => current.some((entry) => entry.id === employee.id) ? current : [...current, employee])
-      setRecipientAssignmentChecks((current) => ({ ...current, [employee.id]: [] }))
-      setRecipientAssignmentErrors((current) => {
-        const next = { ...current }
-        delete next[employee.id]
-        return next
-      })
-      setRecipientEmployeeSearch(employeeName(employee))
-      setManualRecipientSuccess(`${employeeName(employee)} was added to Employee Master Data. Choose them from an employee picker.`)
-      setManualRecipientDraft({ employeeCode: '', firstName: '', middleName: '', lastName: '', suffix: '', email: '', position: '' })
-      setIsManualRecipientFormOpen(false)
-    } catch (error) {
-      setManualRecipientError(error instanceof Error ? error.message : 'Unable to add the employee. Please check the details and try again.')
-    } finally {
-      setIsSavingManualRecipient(false)
-    }
   }
 
   function removeGroupRecipientAllocation(group: IssuanceItemGroup, allocationIndex: number) {
@@ -1287,11 +1279,11 @@ export default function MainIssuance() {
         <section className="rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
           <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff issuance</span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Main Issuance</h1>
-          <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">Issue items from an approved requisition or distribute consumable stock directly to an employee.</p>
+          <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">Issue reserved requests, or give consumable stock to an employee.</p>
           <RequisitionIssuanceShortcuts active="issuance" />
         </section>
 
-        {selectedPurchaseRequisitionId && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3"><p className="text-xs font-extrabold text-indigo-900">Purchase requisition {purchaseRequisitionReference || selectedPurchaseRequisitionId}</p><p className="mt-1 text-[0.68rem] text-indigo-800">Only approved, reserved items are available here. Confirm the receiving head, allocate each item to its actual employee, then record the physical handover.</p>{purchaseRequisitionReusableCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionReusableCount} reusable item record(s) are handled through the separate Borrowing workflow.</p>}{purchaseRequisitionOtherTypeCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionOtherTypeCount} other reserved item record(s) use another issuance type. Return to Purchase Requisitions after this batch.</p>}</div>}
+        {selectedPurchaseRequisitionId && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3"><p className="text-xs font-extrabold text-indigo-900">Purchase requisition {purchaseRequisitionReference || selectedPurchaseRequisitionId}</p><p className="mt-1 text-[0.68rem] text-indigo-800">All items are reserved and ready.</p>{purchaseRequisitionReusableCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionReusableCount} reusable item record(s) are handled through the separate Borrowing workflow.</p>}{purchaseRequisitionOtherTypeCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionOtherTypeCount} other reserved item record(s) use another issuance type. Return to Purchase Requisitions after this batch.</p>}</div>}
         {showRequisitionStep && <section className="mt-5 rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="issuance-source-title">
           <StepHeader
             step={1}
@@ -1299,7 +1291,7 @@ export default function MainIssuance() {
             status="done"
             titleId="issuance-source-title"
             title="Choose issuance source"
-            description="Select a ready requisition or issue consumable stock directly."
+            description="Pick a ready request or issue consumables."
           />
           <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(15rem,0.72fr)_minmax(0,1.28fr)]">
             <button
@@ -1311,7 +1303,7 @@ export default function MainIssuance() {
             >
               <span>
                 <span className="block text-sm font-extrabold text-slate-900">Direct consumables</span>
-                <span className="mt-1 block text-xs leading-relaxed text-slate-600">For available consumable stock that does not need a requisition.</span>
+                <span className="mt-1 block text-xs leading-relaxed text-slate-600">Stock with no request needed.</span>
               </span>
               <span className={`mt-4 inline-flex items-center rounded-full px-2.5 py-1 text-[0.65rem] font-extrabold ${!isRequisitionIssuance ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
                 {!isRequisitionIssuance ? 'Selected' : 'Issue stock directly'}
@@ -1321,7 +1313,7 @@ export default function MainIssuance() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-extrabold text-slate-900">Approved requisitions</h3>
-                  <p className="mt-0.5 text-xs text-slate-600">Choose a request with reserved items ready for issuance.</p>
+                  <p className="mt-0.5 text-xs text-slate-600">Only fully reserved requests can be chosen.</p>
                 </div>
                 <span className="rounded-full bg-white px-2.5 py-1 text-[0.65rem] font-extrabold text-blue-800 ring-1 ring-blue-100">
                   {readyRequisitions.length} ready
@@ -1356,7 +1348,7 @@ export default function MainIssuance() {
                   onClick={() => { setRequisitionSearch(''); setIsRequisitionPickerOpen(true) }}
                   className={`shrink-0 rounded-xl px-4 py-2.5 text-xs font-extrabold transition disabled:cursor-not-allowed disabled:opacity-50 ${selectedPurchaseRequisitionId ? 'border border-blue-200 bg-white text-blue-700 hover:bg-blue-50' : 'bg-blue-700 text-white shadow-sm hover:bg-blue-800'}`}
                 >
-                  {selectedPurchaseRequisitionId ? 'Change request' : 'Choose approved requisition'}
+                  {selectedPurchaseRequisitionId ? 'Change request' : 'Choose request with ready items'}
                 </button>
               </div>
             </div>
@@ -1377,10 +1369,10 @@ export default function MainIssuance() {
               <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-4 sm:px-6">
                 <div className="min-w-0">
                   <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Main issuance</p>
-                  <h2 id="requisition-picker-title" className="mt-1 text-base font-black text-slate-900 sm:text-lg">Choose an approved requisition</h2>
-                  <p className="mt-1 text-xs leading-relaxed text-slate-600">Select the request whose reserved items you are ready to issue.</p>
+                  <h2 id="requisition-picker-title" className="mt-1 text-base font-black text-slate-900 sm:text-lg">Choose a request with ready items</h2>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-600">Select a complete request. Requests with any item shortage stay out of this list.</p>
                 </div>
-                <button type="button" aria-label="Close approved requisition picker" disabled={isSubmitting} onClick={() => setIsRequisitionPickerOpen(false)} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Close</button>
+                <button type="button" aria-label="Close ready requisition picker" disabled={isSubmitting} onClick={() => setIsRequisitionPickerOpen(false)} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Close</button>
               </header>
 
               <div className="grid shrink-0 gap-3 border-b border-slate-200 bg-slate-50/70 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end sm:px-6">
@@ -1399,9 +1391,9 @@ export default function MainIssuance() {
                 <span className="rounded-xl bg-blue-50 px-3.5 py-2.5 text-xs font-extrabold text-blue-900">{readyRequisitions.length} ready request{readyRequisitions.length === 1 ? '' : 's'}</span>
               </div>
 
-              <div className="inventory-list-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto p-4 sm:p-6" role="group" aria-label="Ready approved requisitions">
+              <div className="inventory-list-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto p-4 sm:p-6" role="group" aria-label="Requests with items ready for issuance">
                 {filteredReadyRequisitions.map((request) => {
-                  const readyLines = linesOf(request).filter((line) => MAIN_ISSUANCE_READY_STATUSES.includes(line.routeStatus))
+                  const readyLines = linesOf(request).filter(purchaseLineReadyForIssuance)
                   const reservedUnits = readyLines.reduce((total, line) => total + line.allocations
                     .filter((allocation) => allocation.status === 'Reserved')
                     .reduce((lineTotal, allocation) => lineTotal + Math.max(Number(allocation.quantity) - Number(allocation.fulfilledQuantity || 0), 0), 0), 0)
@@ -1438,7 +1430,7 @@ export default function MainIssuance() {
                   )
                 })}
                 {isLoading && filteredReadyRequisitions.length === 0 && <p role="status" className="rounded-xl bg-white px-3 py-8 text-center text-xs font-semibold text-slate-500">Loading ready requisitions…</p>}
-                {!isLoading && filteredReadyRequisitions.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 bg-white px-3 py-8 text-center text-xs font-semibold text-slate-500">{readyRequisitions.length === 0 ? 'No approved requisitions are ready for issuance.' : 'No requisition matches your search. Try a request number, requester name, or department.'}</p>}
+                {!isLoading && filteredReadyRequisitions.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 bg-white px-3 py-8 text-center text-xs font-semibold text-slate-500">{readyRequisitions.length === 0 ? 'No requisition has items cleared for issuance.' : 'No requisition matches your search. Try a request number, requester name, or department.'}</p>}
               </div>
 
               <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
@@ -1458,7 +1450,7 @@ export default function MainIssuance() {
                 status={stepStatusFor(employeeStepNumber, isEmployeeStepDone)}
                 titleId="employee-section-title"
                 title={isRequisitionIssuance ? 'Confirm receiving head' : 'Choose employee'}
-                description={isRequisitionIssuance ? 'Confirm the requesting head who will receive the physical handover. Assign actual staff recipients in the review step below.' : 'Who will receive the selected items?'}
+                description={isRequisitionIssuance ? 'Who will receive the handover?' : 'Who will receive the selected items?'}
               />
               <label className="mt-3 block">
                 <span className="sr-only">Employee</span>
@@ -1556,8 +1548,8 @@ export default function MainIssuance() {
                 titleId="items-section-title"
                 title="Choose items"
                 description={isRequisitionIssuance
-                  ? 'Review reserved items from the approved purchase requisition.'
-                  : 'Choose consumable stock to issue directly to the selected employee.'}
+                  ? 'Reserved items ready to issue.'
+                  : 'Pick consumable stock for the employee.'}
               />
 
               <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(11rem,0.55fr)]">
@@ -1706,7 +1698,7 @@ export default function MainIssuance() {
               status={stepStatusFor(reviewStepNumber, isShowingSentBatch)}
               titleId="review-section-title"
               title={isShowingSentBatch ? 'Issuance recorded' : 'Review issuance'}
-              description={isShowingSentBatch ? 'Track the record or start another transaction.' : isRequisitionIssuance ? 'Confirm the receiving head, actual staff recipients, and quantities.' : isConsumableIssue ? 'Confirm the employee and consumable quantities.' : 'Confirm the employee, approved items, and quantities.'}
+              description={isShowingSentBatch ? 'Track the record or start another transaction.' : isRequisitionIssuance ? 'Check the recipients and record the handover.' : isConsumableIssue ? 'Confirm the employee and consumable quantities.' : 'Confirm the employee, approved items, and quantities.'}
             >
               {!isShowingSentBatch && (
                 <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold text-blue-800">
@@ -1729,7 +1721,7 @@ export default function MainIssuance() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h3 className="text-sm font-extrabold text-blue-950">Actual employee assignments</h3>
-                        <p className="mt-0.5 text-[0.68rem] leading-relaxed text-blue-900">The head receives the items from GSO. Assign each unit to the employee who will use it.</p>
+                        <p className="mt-0.5 text-[0.68rem] leading-relaxed text-blue-900">Assign each unit to the employee who will use it.</p>
                       </div>
                       <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${isRecipientAssignmentComplete ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}`}>
                         {isRecipientAssignmentComplete ? 'Assignments ready' : 'Assignment needed'}
@@ -1763,18 +1755,18 @@ export default function MainIssuance() {
                         aria-modal="true"
                         aria-labelledby="recipient-assignment-title"
                         onKeyDown={(event) => { if (event.key === 'Escape' && !isSubmitting) setIsRecipientAssignmentOpen(false) }}
-                        className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:rounded-3xl"
+                        className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl sm:rounded-3xl"
                       >
-                        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+                        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:px-7">
                           <div className="min-w-0">
                             <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Staff distribution</p>
                             <h2 id="recipient-assignment-title" className="mt-1 text-base font-black text-slate-900 sm:text-lg">Assign items to actual employees</h2>
-                            <p className="mt-1 text-xs leading-relaxed text-slate-600">{selectedEmployee ? `GSO will hand the items to ${employeeName(selectedEmployee)}. Assign the units below to their actual users.` : 'Assign each unit to its actual user.'}</p>
+                            <p className="mt-1 text-sm text-slate-600">{selectedEmployee ? `Hand-over to ${employeeName(selectedEmployee)}. Assign each unit to its user.` : 'Assign each unit to its user.'}</p>
                           </div>
                           <button type="button" aria-label="Close employee assignments" disabled={isSubmitting} onClick={() => setIsRecipientAssignmentOpen(false)} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Close</button>
                         </header>
 
-                        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+                        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/70 p-4 sm:p-6">
                           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                             <label className="block">
                               <span className="mb-1.5 block text-xs font-extrabold text-slate-700">Find an employee</span>
@@ -1793,73 +1785,8 @@ export default function MainIssuance() {
                             </div>
                           </div>
                           <p className="mt-2 text-[0.68rem] leading-relaxed text-slate-500">
-                            {assignableEmployees.length} active employee{assignableEmployees.length === 1 ? '' : 's'} in {selectedEmployee?.department || 'the requesting department'} can be selected. Other departments are hidden; search narrows the options in every picker.
+                            {assignableEmployees.length} employee{assignableEmployees.length === 1 ? '' : 's'} in {selectedEmployee?.department || 'the department'} available.
                           </p>
-                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-[0.68rem] text-slate-500">Employee missing from the list?</p>
-                            <button
-                              type="button"
-                              disabled={isSubmitting || isSavingManualRecipient}
-                              onClick={() => {
-                                setIsManualRecipientFormOpen((open) => !open)
-                                setManualRecipientError('')
-                                setManualRecipientSuccess('')
-                              }}
-                              className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {isManualRecipientFormOpen ? 'Close form' : '+ Add employee manually'}
-                            </button>
-                          </div>
-                          {manualRecipientSuccess && <p role="status" className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">{manualRecipientSuccess}</p>}
-                          {isManualRecipientFormOpen && <form onSubmit={(event) => void handleManualRecipientSubmit(event)} className="mt-3 rounded-xl border border-blue-200 bg-blue-50/50 p-3 sm:p-4">
-                            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
-                              <div>
-                                <h3 className="text-sm font-extrabold text-slate-900">Add employee to Employee Master Data</h3>
-                                <p className="mt-1 text-[0.68rem] text-slate-600">They will be added to {selectedEmployee?.department || 'the head’s department'} and appear in the employee picker.</p>
-                              </div>
-                              <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-emerald-800">Active profile</span>
-                            </div>
-                            <div className="grid gap-2.5 sm:grid-cols-2">
-                              <label className="block">
-                                <span className="mb-1 block text-xs font-extrabold text-slate-700">Employee code *</span>
-                                <input required maxLength={40} value={manualRecipientDraft.employeeCode} onChange={(event) => setManualRecipientDraft((draft) => ({ ...draft, employeeCode: event.target.value }))} disabled={isSavingManualRecipient || isSubmitting} placeholder="Official employee code" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs font-extrabold text-slate-700">School email *</span>
-                                <input required type="email" maxLength={254} value={manualRecipientDraft.email} onChange={(event) => setManualRecipientDraft((draft) => ({ ...draft, email: event.target.value }))} disabled={isSavingManualRecipient || isSubmitting} placeholder="name@school.edu" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs font-extrabold text-slate-700">First name *</span>
-                                <input required maxLength={100} value={manualRecipientDraft.firstName} onChange={(event) => setManualRecipientDraft((draft) => ({ ...draft, firstName: event.target.value }))} disabled={isSavingManualRecipient || isSubmitting} placeholder="First name" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs font-extrabold text-slate-700">Last name *</span>
-                                <input required maxLength={100} value={manualRecipientDraft.lastName} onChange={(event) => setManualRecipientDraft((draft) => ({ ...draft, lastName: event.target.value }))} disabled={isSavingManualRecipient || isSubmitting} placeholder="Last name" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs font-extrabold text-slate-700">Middle name <span className="font-semibold text-slate-400">(optional)</span></span>
-                                <input maxLength={100} value={manualRecipientDraft.middleName} onChange={(event) => setManualRecipientDraft((draft) => ({ ...draft, middleName: event.target.value }))} disabled={isSavingManualRecipient || isSubmitting} placeholder="Middle name" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
-                              </label>
-                              <label className="block">
-                                <span className="mb-1 block text-xs font-extrabold text-slate-700">Suffix <span className="font-semibold text-slate-400">(optional)</span></span>
-                                <input maxLength={40} value={manualRecipientDraft.suffix} onChange={(event) => setManualRecipientDraft((draft) => ({ ...draft, suffix: event.target.value }))} disabled={isSavingManualRecipient || isSubmitting} placeholder="Jr., III" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
-                              </label>
-                              <label className="block sm:col-span-2">
-                                <span className="mb-1 block text-xs font-extrabold text-slate-700">Position *</span>
-                                <select required value={manualRecipientDraft.position} onChange={(event) => setManualRecipientDraft((draft) => ({ ...draft, position: event.target.value }))} disabled={isSavingManualRecipient || isSubmitting || employeePositions.length === 0} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
-                                  <option value="">Select position</option>
-                                  {employeePositions.map((position) => <option key={position} value={position}>{position}</option>)}
-                                </select>
-                              </label>
-                            </div>
-                            <p className="mt-2 text-[0.65rem] leading-relaxed text-slate-500">Use the official employee code. This creates an Employee Master Data profile, not a login account.</p>
-                            {employeePositions.length === 0 && <p role="alert" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">No positions are available. Add a position in Employee Master Data first.</p>}
-                            {manualRecipientError && <p role="alert" className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800">{manualRecipientError}</p>}
-                            <div className="mt-3 flex justify-end gap-2">
-                              <button type="button" disabled={isSavingManualRecipient || isSubmitting} onClick={() => setIsManualRecipientFormOpen(false)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancel</button>
-                              <button type="submit" disabled={isSavingManualRecipient || isSubmitting || employeePositions.length === 0} className="rounded-lg bg-blue-700 px-3.5 py-2 text-xs font-extrabold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50">{isSavingManualRecipient ? 'Saving employee…' : 'Save and add'}</button>
-                            </div>
-                          </form>}
 
                           <div className="mt-4 space-y-3">
                             {selectedItemGroups.map((group) => {
@@ -1868,15 +1795,25 @@ export default function MainIssuance() {
                               const allocatedTotal = allocations.reduce((sum, allocation) => sum + (Number(allocation.quantity) || 0), 0)
                               const allocationIsComplete = allocatedTotal === quantity
                               const itemCodes = group.entries.map((entry) => entry.item.itemCode)
-                              return <article key={`recipient-${group.key}`} className="rounded-2xl border border-slate-200 bg-slate-50/50 p-3 sm:p-4">
+                              return <article key={`recipient-${group.key}`} className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                   <div className="min-w-0">
                                     <p className="text-sm font-extrabold text-slate-900">{item.itemName || item.description} <span className="text-blue-700">×{quantity}</span></p>
-                                    <p className="mt-0.5 text-[0.68rem] font-semibold text-slate-500">{itemCodes.length} physical record{itemCodes.length === 1 ? '' : 's'} · {item.unitOfMeasure}</p>
-                                    <p title={itemCodes.join(' · ')} className="mt-0.5 wrap-break-word text-[0.65rem] text-slate-500">Unit codes: {itemCodes.join(' · ')}</p>
+                                    {(() => {
+                                      const descriptions = new Map<string, number>()
+                                      group.entries.forEach((entry) => {
+                                        const text = (entry.item.description || '').trim()
+                                        if (text) descriptions.set(text, (descriptions.get(text) ?? 0) + entry.quantity)
+                                      })
+                                      return [...descriptions].map(([text, count]) => <p key={text} className="mt-0.5 wrap-break-word text-[0.68rem] font-semibold text-slate-600">{text}{descriptions.size > 1 ? ` · ${count} unit${count === 1 ? '' : 's'}` : ''}</p>)
+                                    })()}
                                   </div>
                                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${allocationIsComplete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{allocatedTotal} / {quantity} assigned</span>
                                 </div>
+                                {(designatedRecipientsByItem[group.entries[0]?.item.id] || []).length > 0 && <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.68rem] text-slate-600">
+                                  <span className="font-extrabold text-blue-700">Requester designated:</span>
+                                  {(designatedRecipientsByItem[group.entries[0]?.item.id] || []).map((recipient, recipientIndex) => <span key={`${recipient.employeeCode}-${recipientIndex}`} className="font-semibold text-slate-800">{recipient.destinationType === 'department_location' ? recipient.useLocation || 'Designated room' : recipient.employeeName || recipient.employeeCode} · {recipient.quantity}</span>)}
+                                </p>}
                                 <div className="mt-3 space-y-2.5">
                                   {allocations.map((allocation, allocationIndex) => {
                                     const recipient = employees.find((employee) => employee.id === allocation.employeeCode)
@@ -1889,33 +1826,26 @@ export default function MainIssuance() {
                                       ...assignableEmployees.filter((employee) => employee.id === allocation.employeeCode && !filteredAssignableEmployees.some((match) => match.id === employee.id)),
                                       ...filteredAssignableEmployees,
                                     ]
-                                    return <div key={`${group.key}-${allocation.employeeCode || 'unassigned'}-${allocationIndex}`} className="rounded-xl border border-slate-200 bg-white p-3">
-                                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_auto]">
-                                        <label className="block min-w-0">
-                                          <span className="mb-1 block text-xs font-extrabold text-slate-700">Actual employee</span>
-                                          <select value={allocation.employeeCode} disabled={isSubmitting} onChange={(event) => updateGroupRecipientAllocation(group, allocationIndex, 'employeeCode', event.target.value)} className="h-11 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                                    return <div key={`${group.key}-${allocation.employeeCode || 'unassigned'}-${allocationIndex}`} className="rounded-xl border-2 border-slate-200 bg-slate-50/60 p-3.5">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <select value={allocation.employeeCode} disabled={isSubmitting} aria-label="Actual employee" onChange={(event) => updateGroupRecipientAllocation(group, allocationIndex, 'employeeCode', event.target.value)} className="h-11 min-w-0 flex-1 basis-56 rounded-xl border-2 border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
                                             <option value="">Select employee</option>
                                             {allocation.employeeCode && !assignableEmployees.some((employee) => employee.id === allocation.employeeCode) && <option value={allocation.employeeCode} disabled>Unavailable employee · {allocation.employeeCode} · choose another</option>}
-                                            {matchingOptions.map((employee) => <option key={employee.id} value={employee.id} disabled={allocations.some((row, rowIndex) => rowIndex !== allocationIndex && row.employeeCode === employee.id)}>{employee.id === selectedEmployee?.id ? `${employeeName(employee)} · Head / department stock` : `${employeeName(employee)} · ${employee.id} · ${employee.position}`}</option>)}
-                                          </select>
-                                          {recipient && <span className="mt-1 block truncate text-[0.65rem] font-medium text-slate-500">{recipient.email}</span>}
-                                        </label>
-                                        <label className="block"><span className="mb-1 block text-xs font-extrabold text-slate-700">Quantity</span><input type="number" min="1" max={maxAllocation} step="1" value={allocation.quantity} disabled={isSubmitting} onChange={(event) => updateGroupRecipientAllocation(group, allocationIndex, 'quantity', event.target.value)} className="h-11 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm font-semibold text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /></label>
-                                        <button type="button" disabled={isSubmitting || allocations.length <= 1} onClick={() => removeGroupRecipientAllocation(group, allocationIndex)} className="self-end rounded-lg border border-rose-100 px-3 py-3 text-xs font-extrabold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40">Remove</button>
+                                            {matchingOptions.map((employee) => <option key={employee.id} value={employee.id} disabled={allocations.some((row, rowIndex) => rowIndex !== allocationIndex && recipientAllocationIdentity(row) === recipientAllocationIdentity({ ...allocation, employeeCode: employee.id }))}>{employee.id === selectedEmployee?.id ? `${employeeName(employee)} · Head / department stock` : `${employeeName(employee)} · ${employee.id} · ${employee.position}`}</option>)}
+                                        </select>
+                                        <input type="number" min="1" max={maxAllocation} step="1" aria-label="Quantity" value={allocation.quantity} disabled={isSubmitting} onChange={(event) => updateGroupRecipientAllocation(group, allocationIndex, 'quantity', event.target.value)} className="h-11 w-20 rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-semibold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
+                                        <button type="button" disabled={isSubmitting || allocations.length <= 1} onClick={() => removeGroupRecipientAllocation(group, allocationIndex)} className="h-11 rounded-xl border-2 border-rose-200 bg-white px-4 text-xs font-extrabold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40">Remove</button>
                                       </div>
-                                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                                        <label className="block"><span className="mb-1 block text-[0.68rem] font-extrabold text-slate-700">Actual use location <span className="font-semibold text-slate-400">(optional)</span></span><input value={allocation.location} maxLength={200} disabled={isSubmitting} onChange={(event) => updateGroupRecipientAllocation(group, allocationIndex, 'location', event.target.value)} placeholder="e.g. IT Office · Room 201" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /></label>
-                                        <label className="block"><span className="mb-1 block text-[0.68rem] font-extrabold text-slate-700">Intended use <span className="font-semibold text-slate-400">(optional)</span></span><input value={allocation.purpose} maxLength={500} disabled={isSubmitting} onChange={(event) => updateGroupRecipientAllocation(group, allocationIndex, 'purpose', event.target.value)} placeholder="e.g. For student records" className="h-10 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /></label>
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        <input value={allocation.location} maxLength={200} disabled={isSubmitting} aria-label="Actual use location" onChange={(event) => updateGroupRecipientAllocation(group, allocationIndex, 'location', event.target.value)} placeholder="Actual use location (optional)" className="h-11 min-w-0 flex-1 basis-56 rounded-xl border-2 border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
                                       </div>
-                                      {allocation.employeeCode && <div className={`mt-2 rounded-lg px-2.5 py-2 text-[0.68rem] ${recipientAssignmentErrors[allocation.employeeCode] ? 'bg-rose-50 text-rose-800' : sameItemAssignments.length > 0 ? 'bg-amber-50 text-amber-900' : recipientIsPending ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-800'}`}>
+                                      {allocation.employeeCode && (recipientAssignmentErrors[allocation.employeeCode] || recipientIsPending || sameItemAssignments.length > 0) && <p className={`mt-2 text-[0.68rem] font-semibold ${recipientAssignmentErrors[allocation.employeeCode] ? 'text-rose-700' : 'text-amber-800'}`}>
                                         {recipientAssignmentErrors[allocation.employeeCode]
                                           ? `Unable to cross-check ${recipient?.firstName || allocation.employeeCode}: ${recipientAssignmentErrors[allocation.employeeCode]}`
                                           : recipientIsPending
                                             ? `Checking current assignments for ${recipient ? employeeName(recipient) : allocation.employeeCode}…`
-                                            : sameItemAssignments.length > 0
-                                              ? `${recipient ? employeeName(recipient) : allocation.employeeCode} already has ${sameItemAssignments.reduce((sum, assigned) => sum + assigned.quantity, 0)} active ${item.itemName || item.description} item(s). Confirm this additional allocation is needed.`
-                                              : `Cross-check complete${recipient ? ` · ${employeeName(recipient)} has ${activeItems.length} active item record(s)` : ''}.`}
-                                      </div>}
+                                            : `${recipient ? employeeName(recipient) : allocation.employeeCode} already has ${sameItemAssignments.reduce((sum, assigned) => sum + assigned.quantity, 0)} active ${item.itemName || item.description} item(s). Confirm this additional allocation is needed.`}
+                                      </p>}
                                       {allocation.employeeCode && !recipientIsPending && !recipientAssignmentErrors[allocation.employeeCode] && activeItems.length > 0 && <details className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
                                         <summary className="cursor-pointer text-[0.68rem] font-extrabold text-slate-700">View current assignments ({activeItems.length})</summary>
                                         <ul className="mt-2 space-y-1 border-t border-slate-200 pt-2">
@@ -1929,15 +1859,15 @@ export default function MainIssuance() {
                               </article>
                             })}
                           </div>
-                          {invalidRecipientAllocation && <p role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-bold text-amber-900">Assign the full quantity in each item group. Each unit will still be linked to its own inventory record and barcode.</p>}
+                          {invalidRecipientAllocation && <p role="alert" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-bold text-amber-900">Assign the full quantity.</p>}
                           {recipientCrossCheckFailed && <p role="alert" className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-bold text-rose-800">Could not check one or more employees’ current assignments. Refresh Main Issuance and retry before issuing.</p>}
                         </div>
 
                         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
-                          <p className="text-xs font-semibold text-slate-600">{recipientCrossCheckPending ? 'Checking assigned employees…' : 'Your entries stay here while you review. Close this window to return to Step 4.'}</p>
+                          <p className="text-xs font-semibold text-slate-600">{recipientCrossCheckPending ? 'Checking assigned employees…' : 'Close to return to Step 4.'}</p>
                           <button
                             type="button"
-                            disabled={isSubmitting || !isRecipientAssignmentComplete || recipientCrossCheckPending || recipientCrossCheckFailed}
+                            disabled={isSubmitting || !isRecipientAssignmentComplete}
                             onClick={() => setIsRecipientAssignmentOpen(false)}
                             className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-600"
                           >
@@ -1962,7 +1892,14 @@ export default function MainIssuance() {
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
                               <p className="text-sm font-extrabold text-slate-900">{group.item.itemName || group.item.description} <span className="text-blue-700">×{group.quantity}</span></p>
-                              <p title={group.entries.map((entry) => entry.item.itemCode).join(' · ')} className="mt-1 wrap-break-word text-xs font-semibold text-slate-600">{group.entries.map((entry) => entry.item.itemCode).join(' · ')}</p>
+                              {(() => {
+                                const descriptions = new Map<string, number>()
+                                group.entries.forEach((entry) => {
+                                  const text = (entry.item.description || '').trim()
+                                  if (text) descriptions.set(text, (descriptions.get(text) ?? 0) + entry.quantity)
+                                })
+                                return [...descriptions].map(([text, quantity]) => <p key={text} className="mt-1 wrap-break-word text-xs font-semibold text-slate-600">{text}{descriptions.size > 1 ? ` · ${quantity} unit${quantity === 1 ? '' : 's'}` : ''}</p>)
+                              })()}
                               <p className="mt-1 text-[0.65rem] font-bold text-blue-700">{isRequisitionIssuance ? 'Approved requisition quantity · unit records and barcodes remain separate' : 'Consumable stock · issued immediately'}</p>
                             </div>
                             {isRequisitionIssuance && <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-emerald-800">Ready to issue</span>}
@@ -2010,7 +1947,7 @@ export default function MainIssuance() {
                 )}
 
                 <label className="mt-3 block border-t border-slate-200 pt-3">
-                  <span className={fieldLabelClass}>{selectedItems[0]?.item.trackingMode === 'individual' ? 'Accessories and handover notes' : 'Distribution notes'}</span>
+                  <span className={fieldLabelClass}>{selectedItems[0]?.item.trackingMode === 'individual' ? 'Notes' : 'Distribution notes'}</span>
                   <input
                     type="text"
                     value={notes}
@@ -2029,14 +1966,14 @@ export default function MainIssuance() {
                   disabled={isLoading || isSubmitting || !selectedEmployee || selectedItems.length === 0 || hasInvalidQuantity || hasMixedItemTypes || invalidRecipientAllocation || recipientCrossCheckPending || recipientCrossCheckFailed || Boolean(loadError)}
                   className="mt-3 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700 disabled:shadow-none"
                 >
-                  {isSubmitting ? 'Recording...' : `${isPerUnitPickup ? 'Record approved item handover' : 'Issue consumable stock'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
+                  {isSubmitting ? 'Recording...' : `${isPerUnitPickup ? 'Record handover' : 'Issue consumable stock'} (${selectedUnitCount} unit${selectedUnitCount === 1 ? '' : 's'})`}
                 </button>
                 {nextStepHint ? (
                   <p className="mt-2 text-center text-sm font-bold text-blue-800">{nextStepHint}</p>
                 ) : (
                   <p className="mt-2 text-xs leading-relaxed text-slate-600">
                     {isPerUnitPickup
-                      ? 'This handover is linked to an approved Purchase Requisition. Each barcode will be linked to the recipient allocation below.'
+                      ? 'Linked to an approved requisition.'
                       : 'Consumable stock is deducted immediately. No employee approval is required.'}
                   </p>
                 )}
@@ -2060,22 +1997,22 @@ export default function MainIssuance() {
                   <p className="mt-1">Borrow: {formatBorrowDateTime(submittedBatch.borrowDetails.useAt)} · Return: {formatBorrowDateTime(submittedBatch.borrowDetails.expectedReturnAt)}</p>
                   <p className="mt-1">Event: {submittedBatch.borrowDetails.purpose} · Location: {submittedBatch.borrowDetails.useLocation}</p>
                 </div>}
-                <ul className="mt-3 space-y-1.5 border-t border-emerald-200 pt-3 text-sm text-emerald-950">
-                  {submittedBatch.items.map((item) => (
-                    <li key={`${item.itemCode}-${item.recipientEmployeeCode}-${item.itemName}`} className="flex justify-between gap-3">
-                      <span className="min-w-0">
-                        <span className="block truncate">{item.itemCode} · {item.itemName}</span>
-                        {selectedPurchaseRequisitionId && <span className="mt-1 block text-xs font-extrabold text-emerald-800">For {item.recipientEmployeeName} · {item.recipientEmployeeCode}</span>}
-                        {(item.recipientLocation || item.recipientPurpose) && <span className="mt-0.5 block text-[0.68rem] leading-relaxed text-slate-600">{[item.recipientLocation, item.recipientPurpose].filter(Boolean).join(' · ')}</span>}
-                        {!isIndividualTrackedBatch && item.tags.map((tag) => <span key={tag.tagCode} className="mt-2 block rounded-lg border border-emerald-100 bg-white px-2.5 py-2 text-xs font-bold text-emerald-900">
-                          <span className="block">Barcode · Unit {tag.unitNumber}: {tag.tagCode}</span>
-                          <span className="mt-1 block"><BarcodeSvg value={tag.tagCode} /></span>
-                        </span>)}
-                      </span>
-                      <span className="shrink-0 font-bold">{item.quantity} {item.unitOfMeasure}</span>
-                    </li>
-                  ))}
-                </ul>
+                <div className="mt-3 border-t border-emerald-200 pt-3 text-sm text-emerald-950">
+                  {(() => {
+                    const quantities = new Map<string, number>()
+                    submittedBatch.items.forEach((item) => quantities.set(item.itemName, (quantities.get(item.itemName) ?? 0) + Number(item.quantity)))
+                    return [...quantities].map(([name, quantity]) => <p key={name} className="font-bold">{name} <span className="font-extrabold text-emerald-800">· {quantity} {submittedBatch.items[0]?.unitOfMeasure}</span></p>)
+                  })()}
+                  {selectedPurchaseRequisitionId && (() => {
+                    const names = [...new Set(submittedBatch.items.map((item) => item.recipientEmployeeName).filter(Boolean))]
+                    return names.length > 0 ? <p className="mt-1 text-xs font-extrabold text-emerald-800">For {names.join(', ')}</p> : null
+                  })()}
+                  {(() => {
+                    const places = [...new Set(submittedBatch.items.map((item) => [item.recipientLocation, item.recipientPurpose].filter(Boolean).join(' · ')).filter(Boolean))]
+                    return places.map((place) => <p key={place} className="mt-0.5 text-[0.68rem] leading-relaxed text-slate-600">{place}</p>)
+                  })()}
+                  {!isIndividualTrackedBatch && submittedBatch.items.some((item) => item.tags.length > 0) && <p className="mt-1 text-xs font-semibold text-emerald-900">{submittedBatch.items.flatMap((item) => item.tags).length} barcode labels · {submittedBatch.items.flatMap((item) => item.tags)[0]?.tagCode} to {submittedBatch.items.flatMap((item) => item.tags).at(-1)?.tagCode}</p>}
+                </div>
                 {isStaffDistributionBatch && <div className="mt-3">
                   <h4 className="mb-2 text-xs font-extrabold uppercase tracking-wide text-emerald-950">Print steps</h4>
                   <div className="grid gap-2 sm:grid-cols-2">
