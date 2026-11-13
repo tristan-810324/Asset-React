@@ -10,6 +10,7 @@ export type GsoNavigationItem =
   | 'Main Issuance'
   | 'Purchase Requisitions'
   | 'Asset Labels'
+  | 'Procurement'
   | 'Borrowing Requests'
   | 'Issuance History'
   | 'Audit Logs'
@@ -21,7 +22,7 @@ export type GsoNavigationItem =
   | 'Profile'
 
 type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Returns & Histories'>
-type NavigationIconName = 'archive' | 'bell' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
+type NavigationIconName = 'archive' | 'bell' | 'cart' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
 
 type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string; activePages?: GsoNavigationItem[] }
 type NavigationGroup = {
@@ -68,6 +69,13 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
       <rect x="5" y="4" width="14" height="17" rx="2" />
       <path d="M9 4.25V3.5A1.5 1.5 0 0 1 10.5 2h3A1.5 1.5 0 0 1 15 3.5v.75" />
       <path d="M12 11v6M9 14h6" />
+    </>
+  ),
+  cart: (
+    <>
+      <path d="M3 4h2l2.2 10.1a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 1.9-1.4L20.5 8H6" />
+      <circle cx="9.5" cy="19" r="1.25" />
+      <circle cx="17" cy="19" r="1.25" />
     </>
   ),
   close: <path d="m6 6 12 12M18 6 6 18" />,
@@ -148,6 +156,7 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
   { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/purchase-requisitions', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
+  { kind: 'link', name: 'Procurement', icon: 'cart', href: '/gso/procurement' },
   { kind: 'link', name: 'Borrowing Requests', icon: 'clipboard-plus', href: '/gso/borrowing-requests' },
   {
     kind: 'group',

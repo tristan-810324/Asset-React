@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GsoHeadPageFrame } from './gsoheadnavbar'
+import { IssuanceProgressPath } from '../components/requestpath'
 import {
   listIssuanceRecords,
   type ConfirmationMethod,
@@ -86,13 +87,6 @@ function formatDue(value: string | null) {
   return time === '12:00 AM' ? dateFormat.format(date) : `${dateFormat.format(date)} · ${time}`
 }
 
-function conditionTone(condition: string) {
-  const value = condition.toLowerCase()
-  if (value === 'good') return 'bg-emerald-50 text-emerald-700'
-  if (value === 'new') return 'bg-sky-50 text-sky-700'
-  if (value === 'fair') return 'bg-amber-50 text-amber-700'
-  return 'bg-rose-50 text-rose-700'
-}
 
 const issuedAt = (record: IssuanceRecord) => record.decidedAt || record.requestedAt
 const lastReturn = (record: IssuanceRecord) => [...record.returns].reverse().find((entry) => entry.status !== 'Voided')
@@ -174,7 +168,7 @@ function downloadReport(kind: 'excel' | 'word', records: IssuanceRecord[], filte
       <td style="${cell}${record.isOverdue ? 'color:#be123c;font-weight:bold;' : ''}">${escapeHTML(formatDue(record.dueAt))}</td>
       <td style="${cell}">${record.quantity} ${escapeHTML(record.unitOfMeasure)}${small(quantityBreakdown(record))}</td>
       <td style="${cell}font-weight:bold;color:${statusReportColors[record.status] || '#475569'};">${escapeHTML(record.status)}</td>
-      <td style="${cell}">${last ? `${escapeHTML(formatDateTime(last.returnedAt))}${small(last.condition)}` : '—'}</td>
+      <td style="${cell}">${last ? `${escapeHTML(formatDateTime(last.returnedAt))}${small(last.condition)}` : 'Not yet'}</td>
     </tr>`
   }).join('')
   const body = `
@@ -256,18 +250,6 @@ export default function GsoHeadIssuanceRecord() {
     query ? `Search: ${searchQuery.trim()}` : '',
   ].filter(Boolean).join(' · ') || 'All issuance records'
 
-  const summaryCards = [
-    { key: 'out', label: 'Still out', tone: 'text-blue-700', value: records.filter((record) => record.outQuantity > 0).length },
-    { key: 'overdue', label: 'Overdue', tone: 'text-rose-700', value: records.filter((record) => record.isOverdue).length },
-    { key: 'pending', label: 'Pending acknowledgment', tone: 'text-amber-700', value: records.filter((record) => record.status === 'Pending acknowledgment').length },
-    {
-      key: 'lost',
-      label: 'Lost, not yet settled',
-      tone: 'text-rose-700',
-      value: records.reduce((count, record) => count + record.returns.filter((entry) => entry.status === 'Lost' && entry.settlementStatus === 'Pending').length, 0),
-    },
-  ]
-
   function clearFilters() {
     setSearchQuery('')
     setDepartmentFilter('all')
@@ -310,21 +292,6 @@ export default function GsoHeadIssuanceRecord() {
             Every issuance in one place: who has what, when it is due, and how it came back. Click a row for its full history.
           </p>
         </div>
-      </section>
-
-      <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Issuance summary">
-        {summaryCards.map((card) => (
-          <button
-            key={card.key}
-            type="button"
-            onClick={() => setStatusFilter(card.key)}
-            aria-pressed={statusFilter === card.key}
-            className={`rounded-2xl border-2 bg-white p-4 text-left shadow-md shadow-slate-300/35 transition hover:-translate-y-0.5 hover:border-blue-200 ${statusFilter === card.key ? 'border-blue-500 ring-4 ring-blue-100' : 'border-slate-300/80 ring-1 ring-slate-900/5'}`}
-          >
-            <span className="block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">{card.label}</span>
-            <span className={`mt-1 block text-2xl font-black ${card.tone}`}>{isLoading ? '—' : card.value}</span>
-          </button>
-        ))}
       </section>
 
       <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-6">
@@ -396,7 +363,7 @@ export default function GsoHeadIssuanceRecord() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Issuance records</h2>
-            <p className="mt-1 text-xs font-medium text-slate-500">One row per issuance, with its returns. Exports include only the rows shown.</p>
+            <p className="mt-1 text-xs font-medium text-slate-500">One card per issuance. Exports include only the cards shown.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -424,66 +391,36 @@ export default function GsoHeadIssuanceRecord() {
           </p>
         )}
 
-        <div className="max-h-[60vh] overflow-auto overscroll-contain border-t border-slate-100">
-          <table className="w-full min-w-190 text-left">
-            <thead className="sticky top-0 z-10 bg-slate-50 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
-              <tr>
-                <th className="px-5 py-3.5 sm:px-6">Item / Barcode</th>
-                <th className="px-5 py-3.5">Employee</th>
-                <th className="px-5 py-3.5">Issued</th>
-                <th className="px-5 py-3.5">Quantity</th>
-                <th className="px-5 py-3.5">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">Loading issuance records…</td></tr>
-              )}
-              {loadError && (
-                <tr><td colSpan={5} role="alert" className="px-5 py-6 text-center text-xs font-semibold text-rose-700">{loadError}</td></tr>
-              )}
-              {filteredRecords.map((record) => {
-                return (
-                  <tr
-                    key={record.id}
-                    tabIndex={0}
-                    onClick={() => setSelectedRecord(record)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        setSelectedRecord(record)
-                      }
-                    }}
-                    className="cursor-pointer border-t border-slate-100 align-top transition hover:bg-blue-50/40 focus:bg-blue-50/60 focus:outline-none"
-                  >
-                    <td className="px-5 py-4 sm:px-6">
-                      <span className="block text-xs font-extrabold text-slate-800">{record.itemName}</span>
-                      <span className="mt-1 block text-[0.62rem] font-bold text-slate-500">{record.tagCodes.length ? record.tagCodes.join(', ') : record.itemCode}</span>
-                      <span className="mt-0.5 block text-[0.6rem] text-slate-400">{record.category}</span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="block text-xs font-bold text-slate-700">{record.employeeName}</span>
-                      <span className="mt-1 block text-[0.62rem] text-slate-400">{record.employeeCode} · {record.department}</span>
-                    </td>
-                    <td className="px-5 py-4 text-xs font-semibold text-slate-700">
-                      <span className="block whitespace-nowrap">{formatDateTime(issuedAt(record))}</span>
-                      <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[0.58rem] font-extrabold ${conditionTone(record.conditionAtIssue)}`}>{record.conditionAtIssue}</span>
-                    </td>
-                    <td className="px-5 py-4 text-xs font-bold text-slate-700">
-                      {record.quantity} {record.unitOfMeasure}
-                      <span className="mt-1 block text-[0.62rem] font-semibold text-slate-500">{quantityBreakdown(record)}</span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${statusTones[record.status]}`}>{record.status}</span>
-                    </td>
-                  </tr>
-                )
-              })}
-              {!isLoading && !loadError && !filteredRecords.length && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">No issuance records match the selected filters.</td></tr>
-              )}
-            </tbody>
-          </table>
+        <div className="inventory-list-scrollbar max-h-[60vh] space-y-2.5 overflow-y-auto overscroll-contain border-t border-slate-100 bg-slate-50/60 p-3 sm:p-4">
+          {isLoading && <p className="py-8 text-center text-xs font-semibold text-slate-400">Loading issuance records…</p>}
+          {loadError && <p role="alert" className="py-6 text-center text-xs font-semibold text-rose-700">{loadError}</p>}
+          {filteredRecords.map((record) => {
+            const last = lastReturn(record)
+            return (
+              <button
+                key={record.id}
+                type="button"
+                onClick={() => setSelectedRecord(record)}
+                className="block w-full rounded-xl border-2 border-slate-300/80 bg-white p-4 text-left shadow-sm transition hover:border-blue-300 hover:bg-blue-50/40 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
+              >
+                <span className="flex items-start justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-black text-slate-900">{record.itemName}</span>
+                    <span className="mt-1 block truncate text-xs font-bold text-blue-700">{record.employeeName} · {record.employeeCode}</span>
+                    <span className="mt-1 block truncate text-xs text-slate-500">{record.quantity} {record.unitOfMeasure} · {record.recipientLocation || 'No location'}</span>
+                  </span>
+                  <span className={`shrink-0 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[0.6rem] font-extrabold ${statusTones[record.status]}`}>{record.status}</span>
+                </span>
+                <span className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                  <span className="text-[0.62rem] font-medium text-slate-400">Issued {formatDateTime(issuedAt(record))} · {last ? `Returned ${formatDateTime(last.returnedAt)}` : 'Not yet returned'}</span>
+                  <span className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm">View details →</span>
+                </span>
+              </button>
+            )
+          })}
+          {!isLoading && !loadError && !filteredRecords.length && (
+            <p className="py-8 text-center text-xs font-semibold text-slate-400">No issuance records match the selected filters.</p>
+          )}
         </div>
       </section>
 
@@ -520,6 +457,7 @@ export default function GsoHeadIssuanceRecord() {
                   </div>
                 ))}
               </dl>
+              <IssuanceProgressPath status={selectedRecord.status} />
               <section aria-labelledby="issuance-timeline-title">
                 <h3 id="issuance-timeline-title" className="text-[0.65rem] font-black uppercase tracking-wide text-slate-500">History</h3>
                 <ol className="mt-3 space-y-4 border-l-2 border-slate-100 pl-4">

@@ -9,7 +9,6 @@ router.use(authenticate);
 router.get('/categories', requireRole('GSO_STAFF', 'GSO_HEAD'), inventoryController.listCategories);
 router.get('/item-names', requireRole('GSO_STAFF', 'GSO_HEAD'), inventoryController.listCategoryItemNames);
 router.get('/items', requireRole('GSO_STAFF', 'GSO_HEAD'), inventoryController.listItems);
-router.patch('/item-names/:id/policy', requireRole('GSO_HEAD'), inventoryController.updateCategoryItemNamePolicy);
 
 router.use(requireRole('GSO_STAFF'));
 router.post('/categories', inventoryController.createCategory);

@@ -7,6 +7,7 @@ export default function GsoAuditLogs() {
   const isHeadView = window.location.pathname.startsWith('/gso-head/')
   return (
     <AuditLogView
+      variant={isHeadView ? 'activity' : 'table'}
       frame={(content) => isHeadView
         ? <GsoHeadPageFrame activePage="audit-logs">{content}</GsoHeadPageFrame>
         : <GsoPageFrame activePage="Audit Logs" searchPlaceholder="Search audit logs...">{content}</GsoPageFrame>}

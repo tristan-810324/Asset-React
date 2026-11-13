@@ -20,7 +20,10 @@ router.post('/mine/:id/return', requireRole('BORROWER'), requestsController.requ
 
 router.get('/purchase-requisitions', requireRole('GSO_HEAD'), requestsController.listPurchaseRequisitions);
 router.patch('/purchase-requisitions/:id/review', requireRole('GSO_HEAD'), requestsController.reviewPurchaseRequisition);
-router.post('/purchase-requisitions/:id/send-to-finance', requireRole('GSO_HEAD'), requestsController.sendPurchaseRequisitionToFinance);
+router.post('/purchase-requisitions/:id/hand-to-finance', requireRole('GSO_STAFF'), requestsController.handPurchaseRequisitionToFinance);
+router.post('/purchase-requisitions/:id/finance-pdf-reprint', requireRole('GSO_STAFF'), requestsController.logFinancePdfReprint);
+router.get('/purchase-requisitions/:id/finance-pdf', requireRole('GSO_STAFF'), requestsController.getFinancePdf);
+router.get('/purchase-requisitions/items-to-buy', requireRole('GSO_STAFF'), requestsController.listItemsToBuy);
 router.get('/purchase-requisitions/issuance-queue', requireRole('GSO_STAFF'), requestsController.listStaffPurchaseRequisitions);
 router.patch('/purchase-requisitions/:id/staff-review', requireRole('GSO_STAFF'), requestsController.staffReviewPurchaseRequisition);
 router.get('/purchase-requisitions/awaiting-delivery', requireRole('GSO_STAFF'), requestsController.listAwaitingPurchaseDeliveries);

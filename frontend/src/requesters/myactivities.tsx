@@ -20,7 +20,7 @@ export default function MyActivities() {
     let active = true
     listMyActivity()
       .then((data) => { if (active) setRows(data) })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang activities.') })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load activities.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
@@ -64,7 +64,7 @@ export default function MyActivities() {
         {error && <p role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{error}</p>}
         {loading ? <div className="grid min-h-40 place-items-center text-sm font-semibold text-slate-400">Loading activities...</div>
           : visible.length === 0 ? <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-4 text-center"><div><p className="text-sm font-bold text-slate-700">No activity yet</p><p className="mt-1 text-xs text-slate-400">Your actions in the portal will show here.</p></div></div>
-          : <ul className="max-h-[32rem] space-y-2.5 overflow-y-auto pr-1">{visible.map((row) => (
+          : <ul className="max-h-128 space-y-2.5 overflow-y-auto pr-1">{visible.map((row) => (
             <li key={row.id} className="rounded-xl border-2 border-slate-300/80 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <p className="text-sm font-black text-slate-900">{actionLabels[row.action] || row.action}</p>

@@ -21,7 +21,7 @@ export default function MyRequests() {
 
   useEffect(() => {
     let active = true
-    listMyRequests().then((data) => { if (active) setRequests(data) }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang requests.') }).finally(() => { if (active) setLoading(false) })
+    listMyRequests().then((data) => { if (active) setRequests(data) }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load requests.') }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
 
@@ -69,7 +69,7 @@ export default function MyRequests() {
 
         {loading ? <div className="grid min-h-40 place-items-center text-xs font-semibold text-slate-500">Loading your requests…</div>
           : filtered.length === 0 ? <div className="m-3 grid min-h-40 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center sm:m-6"><div><span className="mx-auto grid h-10 w-10 place-items-center rounded-xl bg-blue-50 text-blue-700"><MetricIcon name="requests" /></span><p className="mt-2 text-xs font-extrabold text-slate-700">{requests.length ? 'No requests match these filters' : 'You have not submitted a request yet'}</p><p className="mt-1 text-[0.68rem] text-slate-500">{requests.length ? 'Try another status or reference number.' : 'Start in the Request Center to create your first submission.'}</p>{!requests.length && <a href="/requester/request-center" className="mt-3 inline-flex text-[0.68rem] font-extrabold text-blue-600 hover:underline">Open Request Center →</a>}</div></div>
-            : <ul className="space-y-2.5 px-3 py-3 sm:px-6 sm:py-4">{filtered.map((request) => {
+            : <ul className="inventory-list-scrollbar max-h-120 space-y-2.5 overflow-y-auto px-3 py-3 sm:px-6 sm:py-4">{filtered.map((request) => {
               const items = getRequestItems(request)
               const [firstItem] = items
               return <li key={request.id}>
@@ -80,7 +80,7 @@ export default function MyRequests() {
                   </div>
                   <p className="mt-1 text-xs font-bold text-blue-700">{request.title}</p>
                   {firstItem && <p className="mt-1 text-xs text-slate-500">{firstItem.quantity} × {firstItem.itemName}{items.length > 1 ? ` · +${items.length - 1} more` : ''}</p>}
-                  {request.status === 'Needs Information' && <p className="mt-2 text-xs font-bold text-amber-700">May hinihinging dagdag na impormasyon ang GSO.</p>}
+                  {request.status === 'Needs Information' && <p className="mt-2 text-xs font-bold text-amber-700">GSO needs more information.</p>}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
                     <p className="text-[0.62rem] font-medium text-slate-400">Updated {formatDateTime(request.updatedAt)}</p>
                     <a href={`/requester/requests/${request.id}`} aria-label={`Request details for ${request.referenceNo}`} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">

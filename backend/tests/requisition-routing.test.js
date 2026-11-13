@@ -37,7 +37,7 @@ test('a delivery matches an inventory record by name: the same name, or a simila
   assert.equal(nameMatch('Webcam', ''), null);
 });
 
-test('a purchase waits for the GSO Head to send it to Finance, never for a Finance reply', () => {
+test('a purchase waits for GSO Staff to hand the signed PDF to Finance, never for a Finance reply', () => {
   assert.equal(nextRequisitionStatus(['READY_FOR_STAFF', 'WAITING_FOR_PURCHASE'], 'Sent to Finance'), 'Sent to Finance');
   assert.equal(nextRequisitionStatus(['READY_FOR_STAFF', 'WAITING_FINANCE'], 'Under Review'), 'GSO Endorsed');
 });
@@ -192,8 +192,8 @@ test('an in-stock item the GSO Head approves goes back to GSO Staff for issuance
   assert.equal(approved.purchaseLines[0].routeStatus, 'READY_FOR_STAFF');
 });
 
-// A requisition for an item nobody has in stock, taken through GSO Staff routing, the GSO Head's approval, and the
-// email to Finance (no SMTP here). Finance releases the funds outside the app, so nothing else is recorded.
+// A requisition for an item nobody has in stock, taken through GSO Staff routing, GSO Head approval, and the
+// printed physical handoff to Finance. Finance releases the funds outside the app, so nothing else is recorded.
 async function sentToFinance(...rows) {
   const submitted = await submit(...rows);
   const queued = await staffQueueEntry(submitted.id);
@@ -201,8 +201,7 @@ async function sentToFinance(...rows) {
   await requestsService.reviewPurchaseRequisition(submitted.id, {
     action: 'DECIDE', decisions: queued.purchaseLines.map((line) => ({ lineId: line.id, decision: 'APPROVE' })),
   }, head);
-  await requestsRepository.beginFinanceHandoff({ id: submitted.id, financeEmail: 'finance@invalid', changedBy: '2' });
-  const request = await requestsRepository.completeFinanceHandoff({ id: submitted.id, messageId: 'test-message', changedBy: '2' });
+  const request = await requestsRepository.completePhysicalFinanceHandoff({ id: submitted.id, changedBy: '1' });
   return { id: submitted.id, lineId: request.purchaseLines[0].id, request };
 }
 const link = (receiptReference, ...deliveries) => requestsService.recordPurchaseDeliveries({
@@ -217,7 +216,7 @@ const addInventory = (id, code, name, quantity, categoryName = 'Computer Parts/ 
 ).then((result) => assert.equal(result.rowCount, 1));
 const fresh = async (id) => (await requestsRepository.getById(null, id));
 
-test('a bought item is linked after the GSO Head sends the purchase to Finance, with its receipt, staff account, and time', async () => {
+test('a bought item is linked after GSO Staff hands the signed requisition to Finance, with its receipt, staff account, and time', async () => {
   const submitted = await submit(['Webcam', 2]);
   const queued = await staffQueueEntry(submitted.id);
   assert.deepEqual(queued.purchaseLines[0].stockCheck.options, ['PURCHASE']);
@@ -226,12 +225,11 @@ test('a bought item is linked after the GSO Head sends the purchase to Finance, 
   const { request: approved } = await requestsService.reviewPurchaseRequisition(submitted.id, { action: 'DECIDE', decisions: [{ lineId: webcam, decision: 'APPROVE' }] }, head);
   assert.equal(approved.purchaseLines[0].routeStatus, 'WAITING_FINANCE');
 
-  // Nothing can be linked before the GSO Head sends the purchase to Finance.
-  await rejects(link('OR-1001', [webcam, '103', 2]), /Hindi pa naipadala ng GSO Head sa Finance/, 409);
+  // Nothing can be linked before GSO Staff records the printed handoff to Finance.
+  await rejects(link('OR-1001', [webcam, '103', 2]), /Hindi pa naihahand-off sa Finance/, 409);
 
-  // The GSO Head emails the PDF. Finance gives the money outside the app, so nothing is waiting for a reply.
-  await requestsRepository.beginFinanceHandoff({ id: submitted.id, financeEmail: 'finance@invalid', changedBy: '2' });
-  const sent = await requestsRepository.completeFinanceHandoff({ id: submitted.id, messageId: 'test-message', changedBy: '2' });
+  // GSO Staff hands the signed printed PDF to Finance. Finance gives the money outside the app, so nothing is waiting for a reply.
+  const sent = await requestsRepository.completePhysicalFinanceHandoff({ id: submitted.id, changedBy: '1' });
   assert.equal(sent.status, 'Sent to Finance');
   assert.equal(sent.purchaseLines[0].routeStatus, 'WAITING_FOR_PURCHASE');
 

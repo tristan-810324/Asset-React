@@ -16,7 +16,6 @@ export type PurchaseRequisitionActionResult = {
   request: ServiceRequest
   requesterNotified: boolean | null
 }
-
 export async function listPurchaseRequisitions(input: { status?: string; search?: string } = {}) {
   const query = new URLSearchParams()
   if (input.status) query.set('status', input.status)
@@ -29,17 +28,10 @@ export async function listPurchaseRequisitions(input: { status?: string; search?
 // The GSO Head makes one decision for the complete purchase requisition.
 export async function reviewPurchaseRequisition(
   id: string,
-  input: { action: 'DECIDE'; decision: 'APPROVE' | 'DECLINE'; note?: string } | { action: 'NEEDS_INFORMATION'; note: string },
+  input: { action: 'DECIDE'; decision: 'APPROVE' | 'DECLINE'; note?: string },
 ) {
   return apiRequest<PurchaseRequisitionActionResult>(`/requests/purchase-requisitions/${encodeURIComponent(id)}/review`, {
     method: 'PATCH',
     body: JSON.stringify(input),
-  })
-}
-
-export async function sendPurchaseRequisitionToFinance(id: string, financeEmail: string) {
-  return apiRequest<PurchaseRequisitionActionResult>(`/requests/purchase-requisitions/${encodeURIComponent(id)}/send-to-finance`, {
-    method: 'POST',
-    body: JSON.stringify({ financeEmail }),
   })
 }

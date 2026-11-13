@@ -22,6 +22,8 @@ const REQUEST_SELECT = `
          request.staff_reviewed_at AS "staffReviewedAt",
          request.staff_review_note AS "staffReviewNote",
          (SELECT reviewer.name FROM users AS reviewer WHERE reviewer.id = request.staff_reviewed_by_user_id) AS "staffReviewedBy",
+         (SELECT endorser.name FROM users AS endorser WHERE endorser.id = request.gso_head_endorsed_by_user_id) AS "gsoHeadEndorsedByName",
+         (SELECT endorser.email FROM users AS endorser WHERE endorser.id = request.gso_head_endorsed_by_user_id) AS "gsoHeadEndorsedByEmail",
          requester.id AS "requesterId",
          requester.name AS "requesterName",
          requester.email AS "requesterEmail",
@@ -353,6 +355,57 @@ async function listStaffPurchaseRequisitions() {
   return result.rows;
 }
 
+// Consolidates approved, still-outstanding shortages across requisitions while
+// retaining each request's quantity and physical Finance handoff state.
+async function listItemsToBuy() {
+  const result = await pool.query(
+    `WITH request_item_totals AS (
+       SELECT request.id AS "requestId",
+              request.reference_no AS "referenceNo",
+              requester.name AS "requesterName",
+              COALESCE(NULLIF(trim(request.form_data->>'departmentOrganization'), ''), 'Department not set') AS department,
+              request.status,
+              request.finance_sent_at AS "financeHandoffAt",
+              lower(trim(line.category)) AS category_key,
+              lower(trim(line.item_name)) AS item_key,
+              lower(trim(COALESCE(line.specifications, ''))) AS specifications_key,
+              min(line.category) AS category,
+              min(line.item_name) AS "itemName",
+              min(line.specifications) AS specifications,
+              sum(line.finance_quantity)::INTEGER AS quantity
+         FROM purchase_requisition_lines AS line
+         JOIN service_requests AS request ON request.id = line.request_id
+         JOIN users AS requester ON requester.id = request.requested_by_user_id
+        WHERE request.request_type = 'PURCHASE_REQUISITION'
+          AND request.status IN ('GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed', 'Sent to Finance')
+          AND request.gso_head_endorsed_by_user_id IS NOT NULL
+          AND line.finance_quantity > 0
+        GROUP BY request.id, request.reference_no, requester.name,
+                 request.form_data->>'departmentOrganization', request.status,
+                 request.finance_sent_at, lower(trim(line.category)),
+                 lower(trim(line.item_name)), lower(trim(COALESCE(line.specifications, '')))
+     )
+     SELECT min(category) AS category,
+            min("itemName") AS "itemName",
+            min(specifications) AS specifications,
+            sum(quantity)::INTEGER AS "totalQuantity",
+            count(*)::INTEGER AS "requestCount",
+            json_agg(json_build_object(
+              'requestId', "requestId"::TEXT,
+              'referenceNo', "referenceNo",
+              'requesterName', "requesterName",
+              'department', department,
+              'quantity', quantity,
+              'status', status,
+              'financeHandoffAt', "financeHandoffAt"
+            ) ORDER BY "referenceNo") AS requests
+       FROM request_item_totals
+      GROUP BY category_key, item_key, specifications_key
+      ORDER BY "totalQuantity" DESC, lower(min("itemName")), min(category)`,
+  );
+  return result.rows;
+}
+
 // Inventory records with the same item name and category, and how many units each can still give.
 // `consumed` carries units already planned for earlier items of the same request in a preview.
 async function checkLineStock(queryable, line, { lock = false, consumed = new Map() } = {}) {
@@ -626,7 +679,7 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
         throw httpError(409, `Na-link na ang delivery ng ${line.item_name} sa ${request.reference_no}. Posibleng may ibang staff na nag-record. I-refresh ang listahan.`);
       }
       if (request.status !== 'Sent to Finance') {
-        throw httpError(409, `Hindi pa naipadala ng GSO Head sa Finance ang ${request.reference_no}, kaya hindi pa puwedeng i-link ang delivery.`);
+        throw httpError(409, `Hindi pa naihahand-off sa Finance ang ${request.reference_no}, kaya hindi pa puwedeng i-link ang delivery.`);
       }
       if (line.route_status === 'HANDOVER_PENDING') {
         throw httpError(409, 'Tapusin muna ang pending handover ng item na ito bago i-record ang bagong delivery.');
@@ -830,7 +883,7 @@ async function undoPurchaseDelivery({ id, receiptId, changedBy }) {
 }
 
 // The GSO Head approves or declines the complete requisition as one package.
-async function reviewPurchaseRequisition({ id, action, decision, note, changedBy }) {
+async function reviewPurchaseRequisition({ id, decision, note, changedBy }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -851,54 +904,40 @@ async function reviewPurchaseRequisition({ id, action, decision, note, changedBy
       throw httpError(409, 'Walang buong request na naghihintay ng approval mo. I-refresh ang listahan.');
     }
 
+    if (!['APPROVE', 'DECLINE'].includes(decision)) {
+      throw httpError(400, 'Piliin kung ia-approve o ide-decline ang buong request.');
+    }
     let historyNote;
-    if (action === 'NEEDS_INFORMATION') {
+    if (decision === 'APPROVE') {
+      const shortageNames = [];
+      const heldNames = [];
+      for (const line of lines) {
+        const requested = Number(line.requested_quantity);
+        const reserved = Number(line.reserved_quantity);
+        const shortage = Math.max(Number(line.finance_quantity), requested - reserved);
+        const routeStatus = shortage > 0 ? 'WAITING_FINANCE' : 'READY_FOR_STAFF';
+        await client.query(
+          `UPDATE purchase_requisition_lines
+              SET route_status = $2, finance_quantity = $3, review_note = '', updated_at = NOW()
+            WHERE id = $1`,
+          [line.id, routeStatus, shortage],
+        );
+        if (shortage > 0) shortageNames.push(`${line.item_name} (${shortage} to buy)`);
+        else heldNames.push(line.item_name);
+      }
+      historyNote = `GSO Head approved the entire request. ${heldNames.length ? `Reserved in-stock items: ${heldNames.join(', ')}. ` : ''}${shortageNames.length ? `Shortage items for Finance: ${shortageNames.join('; ')}. No item can be issued until every requested item is available.` : 'All requested items are reserved and ready for GSO Staff issuance.'}${note ? ` Note: ${note}` : ''}`;
+    } else {
       for (const line of lines) {
         await releasePurchaseLineStock(client, line.id);
         await client.query(
           `UPDATE purchase_requisition_lines
-              SET route_status = 'NEEDS_INFORMATION', reserved_quantity = 0, finance_quantity = 0,
+              SET route_status = 'REJECTED', reserved_quantity = 0, finance_quantity = 0,
                   review_note = $2, updated_at = NOW()
             WHERE id = $1`,
           [line.id, note],
         );
       }
-      historyNote = `GSO Head asked the requester for more details: ${note}`;
-    } else {
-      if (!['APPROVE', 'DECLINE'].includes(decision)) {
-        throw httpError(400, 'Piliin kung ia-approve o ide-decline ang buong request.');
-      }
-      if (decision === 'APPROVE') {
-        const shortageNames = [];
-        const heldNames = [];
-        for (const line of lines) {
-          const requested = Number(line.requested_quantity);
-          const reserved = Number(line.reserved_quantity);
-          const shortage = Math.max(Number(line.finance_quantity), requested - reserved);
-          const routeStatus = shortage > 0 ? 'WAITING_FINANCE' : 'READY_FOR_STAFF';
-          await client.query(
-            `UPDATE purchase_requisition_lines
-                SET route_status = $2, finance_quantity = $3, review_note = '', updated_at = NOW()
-              WHERE id = $1`,
-            [line.id, routeStatus, shortage],
-          );
-          if (shortage > 0) shortageNames.push(`${line.item_name} (${shortage} to buy)`);
-          else heldNames.push(line.item_name);
-        }
-        historyNote = `GSO Head approved the entire request. ${heldNames.length ? `Reserved in-stock items: ${heldNames.join(', ')}. ` : ''}${shortageNames.length ? `Shortage items for Finance: ${shortageNames.join('; ')}. No item can be issued until every requested item is available.` : 'All requested items are reserved and ready for GSO Staff issuance.'}${note ? ` Note: ${note}` : ''}`;
-      } else {
-        for (const line of lines) {
-          await releasePurchaseLineStock(client, line.id);
-          await client.query(
-            `UPDATE purchase_requisition_lines
-                SET route_status = 'REJECTED', reserved_quantity = 0, finance_quantity = 0,
-                    review_note = $2, updated_at = NOW()
-              WHERE id = $1`,
-            [line.id, note],
-          );
-        }
-        historyNote = `GSO Head declined the entire request: ${note}`;
-      }
+      historyNote = `GSO Head declined the entire request: ${note}`;
     }
 
     const routeStatuses = (await client.query(
@@ -932,7 +971,10 @@ async function reviewPurchaseRequisition({ id, action, decision, note, changedBy
   }
 }
 
-async function beginFinanceHandoff({ id, financeEmail, changedBy }) {
+// The approved PDF is handed to Finance in person. We keep the established
+// "Sent to Finance" status so the delivery and issuance workflow continues
+// unchanged, while the history makes the physical handoff explicit.
+async function completePhysicalFinanceHandoff({ id, changedBy }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -947,110 +989,38 @@ async function beginFinanceHandoff({ id, financeEmail, changedBy }) {
     if (!current || current.request_type !== 'PURCHASE_REQUISITION') {
       throw Object.assign(new Error('Hindi makita ang purchase requisition.'), { status: 404 });
     }
-    if (!['GSO Endorsed', 'Finance Handoff Failed'].includes(current.status)) {
-      throw Object.assign(new Error('I-endorse muna ang purchase requisition bago ipadala sa Finance.'), { status: 409 });
+    if (!['GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed'].includes(current.status)) {
+      throw Object.assign(new Error('Ang requisition ay dapat munang ma-approve ng GSO Head bago i-hand off sa Finance.'), { status: 409 });
     }
     const shortage = await client.query(
-      `SELECT COUNT(*)::INTEGER AS count FROM purchase_requisition_lines
+      `SELECT COUNT(*)::INTEGER AS count
+         FROM purchase_requisition_lines
         WHERE request_id = $1 AND finance_quantity > 0`,
       [id],
     );
-    if (!shortage.rows[0]?.count) throw Object.assign(new Error('Walang item o quantity na naka-endorse sa Finance.'), { status: 409 });
+    if (!shortage.rows[0]?.count) {
+      throw Object.assign(new Error('Walang shortage na kailangang i-hand off sa Finance.'), { status: 409 });
+    }
 
     await client.query(
       `UPDATE service_requests
-          SET status = 'Finance Handoff Pending',
-              finance_email = $2,
-              finance_sent_at = NULL,
+          SET status = 'Sent to Finance',
+              finance_sent_at = NOW(),
               finance_message_id = NULL,
               updated_at = NOW()
         WHERE id = $1`,
-      [id, financeEmail],
-    );
-    await client.query(
-      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
-       VALUES ($1, $2, 'Finance Handoff Pending', $3, $4)`,
-      [id, current.status, `GSO Head started email handoff to ${financeEmail}.`, changedBy],
-    );
-    const request = await getById(client, id);
-    await client.query('COMMIT');
-    return request;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function completeFinanceHandoff({ id, messageId, changedBy }) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const currentResult = await client.query(
-      `SELECT id, status, finance_email
-         FROM service_requests
-        WHERE id = $1
-        FOR UPDATE`,
       [id],
     );
-    const current = currentResult.rows[0];
-    if (!current || current.status !== 'Finance Handoff Pending') {
-      throw Object.assign(new Error('Nagbago ang handoff state. I-refresh muna ang queue.'), { status: 409 });
-    }
-    await client.query(
-      `UPDATE service_requests
-          SET status = 'Sent to Finance', finance_sent_at = NOW(),
-              finance_message_id = $2, updated_at = NOW()
-        WHERE id = $1`,
-      [id, messageId || null],
-    );
     await client.query(
       `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
-       VALUES ($1, 'Finance Handoff Pending', 'Sent to Finance', $2, $3)`,
-      [id, `Purchase requisition emailed to Finance (${current.finance_email}).`, changedBy],
+       VALUES ($1, $2, 'Sent to Finance', $3, $4)`,
+      [id, current.status, 'GSO Staff handed the signed printed requisition to Finance.', changedBy],
     );
     await client.query(
       `UPDATE purchase_requisition_lines
           SET route_status = 'WAITING_FOR_PURCHASE', updated_at = NOW()
         WHERE request_id = $1 AND finance_quantity > 0 AND route_status = 'WAITING_FINANCE'`,
       [id],
-    );
-    const request = await getById(client, id);
-    await client.query('COMMIT');
-    return request;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-async function failFinanceHandoff({ id, changedBy }) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const currentResult = await client.query(
-      `SELECT id, status
-         FROM service_requests
-        WHERE id = $1
-        FOR UPDATE`,
-      [id],
-    );
-    const current = currentResult.rows[0];
-    if (!current || current.status !== 'Finance Handoff Pending') {
-      await client.query('COMMIT');
-      return null;
-    }
-    await client.query(
-      `UPDATE service_requests SET status = 'Finance Handoff Failed', updated_at = NOW() WHERE id = $1`,
-      [id],
-    );
-    await client.query(
-      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
-       VALUES ($1, 'Finance Handoff Pending', 'Finance Handoff Failed', $2, $3)`,
-      [id, 'Finance email could not be delivered. GSO Head may retry the handoff.', changedBy],
     );
     const request = await getById(client, id);
     await client.query('COMMIT');
@@ -1158,7 +1128,7 @@ async function createRequest({ requestType, formData, userId }) {
       for (const requested of items) {
         const available = await availableForBorrowing(client, requested.inventoryItem);
         if (requested.quantity > available) {
-          throw Object.assign(new Error(`Hindi sapat ang available quantity ng ${requested.inventoryItem.name}. Available: ${available}.`), { status: 409 });
+          throw Object.assign(new Error(`Not enough stock of ${requested.inventoryItem.name}. Available: ${available}.`), { status: 409 });
         }
       }
     }
@@ -1224,8 +1194,8 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
       [id],
     );
     const current = currentResult.rows[0];
-    if (!current) throw Object.assign(new Error('Hindi makita ang request.'), { status: 404 });
-    if (current.status !== expectedStatus) throw Object.assign(new Error('Nagbago na ang status ng request. I-refresh muna ang queue.'), { status: 409 });
+    if (!current) throw Object.assign(new Error('Request not found.'), { status: 404 });
+    if (current.status !== expectedStatus) throw Object.assign(new Error('The request status changed. Refresh the queue and try again.'), { status: 409 });
 
     if (current.request_type === 'BORROWING' && status === 'Approved') {
       const requestItems = await client.query(
@@ -1239,11 +1209,11 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
       );
       for (const requested of requestItems.rows) {
         if (['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(requested.condition)) {
-          throw Object.assign(new Error(`Hindi maaaring i-approve ang ${requested.item_name || requested.description}; hindi na ito available.`), { status: 409 });
+          throw Object.assign(new Error(`Cannot approve ${requested.item_name || requested.description}; it is no longer available.`), { status: 409 });
         }
         const available = await availableForBorrowing(client, requested);
         if (Number(requested.quantity) > available) {
-          throw Object.assign(new Error(`Hindi sapat ang available quantity ng ${requested.item_name || requested.description}. Available: ${available}.`), { status: 409 });
+          throw Object.assign(new Error(`Not enough stock of ${requested.item_name || requested.description}. Available: ${available}.`), { status: 409 });
         }
       }
     }
@@ -1269,15 +1239,18 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
       }
     }
 
+    // Approving a borrowing starts it in this same transaction: the item is released, with no pickup step.
+    const startsBorrowing = current.request_type === 'BORROWING' && status === 'Approved';
+    const finalStatus = startsBorrowing ? 'Issued' : status;
     await client.query(
       `UPDATE service_requests
           SET status = $2,
               updated_at = NOW(),
               completed_at = CASE WHEN $2 IN ('Returned', 'Completed', 'Closed', 'Rejected', 'Cancelled') THEN NOW() ELSE NULL END
         WHERE id = $1`,
-      [id, status],
+      [id, finalStatus],
     );
-    if (current.request_type === 'BORROWING' && status === 'Issued') {
+    if (current.request_type === 'BORROWING' && finalStatus === 'Issued') {
       const effectiveDueDate = dueDate || current.form_data.returnDate;
       await client.query(
         `UPDATE service_request_assets
@@ -1312,6 +1285,13 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
        VALUES ($1, $2, $3, $4, $5)`,
       [id, current.status, status, note || '', changedBy],
     );
+    if (startsBorrowing) {
+      await client.query(
+        `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+         VALUES ($1, 'Approved', 'Issued', 'Borrowing started on approval.', $2)`,
+        [id, changedBy],
+      );
+    }
     const request = await getById(client, id);
     await client.query('COMMIT');
     return request;
@@ -1435,6 +1415,7 @@ module.exports = {
   listAll,
   listPurchaseRequisitions,
   listStaffPurchaseRequisitions,
+  listItemsToBuy,
   attachStaffStockChecks,
   staffReviewPurchaseRequisition,
   listAwaitingDeliveries,
@@ -1443,9 +1424,7 @@ module.exports = {
   createRequest,
   setStatus,
   reviewPurchaseRequisition,
-  beginFinanceHandoff,
-  completeFinanceHandoff,
-  failFinanceHandoff,
+  completePhysicalFinanceHandoff,
   respondToRequest,
   changeMineStatus,
 };

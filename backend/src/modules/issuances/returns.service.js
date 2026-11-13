@@ -592,7 +592,13 @@ async function listIssuanceRecords(query) {
   const from = readOptionalDate(query.from, '"From"');
   const to = readOptionalDate(query.to, '"To"');
   if (from && to && from > to) throw httpError(400, 'Dapat mas maaga o kapareho ng "To" date ang "From" date.');
-  const rows = await returnsRepository.listIssuanceRecords({ from, to, limit: 1000 });
+  const [issued, declined] = await Promise.all([
+    returnsRepository.listIssuanceRecords({ from, to, limit: 1000 }),
+    returnsRepository.listDeclinedPurchaseRecords({ from, to, limit: 1000 }),
+  ]);
+  // Newest first across both sources; the list stays capped at 1000 rows.
+  const sortKey = (row) => new Date(row.decidedAt || row.requestedAt).getTime();
+  const rows = [...issued, ...declined].sort((first, second) => sortKey(second) - sortKey(first)).slice(0, 1000);
   return rows.map(({ isPastDue, ...row }) => {
     const unitsWith = (status) => row.returns.filter((entry) => entry.status === status).reduce((sum, entry) => sum + entry.quantity, 0);
     const isActive = row.issuanceStatus === 'Issued' || row.issuanceStatus === 'Returned';

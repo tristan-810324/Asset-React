@@ -1,4 +1,5 @@
 const repository = require('./requester-identity.repository');
+const notificationsRepository = require('../notifications/notifications.repository');
 
 function invalid(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -62,7 +63,19 @@ async function submitMine(input, user) {
   const current = await repository.getMine(user.id);
   if (!current) invalid('Hindi makita ang requester account.', 404);
   if (current.status === 'Pending') invalid('Nasa GSO na ang iyong identity details para sa review. Hintayin muna ang resulta.', 409);
-  return repository.submitMine(user.id, identity);
+  const profile = await repository.submitMine(user.id, identity);
+
+  // Notify GSO Staff that a new requester account needs verification
+  await notificationsRepository.createRoleNotification({
+    roleKey: 'GSO_STAFF',
+    type: 'REQUESTER_VERIFICATION_PENDING',
+    title: 'New requester account to verify',
+    message: `${user.name || 'A requester'} submitted their identity details for verification.`,
+    href: '/gso/requester-verification',
+    dedupeKey: `requester-verification-pending:${user.id}`,
+  });
+
+  return profile;
 }
 
 async function listReviews(statusValue) {
@@ -105,6 +118,31 @@ async function review(userIdValue, input, reviewer) {
     reviewedByUserId: reviewer.id,
   });
   if (!profile) invalid('Hindi makita ang requester identity na rerepasuhin.', 404);
+
+  // Resolve the pending verification notification since the review is complete
+  await notificationsRepository.resolveByPrefix(`requester-verification-pending:${userId}`);
+
+  // Notify the requester of the result
+  if (status === 'Verified') {
+    await notificationsRepository.createUserNotification({
+      userId: String(userId),
+      type: 'REQUESTER_VERIFIED',
+      title: 'Your account has been verified!',
+      message: 'Your identity has been approved by GSO Staff. You can now submit service requests.',
+      href: '/requester/request-center',
+      dedupeKey: `requester-verified:${userId}`,
+    });
+  } else if (status === 'Needs Correction') {
+    await notificationsRepository.createUserNotification({
+      userId: String(userId),
+      type: 'REQUESTER_NEEDS_CORRECTION',
+      title: 'Please review your account details',
+      message: note || 'GSO Staff has requested corrections to your information. Please update and resubmit.',
+      href: '/requester/profile',
+      dedupeKey: `requester-needs-correction:${userId}`,
+    });
+  }
+
   return profile;
 }
 

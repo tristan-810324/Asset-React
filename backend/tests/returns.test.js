@@ -288,8 +288,8 @@ test('overdue reusable-stock borrowings get one reminder a day and block new iss
 });
 
 test('a Request Center return needs a condition for each item and keeps damaged ones in repair', async () => {
-  await rejects(requestsService.updateStatus('1', { status: 'Returned' }, gso), /Piliin ang condition/);
-  await rejects(requestsService.updateStatus('1', { status: 'Returned', conditionsIn: { 1: 'Needs Repair' } }, gso), /For Repair ang piliin/);
+  await rejects(requestsService.updateStatus('1', { status: 'Returned' }, gso), /Choose the returned condition/);
+  await rejects(requestsService.updateStatus('1', { status: 'Returned', conditionsIn: { 1: 'Needs Repair' } }, gso), /so choose For Repair/);
   await rejects(requestsService.updateStatus('1', { status: 'For Repair', conditionsIn: { 1: 'Needs Repair' } }, gso), /review note/);
   await requestsService.updateStatus('1', { status: 'For Repair', conditionsIn: { 1: 'Needs Repair' }, note: 'Lens cracked' }, gso);
   assert.equal((await one('SELECT condition_in FROM service_request_assets WHERE id = 1')).condition_in, 'Needs Repair');

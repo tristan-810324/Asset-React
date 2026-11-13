@@ -69,6 +69,11 @@ const listStaffPurchaseRequisitions = asyncHandler(async (_req, res) => {
   res.json({ success: true, data: { requests } });
 });
 
+const listItemsToBuy = asyncHandler(async (_req, res) => {
+  const items = await requestsService.listItemsToBuy();
+  res.json({ success: true, data: { items } });
+});
+
 const staffReviewPurchaseRequisition = asyncHandler(async (req, res) => {
   const result = await requestsService.staffReviewPurchaseRequisition(req.params.id, req.body, req.user);
   res.json({ success: true, data: result });
@@ -99,8 +104,18 @@ const reviewPurchaseRequisition = asyncHandler(async (req, res) => {
   res.json({ success: true, data: result });
 });
 
-const sendPurchaseRequisitionToFinance = asyncHandler(async (req, res) => {
-  const result = await requestsService.sendPurchaseRequisitionToFinance(req.params.id, req.body, req.user);
+const handPurchaseRequisitionToFinance = asyncHandler(async (req, res) => {
+  const result = await requestsService.handPurchaseRequisitionToFinance(req.params.id, req.user);
+  res.json({ success: true, data: result });
+});
+
+const getFinancePdf = asyncHandler(async (req, res) => {
+  const result = await requestsService.getFinancePdf(req.params.id);
+  res.json({ success: true, data: result });
+});
+
+const logFinancePdfReprint = asyncHandler(async (req, res) => {
+  const result = await requestsService.logFinancePdfReprint(req.params.id, req.body, req.user);
   res.json({ success: true, data: result });
 });
 
@@ -128,13 +143,16 @@ module.exports = {
   listAll,
   listPurchaseRequisitions,
   listStaffPurchaseRequisitions,
+  listItemsToBuy,
   staffReviewPurchaseRequisition,
   getStaffPurchaseRequisitionForIssuance,
   listAwaitingPurchaseDeliveries,
   recordPurchaseDeliveries,
   undoPurchaseDelivery,
   reviewPurchaseRequisition,
-  sendPurchaseRequisitionToFinance,
+  handPurchaseRequisitionToFinance,
+  getFinancePdf,
+  logFinancePdfReprint,
   getForGso,
   updateStatus,
 };

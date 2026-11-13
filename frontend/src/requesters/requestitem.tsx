@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
+import { ProgressPath } from '../components/requestpath'
 import { listCatalogAssets, listPurchaseItemNames, listRequesterDepartmentStaff, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType, type RequesterDepartmentStaff } from './requesterApi'
 
 type FormRow = Record<string, string | number>
@@ -288,6 +289,14 @@ function RequestItemContent() {
     return () => { active = false }
   }, [type])
 
+  // The verified department is already known, so these forms start with it; the requester can still add a year, section, or area.
+  useEffect(() => {
+    if (!verifiedDepartment || (type !== 'FACILITY_USE' && type !== 'JOB_REQUEST')) return
+    // Identity loads after the form opens, so the department is copied in once it arrives.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setForm((current) => current.departmentOrganization ? current : { ...current, departmentOrganization: verifiedDepartment })
+  }, [type, verifiedDepartment])
+
   // Browsing goes category → item name → specific items; typing a search jumps straight to matching items.
   const term = search.trim().toLowerCase()
   const searching = term.length > 0
@@ -519,6 +528,7 @@ function RequestItemContent() {
         </section>
         <a href="/requester/request-center" className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 hover:underline">← Request Center</a>
         <form onSubmit={onSubmit} className="mt-4 space-y-3">
+          {(type === 'BORROWING' || type === 'PURCHASE_REQUISITION') && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5"><ProgressPath steps={type === 'BORROWING' ? ['Items', 'Borrow details', 'Review'] : ['Items', 'Details', 'Review']} current={(type === 'BORROWING' ? borrowingCurrentStep : requestCurrentStep) - 1} /></section>}
           {type === 'BORROWING' && <>
             <section aria-labelledby="borrow-items-step-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <RequestStepHeader
@@ -912,8 +922,8 @@ function RequestItemContent() {
 
           {type === 'ISSUANCE_REQUEST' && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <h2 className="text-lg font-black tracking-tight">Item issuance request</h2>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">Para sa item na wala sa borrowing catalog o kailangan mong hawakan nang pangmatagalan. Titingnan ng GSO kung may stock; kapag na-issue, makikita mo ito sa My Issued Items. Kung wala, maaaring payuhan ka ng GSO na mag-purchase requisition.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} placeholder="Saan at bakit mo ito kailangan" required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">For items that are not in the borrowing catalog, or that you need to keep long term. GSO checks stock; once issued, it shows in My Issued Items.</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} placeholder="Where and why you need it" required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
             <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Requested items</h2><button type="button" onClick={() => addRow('items', { quantity: 1, description: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button></div><div className="mt-3 space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[8rem_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field><Field label={`Item ${index + 1} description / specifications`}><textarea className={textareaClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>{(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>}</div></div>)}</div></div>
           </section>}
 

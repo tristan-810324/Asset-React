@@ -98,7 +98,7 @@ export default function RequesterNotifications() {
         setIssuanceBatches(batches)
         setServerNotifications(notifications)
       })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang notifications.') })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load notifications.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
@@ -276,7 +276,7 @@ export default function RequesterNotifications() {
               </div>
             </div>
           ) : (
-            <ol className="max-h-[32rem] space-y-2.5 overflow-y-auto pb-1 pr-1">
+            <ol className="inventory-list-scrollbar max-h-120 space-y-2.5 overflow-y-auto px-1 py-1">
               {visibleEvents.map((event) => {
                 const noticeId = event.noticeId
                 const unread = Boolean(event.unread)

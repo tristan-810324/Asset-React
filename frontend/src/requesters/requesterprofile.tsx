@@ -32,7 +32,7 @@ function RequesterProfileContent() {
       {identityError && <p role="alert" className="m-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{identityError}</p>}
       {identityLoading && <p className="p-6 text-sm font-semibold text-slate-500">Loading identity details…</p>}
       {!identityLoading && identity && <>
-        {identity.status === 'Pending' && <div className="mx-5 mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:mx-6"><p className="text-sm font-extrabold text-blue-900">Nasa GSO na ang details mo para sa validation.</p><p className="mt-1 text-xs leading-relaxed text-blue-800">Hindi pa makakapagpadala ng request hangga’t hindi pa Verified.</p>{identity.reviewNote && <p className="mt-3 text-xs font-semibold text-slate-700">GSO note: {identity.reviewNote}</p>}</div>}
+        {identity.status === 'Pending' && <div className="mx-5 mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:mx-6"><p className="text-sm font-extrabold text-blue-900">GSO is validating your details.</p><p className="mt-1 text-xs leading-relaxed text-blue-800">You can send requests once you are verified.</p>{identity.reviewNote && <p className="mt-3 text-xs font-semibold text-slate-700">GSO note: {identity.reviewNote}</p>}</div>}
         {identity.status === 'Needs Correction' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6">{identity.reviewNote || 'Pakitingnan at itama ang details bago muling isumite.'}</div>}
         {!showForm && <dl className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6">
           {[

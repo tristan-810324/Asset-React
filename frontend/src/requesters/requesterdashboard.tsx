@@ -42,7 +42,7 @@ function RequesterDashboardContent() {
       .then((ownRequests) => {
         if (active) setRequests(ownRequests)
       })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang requester overview.') })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load your overview.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
@@ -57,7 +57,7 @@ function RequesterDashboardContent() {
           setDepartmentRemainingUnits(summary.remainingUnits ?? 0)
           setDepartmentIssuanceError('')
         })
-        .catch((reason: unknown) => { if (active) setDepartmentIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-load ang department issuance total.') })
+        .catch((reason: unknown) => { if (active) setDepartmentIssuanceError(reason instanceof Error ? reason.message : 'Could not load the department issuance total.') })
         .finally(() => { if (active) setDepartmentIssuanceLoading(false) })
     }
     refreshDepartmentIssuance()
@@ -74,7 +74,7 @@ function RequesterDashboardContent() {
           setDepartmentReturns(returns)
           setDepartmentReturnsError('')
         })
-        .catch((reason: unknown) => { if (active) setDepartmentReturnsError(reason instanceof Error ? reason.message : 'Hindi ma-load ang department returns.') })
+        .catch((reason: unknown) => { if (active) setDepartmentReturnsError(reason instanceof Error ? reason.message : 'Could not load department returns.') })
         .finally(() => { if (active) setDepartmentReturnsLoading(false) })
     }
     refreshDepartmentReturns()
@@ -89,7 +89,7 @@ function RequesterDashboardContent() {
         if (active) setPendingIssuances(batches)
       })
       .catch((reason: unknown) => {
-        if (active) setIssuanceError(reason instanceof Error ? reason.message : 'Hindi ma-update ang pickup preparation.')
+        if (active) setIssuanceError(reason instanceof Error ? reason.message : 'Could not update pickup preparation.')
       })
       .finally(() => { if (active) setIssuanceLoading(false) })
     return () => { active = false }
@@ -210,7 +210,7 @@ function RequesterDashboardContent() {
                   </div>
                   <p className="mt-1 text-xs font-bold text-blue-700">{request.title}</p>
                   {firstItem && <p className="mt-1 text-xs text-slate-500">{firstItem.quantity} × {firstItem.itemName}{items.length > 1 ? ` · +${items.length - 1} more` : ''}</p>}
-                  {request.status === 'Needs Information' && <p className="mt-2 text-xs font-bold text-amber-700">May hinihinging dagdag na impormasyon ang GSO.</p>}
+                  {request.status === 'Needs Information' && <p className="mt-2 text-xs font-bold text-amber-700">GSO needs more information.</p>}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
                     <p className="text-[0.62rem] font-medium text-slate-400">Updated {formatDateTime(request.updatedAt)}</p>
                     <a href={`/requester/requests/${request.id}`} aria-label={`Request details for ${request.referenceNo}`} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
@@ -255,7 +255,7 @@ function RequesterDashboardContent() {
               <p className="mt-1 text-xs text-slate-500">{returnRecord.recipientLocation || 'Location not recorded'} · {returnRecord.employeeName}</p>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
                 <p className="text-[0.62rem] font-medium text-slate-400">Brought in by {returnRecord.returnedByName || 'Not recorded'} · {formatDateTime(returnRecord.decidedAt || returnRecord.requestedAt)}</p>
-                <a href="/requester/return-items#return-records" aria-label={`View details for ${returnRecord.tagCode || returnRecord.itemCode}`} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">View details</a>
+                <a href={returnRecord.requestId ? `/requester/requests/${returnRecord.requestId}` : '/requester/return-items#return-records'} aria-label={`View details for ${returnRecord.tagCode || returnRecord.itemCode}`} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">View details</a>
               </div>
 
             </li>)}</ul>}

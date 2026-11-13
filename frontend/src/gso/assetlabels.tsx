@@ -73,13 +73,16 @@ function recipientSheetHtml(batch: EmployeeIssuanceBatchDetails, requisitionRefe
       + '<td>' + escapePrintText(item.recipientPurpose || 'Not specified') + '</td><td>[ ] Received</td></tr>')
   }).join('')
   const reference = requisitionReference ? escapePrintText(requisitionReference) : 'Issuance batch #' + escapePrintText(batch.id)
+  const logoUrl = escapePrintText(`${window.location.origin}/dyci_img/dual_logo.jpg`)
   return '<!doctype html><html><head><meta charset="utf-8"><title>Asset Recipient Sheet</title><style>'
     + '@page { size: A4 landscape; margin: 14mm; } body { font: 12px Arial, sans-serif; color: #0f172a; }'
     + 'h1 { margin: 0 0 6px; font-size: 20px; } p { margin: 4px 0; color: #475569; }'
+    + '* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }'
+    + '.header { border-bottom: 2px solid #09244a; padding-bottom: 10px; margin-bottom: 14px; } .logo { height: 62px; display: block; }'
     + '.meta { margin: 16px 0; display: flex; gap: 40px; } table { width: 100%; border-collapse: collapse; margin-top: 14px; }'
     + 'th,td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; } th { background: #eff6ff; font-size: 10px; text-transform: uppercase; }'
     + 'small { color: #64748b; } .signature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 28px 36px; margin-top: 34px; } .signature { min-width: 0; break-inside: avoid; } .signature-line { height: 22px; border-bottom: 1px solid #64748b; margin-bottom: 6px; } .signature strong,.signature span { display: block; } .signature strong { font-size: 11px; } .signature span { margin-top: 2px; color: #475569; font-size: 10px; }'
-    + '</style></head><body><h1>Asset Recipient Sheet</h1>'
+    + '</style></head><body><div class="header"><img class="logo" src="' + logoUrl + '" alt="DYCI and A.S.SET logo"></div><h1>Asset Recipient Sheet</h1>'
     + '<div class="meta"><p><strong>Request:</strong> ' + reference + '</p><p><strong>Physical handover:</strong> ' + escapePrintText(batch.employeeName) + ' (' + escapePrintText(batch.employeeCode) + ')</p><p><strong>Date:</strong> ' + new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date()) + '</p></div>'
     + '<table><thead><tr><th>Item</th><th>Barcode</th><th>Assigned to</th><th>Location</th><th>Purpose</th><th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
     + '<div class="signature-grid">' + signatureBlocks + '</div></body></html>'
@@ -250,7 +253,15 @@ export default function AssetLabels() {
       printWindow.document.open()
       printWindow.document.write(recipientSheetHtml(batch, group.purchaseRequisitionReference))
       printWindow.document.close()
-      window.setTimeout(() => { if (!printWindow.closed) { printWindow.focus(); printWindow.print() } }, 300)
+      // Print after the logo has loaded, so the sheet is not printed without it.
+      const printSheet = () => { if (!printWindow.closed) { printWindow.focus(); printWindow.print() } }
+      const logo = printWindow.document.querySelector('img')
+      if (logo && !logo.complete) {
+        logo.addEventListener('load', () => window.setTimeout(printSheet, 150), { once: true })
+        logo.addEventListener('error', () => window.setTimeout(printSheet, 150), { once: true })
+      } else {
+        window.setTimeout(printSheet, 300)
+      }
     } catch (error) {
       printWindow.close()
       setRecipientSheetError(error instanceof Error ? error.message : 'Unable to prepare the recipient sheet. Please try again.')

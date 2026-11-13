@@ -1600,6 +1600,51 @@ async function listIssuanceRecords({ from = null, to = null, limit = 1000 } = {}
   return result.rows;
 }
 
+// Items the GSO Head declined on a purchase requisition. They appear in the issuance records as "Rejected",
+// one row per declined item, shaped like the issuance rows so the same mapping applies.
+async function listDeclinedPurchaseRecords({ from = null, to = null, limit = 1000 } = {}) {
+  const result = await pool.query(
+    `SELECT ('requisition-' || line.id::TEXT) AS id,
+            'Rejected' AS "issuanceStatus",
+            line.requested_quantity AS quantity,
+            0 AS "accountedQuantity",
+            'unit' AS "unitOfMeasure",
+            'Not issued' AS "conditionAtIssue",
+            NULL::TEXT AS "issueNote",
+            NULLIF(line.review_note, '') AS "decisionNote",
+            request.created_at AS "requestedAt",
+            request.completed_at AS "decidedAt",
+            NULL::TEXT AS "issuedBy",
+            NULL::TIMESTAMPTZ AS "dueAt",
+            FALSE AS "isPastDue",
+            NULLIF(request.form_data->>'purpose', '') AS purpose,
+            NULL::TEXT AS "useLocation",
+            request.reference_no AS "itemCode",
+            line.item_name AS "itemName",
+            line.category,
+            'quantity' AS "trackingMode",
+            'consumable' AS "issueBehavior",
+            COALESCE(request.form_data->>'requesterEmployeeCode', '') AS "employeeCode",
+            COALESCE(request.form_data->>'requesterName', '') AS "employeeName",
+            COALESCE(request.form_data->>'departmentOrganization', '') AS department,
+            COALESCE(request.form_data->>'requesterPosition', '') AS position,
+            '' AS "recipientLocation",
+            '' AS "recipientPurpose",
+            '[]'::JSON AS "tagCodes",
+            '[]'::JSON AS returns
+       FROM purchase_requisition_lines AS line
+       JOIN service_requests AS request ON request.id = line.request_id
+      WHERE request.request_type = 'PURCHASE_REQUISITION'
+        AND request.status = 'Rejected'
+        AND ($1::DATE IS NULL OR request.completed_at >= $1::DATE::TIMESTAMP AT TIME ZONE 'Asia/Manila')
+        AND ($2::DATE IS NULL OR request.completed_at < ($2::DATE + 1)::TIMESTAMP AT TIME ZONE 'Asia/Manila')
+      ORDER BY request.completed_at DESC NULLS LAST, line.id DESC
+      LIMIT $3`,
+    [from, to, limit],
+  );
+  return result.rows;
+}
+
 // Marks overdue reusable-stock borrowings as reminded, at most once a day each, and returns
 // what to email. Claimed rows are skipped by other instances running the same sweep.
 async function claimOverdueReminders(limit = 10) {
@@ -1664,6 +1709,7 @@ module.exports = {
   listApprovalRequests,
   listHoldings,
   listIssuanceRecords,
+  listDeclinedPurchaseRecords,
   claimOverdueReminders,
   createPendingReturn,
   confirmReturnByGso,

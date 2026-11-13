@@ -88,7 +88,7 @@ function tabsFor(request: ServiceRequest): Tab[] {
   const hasWaitingLine = linesOf(request).some((line) => ['WAITING_GSO_HEAD', 'WAITING_FINANCE', 'WAITING_FOR_PURCHASE', 'PARTIAL_STOCK', 'NEEDS_INFORMATION'].includes(line.routeStatus))
   // Once GSO has prepared every individually tracked item, the requisition leaves this
   // checking workspace. Its pickup status and barcode labels live in Main Issuance.
-  if (!tabs.length && !['Completed', 'Rejected', 'Ready for Pickup'].includes(request.status)
+  if (!tabs.length && !['Completed', 'Rejected', 'Ready for Pickup', 'Issued'].includes(request.status)
     && (hasWaitingLine || countIssuableLines(request) === 0)) tabs.push('waiting')
   return tabs
 }
@@ -97,8 +97,9 @@ function tabsFor(request: ServiceRequest): Tab[] {
 function waitingOn(request: ServiceRequest) {
   if (request.status === 'Under Review') return { label: 'With GSO Head', tone: 'bg-amber-50 text-amber-800', detail: `The GSO Head is deciding the complete request (${countLines(request, ['WAITING_GSO_HEAD'])} item line(s)). Available units stay reserved; nothing is issued separately.` }
   if (request.status === 'Needs Information') return { label: 'With requester', tone: 'bg-amber-50 text-amber-800', detail: 'Waiting for the requester to answer. Their reply brings the request back to "To check".' }
-  if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `The GSO Head sent only the shortage quantities to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Stocked items remain reserved; do not issue anything until every requested line is complete.` }
-  if (FINANCE_STATUSES.includes(request.status)) return { label: 'Purchase approved', tone: 'bg-indigo-50 text-indigo-700', detail: 'The complete request is approved. Buy only the shortage quantities; the full request stays on hold until all items arrive.' }
+  if (request.status === 'GSO Endorsed') return { label: 'Ready for handoff', tone: 'bg-indigo-50 text-indigo-700', detail: 'The signed PDF is ready in Procurement. Download or print it and give it to Finance before buying the shortage quantities.' }
+  if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `GSO Staff handed the signed requisition to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Stocked items remain reserved; do not issue anything until every requested line is complete.` }
+  if (FINANCE_STATUSES.includes(request.status)) return { label: 'Purchase approved', tone: 'bg-indigo-50 text-indigo-700', detail: 'The complete request is approved. Print the signed PDF and hand it to Finance before buying the shortage quantities.' }
   if (request.status === 'Completed') return { label: 'Completed', tone: 'bg-slate-100 text-slate-600', detail: 'Every approved item was issued.' }
   if (request.status === 'Rejected') return { label: 'Declined', tone: 'bg-rose-50 text-rose-700', detail: 'The GSO Head declined the entire request.' }
   return { label: request.status, tone: 'bg-slate-100 text-slate-600', detail: 'Waiting for the next update.' }
@@ -182,7 +183,7 @@ function recentReceiptReference(item: InventoryItemRecord) {
   return latest?.referenceNumber || ''
 }
 
-// After the GSO Head sends the purchase to Finance and GSO Staff buy the item: put it in Item Master Data,
+// After GSO Staff hands the signed purchase form to Finance and buys the item: put it in Item Master Data,
 // then record what arrived on this requisition item so it can be issued.
 function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRefreshInventory, onReceived }: {
   request: ServiceRequest

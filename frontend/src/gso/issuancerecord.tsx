@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
+import { IssuanceProgressPath } from '../components/requestpath'
 import {
   listIssuanceRecords,
   type ConfirmationMethod,
@@ -174,7 +175,7 @@ function downloadReport(kind: 'excel' | 'word', records: IssuanceRecord[], filte
       <td style="${cell}${record.isOverdue ? 'color:#be123c;font-weight:bold;' : ''}">${escapeHTML(formatDue(record.dueAt))}</td>
       <td style="${cell}">${record.quantity} ${escapeHTML(record.unitOfMeasure)}${small(quantityBreakdown(record))}</td>
       <td style="${cell}font-weight:bold;color:${statusReportColors[record.status] || '#475569'};">${escapeHTML(record.status)}</td>
-      <td style="${cell}">${last ? `${escapeHTML(formatDateTime(last.returnedAt))}${small(last.condition)}` : '—'}</td>
+      <td style="${cell}">${last ? `${escapeHTML(formatDateTime(last.returnedAt))}${small(last.condition)}` : 'Not yet'}</td>
     </tr>`
   }).join('')
   const body = `
@@ -217,6 +218,7 @@ export default function IssuanceRecord() {
   const [toDate, setToDate] = useState('')
   const [loaded, setLoaded] = useState<{ key: string; records: IssuanceRecord[]; error: string } | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<IssuanceRecord | null>(null)
+  const [exportNotice, setExportNotice] = useState('')
 
   useEffect(() => {
     let active = true
@@ -277,8 +279,9 @@ export default function IssuanceRecord() {
   }
 
   function exportReport(kind: 'excel' | 'word') {
+    setExportNotice('')
     if (!filteredRecords.length) {
-      alert(`There is no data to export to ${kind === 'excel' ? 'Excel' : 'Word'}.`)
+      setExportNotice(`There is no data to export to ${kind === 'excel' ? 'Excel' : 'Word'}.`)
       return
     }
     downloadReport(kind, filteredRecords, filterDescription)
@@ -339,6 +342,7 @@ export default function IssuanceRecord() {
       </section>
 
       <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+        <p className="mb-4 text-xs font-medium text-slate-500">Search or narrow the list by date, department, or status. Click a row to see its full history.</p>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <label className="block">
             <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Search</span>
@@ -426,6 +430,7 @@ export default function IssuanceRecord() {
             <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700" role="status">
               {isLoading ? 'Loading…' : `${filteredRecords.length} record(s)`}
             </span>
+            {exportNotice && <p role="alert" className="basis-full rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-bold text-amber-800">{exportNotice}</p>}
           </div>
         </div>
         {!isLoading && records.length >= recordLimit && (
@@ -496,7 +501,7 @@ export default function IssuanceRecord() {
                           <span className="block whitespace-nowrap font-semibold text-slate-700">{formatDateTime(last.returnedAt)}</span>
                           <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[0.58rem] font-extrabold ${conditionTone(last.condition)}`}>{last.condition}</span>
                         </>
-                      ) : <span className="text-slate-400">—</span>}
+                      ) : <span className="text-slate-400">Not yet</span>}
                     </td>
                   </tr>
                 )
@@ -542,6 +547,7 @@ export default function IssuanceRecord() {
                   </div>
                 ))}
               </dl>
+              <IssuanceProgressPath status={selectedRecord.status} />
               <section aria-labelledby="issuance-timeline-title">
                 <h3 id="issuance-timeline-title" className="text-[0.65rem] font-black uppercase tracking-wide text-slate-500">History</h3>
                 <ol className="mt-3 space-y-4 border-l-2 border-slate-100 pl-4">

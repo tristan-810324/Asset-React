@@ -637,8 +637,8 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
           WHERE request_id = $1`,
         [purchaseRequisitionId],
       );
-      if (Number(unfinishedResult.rows[0]?.unfinished || 0) === 0 && unfinishedResult.rows[0]?.has_issued) {
-        const finalRequestStatus = isPerUnitPickup ? 'Ready for Pickup' : 'Completed';
+      if (Number(unfinishedResult.rows[0]?.unfinished || 0) === 0 && unfinishedResult.rows[0]?.has_issued && !isPerUnitPickup) {
+        const finalRequestStatus = 'Completed';
         const finalRequestNote = isPerUnitPickup
           ? 'All approved requisition items are prepared for pickup by GSO; barcode labels are ready.'
           : 'All approved requisition items have been issued by GSO Staff.';
@@ -976,7 +976,7 @@ async function listMyIssuanceActivity(userId) {
   return result.rows;
 }
 
-async function listMyDepartmentReturnActivity(userId) {
+async function listIssuanceReturnRows(userId) {
   const result = await pool.query(
     `SELECT return_record.id::TEXT AS id,
             return_record.status,
@@ -1010,6 +1010,55 @@ async function listMyDepartmentReturnActivity(userId) {
         AND return_record.status NOT IN ('Voided', 'Lost')
       ORDER BY COALESCE(return_record.decided_at, return_record.requested_at) DESC,
                return_record.id DESC
+      LIMIT 20`,
+    [userId],
+  );
+  return result.rows;
+}
+
+// Issuance returns and borrowing returns from the requester's verified department, newest first.
+async function listMyDepartmentReturnActivity(userId) {
+  const [issuanceRows, borrowingRows] = await Promise.all([listIssuanceReturnRows(userId), listBorrowingReturnRows(userId)]);
+  return [...issuanceRows, ...borrowingRows]
+    .sort((first, second) => new Date(second.decidedAt || second.requestedAt).getTime() - new Date(first.decidedAt || first.requestedAt).getTime())
+    .slice(0, 20);
+}
+
+// One row per borrowed item that GSO has received back, so a returned borrowing appears in Recent returns.
+async function listBorrowingReturnRows(userId) {
+  const result = await pool.query(
+    `SELECT ('borrow-' || asset.id::TEXT) AS id,
+            'BORROWING' AS source,
+            request.id::TEXT AS "requestId",
+            request.status,
+            asset.condition_in AS condition,
+            '' AS reason,
+            COALESCE(NULLIF(BTRIM(request.form_data->>'returnResponsibleName'), ''), requester.name) AS "returnedByName",
+            request.created_at AS "requestedAt",
+            asset.returned_at AS "decidedAt",
+            asset.quantity,
+            asset.unit_of_measure AS "unitOfMeasure",
+            COALESCE(other.employee_code, '') AS "employeeCode",
+            requester.name AS "employeeName",
+            inventory.item_code AS "itemCode",
+            COALESCE(NULLIF(inventory.item_name, ''), inventory.description) AS "itemName",
+            NULL::TEXT AS "tagCode",
+            request.form_data->>'useLocation' AS "recipientLocation",
+            request.form_data->>'purpose' AS "recipientPurpose",
+            other.department
+       FROM requester_identity_profiles AS profile
+       JOIN requester_identity_profiles AS other
+         ON lower(trim(other.department)) = lower(trim(profile.department))
+        AND other.verification_status = 'Verified'
+       JOIN service_requests AS request
+         ON request.requested_by_user_id = other.user_id AND request.request_type = 'BORROWING'
+       JOIN service_request_assets AS asset
+         ON asset.request_id = request.id AND asset.returned_at IS NOT NULL
+       JOIN item_catalog AS inventory ON inventory.id = asset.item_id
+       JOIN users AS requester ON requester.id = request.requested_by_user_id
+      WHERE profile.user_id = $1
+        AND profile.verification_status = 'Verified'
+      ORDER BY COALESCE(asset.returned_at, request.created_at) DESC, asset.id DESC
       LIMIT 20`,
     [userId],
   );
@@ -1268,11 +1317,19 @@ async function getAssetTagByCode(tagCode) {
             ), '[]'::JSON) AS "borrowerHistory",
             tag.last_inspected_at AS "lastInspectedAt",
             tag.last_inspection_note AS "lastInspectionNote",
-            inspector.name AS "lastInspectedBy"
+            inspector.name AS "lastInspectedBy",
+            NULLIF(BTRIM(current_issue.recipient_location), '') AS "assignedLocation",
+            issuer.employee_code AS "issuedByCode",
+            issuer.first_name || ' ' || issuer.last_name AS "issuedByName",
+            issuer.department AS "issuedByDepartment"
        FROM asset_unit_tags AS tag
        JOIN item_catalog AS item ON item.id = tag.item_id
        LEFT JOIN employees AS employee ON employee.id = tag.assigned_employee_id
        LEFT JOIN users AS inspector ON inspector.id = tag.last_inspected_by_user_id
+       LEFT JOIN employee_issuances AS current_issue
+         ON current_issue.id = tag.issuance_id AND tag.custody_status = 'Issued'
+       LEFT JOIN employee_issuance_batches AS current_batch ON current_batch.id = current_issue.batch_id
+       LEFT JOIN employees AS issuer ON issuer.id = current_batch.employee_id
       WHERE tag.tag_code = $1`,
     [tagCode],
   );
@@ -1737,8 +1794,8 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
             WHERE request_id = $1`,
           [batch.purchase_requisition_id],
         );
-        if (Number(unfinishedResult.rows[0]?.unfinished || 0) === 0 && unfinishedResult.rows[0]?.has_issued) {
-          const finalRequestStatus = autoPreparePickup ? 'Ready for Pickup' : 'Completed';
+        if (Number(unfinishedResult.rows[0]?.unfinished || 0) === 0 && unfinishedResult.rows[0]?.has_issued && !autoPreparePickup) {
+          const finalRequestStatus = 'Completed';
           const finalRequestNote = autoPreparePickup
             ? 'All approved requisition items are prepared for pickup by GSO; barcode labels are ready.'
             : 'All approved requisition items have been issued by GSO Staff.';

@@ -184,23 +184,6 @@ export function Banner({ tone, children }: { tone: 'error' | 'success' | 'info' 
   return <p role={tone === 'error' ? 'alert' : 'status'} className={`rounded-xl border px-3 py-2.5 text-xs font-semibold leading-relaxed ${tones[tone]}`}>{children}</p>
 }
 
-export function HistoryList({ request }: { request: ServiceRequest }) {
-  const events = [...request.history].reverse()
-  return <details className="group mt-4 rounded-xl border border-slate-200 bg-white">
-    <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">
-      History ({events.length})<span className="transition group-open:rotate-180" aria-hidden="true">⌄</span>
-    </summary>
-    <ol className="max-h-64 space-y-2.5 overflow-y-auto border-t border-slate-100 p-3">
-      {events.length === 0 && <li className="text-xs text-slate-400">No history yet.</li>}
-      {events.map((event) => <li key={event.id} className="text-[0.65rem]">
-        <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-extrabold text-slate-700">{event.status}</span><span className="text-slate-400">{formatDateTime(event.changedAt)}</span></div>
-        {event.note && <p className="mt-0.5 leading-relaxed text-slate-600">{event.note}</p>}
-        {event.changedBy && <p className="mt-0.5 text-slate-400">by {event.changedBy}</p>}
-      </li>)}
-    </ol>
-  </details>
-}
-
 export function EmptyState({ title, detail }: { title: string; detail: string }) {
   return <div className="grid min-h-56 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-6 text-center">
     <div><p className="text-sm font-extrabold text-slate-700">{title}</p><p className="mt-1 text-xs leading-relaxed text-slate-500">{detail}</p></div>

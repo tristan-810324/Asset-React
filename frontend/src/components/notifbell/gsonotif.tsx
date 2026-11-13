@@ -108,25 +108,25 @@ export default function GsoNotif({
           id="gso-notifications-panel"
           role="dialog"
           aria-label="Notifications"
-          className="absolute right-0 top-12 z-50 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-2xl shadow-slate-900/20"
+          className="fixed left-3 right-3 top-17 z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-2xl shadow-slate-900/20 sm:absolute sm:left-auto sm:right-0 sm:top-12 sm:w-[min(24rem,calc(100vw-2rem))]"
         >
-          <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-4">
+          <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-3 py-2.5 sm:px-4 sm:py-4">
             <div>
               <h2 className="text-sm font-black text-slate-900">Notifications</h2>
-              <p className="mt-1 text-xs font-medium text-slate-500">
+              <p className="mt-0.5 text-[0.7rem] font-medium text-slate-500 sm:mt-1 sm:text-xs">
                 {unreadCount > 0 ? `${unreadCount} unread update${unreadCount === 1 ? '' : 's'}` : 'You are all caught up.'}
               </p>
             </div>
             <div className="flex items-center gap-1">
               {unreadCount > 0 && (
-                <button type="button" onClick={markAllAsRead} className="rounded-lg px-2 py-1.5 text-[0.65rem] font-extrabold text-blue-700 transition hover:bg-blue-50">
+                <button type="button" onClick={markAllAsRead} className="rounded-lg px-2.5 py-2 text-[0.7rem] font-extrabold text-blue-700 transition hover:bg-blue-50 sm:px-2 sm:py-1.5 sm:text-[0.65rem]">
                   Mark all read
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
-                className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 sm:h-8 sm:w-8"
                 aria-label="Close notifications"
               >
                 <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -136,9 +136,9 @@ export default function GsoNotif({
             </div>
           </div>
 
-          <div className="max-h-[65vh] overflow-y-auto">
+          <div className="max-h-[42vh] overflow-y-auto sm:max-h-[65vh]">
             {latestNotifications.length === 0 ? (
-              <div className="px-6 py-10 text-center">
+              <div className="px-5 py-8 text-center sm:px-6 sm:py-10">
                 <span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-blue-50 text-blue-600">
                   <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
@@ -153,24 +153,24 @@ export default function GsoNotif({
                 {latestNotifications.map((notification) => {
                   const unread = !notification.readAt
                   return (
-                    <li key={notification.id} className={`flex gap-3 px-4 py-3.5 ${unread ? 'bg-blue-50/50' : 'bg-white'}`}>
+                    <li key={notification.id} className={`flex gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3.5 ${unread ? 'bg-blue-50/50' : 'bg-white'}`}>
                       <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${unread ? 'bg-blue-600' : 'bg-slate-200'}`} />
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-extrabold leading-5 text-slate-800">{notification.title}</p>
-                        <p className="mt-1 text-xs leading-relaxed text-slate-600">{notification.message}</p>
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[0.75rem] font-extrabold leading-4 text-slate-800 sm:text-sm sm:leading-5">{notification.title}</p>
+                        <p className="mt-0.5 line-clamp-1 text-[0.7rem] leading-snug text-slate-600 sm:mt-1 sm:line-clamp-none sm:text-xs sm:leading-relaxed">{notification.message}</p>
+                        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 sm:mt-2">
                           <span className="flex items-center gap-2">
                             <time className="text-[0.65rem] font-semibold text-slate-400" dateTime={notification.createdAt}>{notificationDate(notification.createdAt)}</time>
-                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[0.6rem] font-extrabold text-slate-500">{notificationModuleFor(notification.type)}</span>
+                            <span className="hidden rounded bg-slate-100 px-1.5 py-0.5 text-[0.6rem] font-extrabold text-slate-500 sm:inline">{notificationModuleFor(notification.type)}</span>
                           </span>
                           <div className="flex items-center gap-2">
                             {unread && (
-                              <button type="button" onClick={() => markAsRead(notification.id)} className="text-[0.65rem] font-extrabold text-slate-500 hover:text-slate-800">
+                              <button type="button" onClick={() => markAsRead(notification.id)} className="min-h-8 text-[0.68rem] font-extrabold text-slate-500 hover:text-slate-800 sm:min-h-0 sm:text-[0.65rem]">
                                 Mark read
                               </button>
                             )}
                             {notification.href && (
-                              <a href={notification.href} onClick={() => { if (unread) markAsRead(notification.id) }} className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[0.65rem] font-extrabold text-white transition hover:bg-blue-700">
+                              <a href={notification.href} onClick={() => { if (unread) markAsRead(notification.id) }} className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-[0.65rem] font-extrabold text-white transition hover:bg-blue-700 sm:min-h-8 sm:px-2.5 sm:py-1.5 sm:text-[0.65rem]">
                                 Open
                                 <svg aria-hidden="true" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
                               </a>
@@ -185,7 +185,7 @@ export default function GsoNotif({
             )}
           </div>
 
-          <a href={notificationCenterHref} onClick={() => onOpenChange(false)} className="flex min-h-11 items-center justify-center gap-2 border-t border-slate-100 bg-slate-50/70 px-4 py-3 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50">
+          <a href={notificationCenterHref} onClick={() => onOpenChange(false)} className="flex min-h-9 items-center justify-center gap-2 border-t border-slate-100 bg-slate-50/70 px-3 py-2 text-[0.7rem] font-extrabold text-blue-700 transition hover:bg-blue-50 sm:min-h-11 sm:px-4 sm:py-3 sm:text-xs">
             {notificationCenterLabel}
             <svg aria-hidden="true" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
           </a>

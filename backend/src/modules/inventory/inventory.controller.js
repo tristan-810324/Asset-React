@@ -59,10 +59,6 @@ const createCategoryItemName = asyncHandler(async (req, res) => {
   res.status(201).json({ success: true, data: { itemName } });
 });
 
-const updateCategoryItemNamePolicy = asyncHandler(async (req, res) => {
-  const itemName = await inventoryService.updateCategoryItemNamePolicy(req.params.id, req.body, req.user);
-  res.json({ success: true, data: { itemName } });
-});
 
 const deleteCategoryItemName = asyncHandler(async (req, res) => {
   const itemName = await inventoryService.deleteCategoryItemName(req.params.id);
@@ -81,6 +77,5 @@ module.exports = {
   deleteCategory,
   listCategoryItemNames,
   createCategoryItemName,
-  updateCategoryItemNamePolicy,
   deleteCategoryItemName,
 };

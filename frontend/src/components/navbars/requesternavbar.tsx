@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { AuthUser } from '../../auth/authApi'
-import { listServerNotifications, onNotificationsChanged } from '../../auth/notificationsApi'
+import GsoNotif from '../notifbell/gsonotif'
 
 export type RequesterPage = 'Home' | 'Request Center' | 'My Requests' | 'My Issued Items' | 'Notifications' | 'Return Items' | 'Profile' | 'My Activities'
 
@@ -57,7 +57,7 @@ export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { cur
       </nav>
 
       <div className="mt-auto mb-2 overflow-hidden rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/50 via-slate-900/40 to-slate-950/60 px-4 py-4 text-center shadow-lg shadow-slate-950/40 sm:p-5">
-        <img src="/dyci_img/dyci_logo.jpg" alt="Dr. Yanga's Colleges logo" className="mx-auto h-auto w-full max-w-[8.5rem] object-contain sm:max-w-[9.5rem]" />
+        <img src="/dyci_img/dyci_logo.jpg" alt="Dr. Yanga's Colleges logo" className="mx-auto h-auto w-full max-w-34 object-contain sm:max-w-38" />
         <p className="mt-1 text-[0.6rem] font-semibold leading-relaxed text-blue-200/75">Asset management system for Dr. Yanga's Colleges</p>
       </div>
     </aside>
@@ -68,20 +68,11 @@ export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { cur
 export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignOut }: { pageName: RequesterPage; today: string; user: AuthUser | null; onOpenMenu: () => void; onSignOut: () => void }) {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const accountMenuRef = useRef<HTMLDivElement>(null)
-  const [unreadCount, setUnreadCount] = useState(0)
+  const [notifOpen, setNotifOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const initials = user?.name?.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase() || 'BR'
   const onProfilePage = /\/profile$/.test(window.location.pathname)
 
-  useEffect(() => {
-    let active = true
-    const refresh = () => listServerNotifications()
-      .then((rows) => { if (active) setUnreadCount(rows.filter((row) => !row.readAt).length) })
-      .catch(() => undefined)
-    void refresh()
-    const interval = window.setInterval(() => void refresh(), 60_000)
-    const stopListening = onNotificationsChanged(() => void refresh())
-    return () => { active = false; window.clearInterval(interval); stopListening() }
-  }, [])
 
   useEffect(() => {
     if (!accountMenuOpen) return
@@ -99,7 +90,7 @@ export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignO
         <div className="min-w-0"><p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">Requester Portal / <span className="text-slate-700">{pageName}</span></p><p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p></div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3">
-        <a href="/requester/notifications" className="relative grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label={unreadCount > 0 ? `Open notifications, ${unreadCount} unread` : 'Open notifications'} aria-current={pageName === 'Notifications' ? 'page' : undefined}><Icon name="bell" className="h-[1.1rem] w-[1.1rem]" />{unreadCount > 0 ? <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[0.55rem] font-black text-white ring-2 ring-[#f4f7fb]">{unreadCount > 9 ? '9+' : unreadCount}</span> : pageName === 'Notifications' && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-blue-600" />}</a>
+        <GsoNotif open={notifOpen} onOpenChange={setNotifOpen} notificationCenterHref="/requester/notifications" notificationCenterLabel="Open all notifications" />
         <div ref={accountMenuRef} className="relative">
           <button type="button" onClick={() => setAccountMenuOpen((open) => !open)} className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition hover:border-blue-200 focus:outline-none focus:ring-4 focus:ring-blue-100" aria-label="Open account menu" aria-haspopup="menu" aria-expanded={accountMenuOpen}>
             <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span>
@@ -108,7 +99,7 @@ export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignO
           </button>
           {accountMenuOpen && <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/20">
             <div className="flex items-center gap-3 border-b border-slate-100 px-3 py-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span><div className="min-w-0"><p className="truncate text-xs font-extrabold text-slate-800">{user?.name || 'Requester'}</p><p className="mt-1 truncate text-[0.65rem] font-semibold text-slate-500">{user?.email || 'School account'}</p></div></div>
-            <div className="px-1 py-2"><p className="px-2.5 pb-1.5 pt-1 text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Settings</p><a href="/requester/profile" role="menuitem" aria-current={onProfilePage ? 'page' : undefined} onClick={() => setAccountMenuOpen(false)} className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-700'}`}><Icon name="user" className={`h-4 w-4 ${onProfilePage ? 'text-blue-600' : 'text-slate-400'}`} />Edit profile</a><a href="/requester/my-activities" role="menuitem" aria-current={pageName === 'My Activities' ? 'page' : undefined} onClick={() => setAccountMenuOpen(false)} className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold transition ${pageName === 'My Activities' ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-700'}`}><Icon name="bell" className={`h-4 w-4 ${pageName === 'My Activities' ? 'text-blue-600' : 'text-slate-400'}`} />My activities</a></div>
+            <div className="px-1 py-2"><button type="button" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"><Icon name="user" className="h-4 w-4 text-slate-400" />Settings<Icon name="chevron-down" className={`ml-auto h-3.5 w-3.5 text-slate-400 transition ${settingsOpen ? 'rotate-180' : ''}`} /></button>{settingsOpen && <div className="ml-4 mt-1 space-y-0.5 border-l-2 border-blue-100 pl-2"><a href="/requester/profile" role="menuitem" aria-current={onProfilePage ? 'page' : undefined} onClick={() => setAccountMenuOpen(false)} className={`flex w-full items-center rounded-xl px-2.5 py-2 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'}`}>Profile</a><a href="/requester/my-activities" role="menuitem" aria-current={pageName === 'My Activities' ? 'page' : undefined} onClick={() => setAccountMenuOpen(false)} className={`flex w-full items-center rounded-xl px-2.5 py-2 text-xs font-bold transition ${pageName === 'My Activities' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'}`}>My activities</a></div>}</div>
             <div className="border-t border-slate-100 px-1 pb-1 pt-1"><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); onSignOut() }} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"><Icon name="logout" className="h-4 w-4" />Logout</button></div>
           </div>}
         </div>

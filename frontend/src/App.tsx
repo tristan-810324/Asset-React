@@ -24,6 +24,7 @@ import EmployeeMasterData from './gso/employemasterdata'
 import MainIssuance from './gso/mainissuance'
 import AssetLabels from './gso/assetlabels'
 import GsoPurchaseRequisitions from './gso/purchaserequisitions'
+import GsoProcurement from './gso/procurement'
 import BorrowingPage from './gso/borrowing'
 import IssuanceRecord from './gso/issuancerecord'
 import GsoHeadIssuanceRecord from './gsohead/issuancerecord'
@@ -35,6 +36,7 @@ import IssuanceApproval from './gso/issuanceapproval'
 import Notifications from './gso/notifications'
 import GsoHeadNotifications from './gsohead/gsoheadnotifications'
 import GsoHeadProfile from './gsohead/gsoheadprofile'
+import GsoHeadESignature from './gsohead/esignature'
 import RequesterVerification from './gso/requesterverification'
 import GsoAuditLogs from './gso/auditlogs'
 import GsoProfile from './gso/profilesettings'
@@ -153,6 +155,9 @@ export default function App() {
   if (path === '/gso-head/profile') {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadProfile /></ProtectedDashboard>
   }
+  if (path === '/gso-head/esignature') {
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadESignature /></ProtectedDashboard>
+  }
   if (path === '/gso-head/audit-logs') {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoAuditLogs /></ProtectedDashboard>
   }
@@ -188,6 +193,10 @@ export default function App() {
   }
   if (path === '/gso/purchase-requisitions') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoPurchaseRequisitions /></ProtectedDashboard>
+  }
+  // Saved notifications still link to the old paths, so they keep opening this page.
+  if (path === '/gso/procurement' || path === '/gso/finance-handoff' || path === '/gso/items-to-buy') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoProcurement /></ProtectedDashboard>
   }
   if (path === '/gso/return-items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ReturnItems /></ProtectedDashboard>

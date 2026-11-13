@@ -50,16 +50,26 @@ export type InventoryReceiptRecord = {
   createdAt: string
 }
 
+export type PurchaseReadyRequest = {
+  id: string
+  referenceNo: string
+  requesterName?: string
+  items?: Array<{ itemName: string; quantity: number }>
+}
+
+export type PurchaseLinkedRequest = PurchaseReadyRequest & {
+  readyForIssuance: boolean
+  items: Array<{ itemName: string; quantity: number }>
+}
+
 export type PurchaseStockReconciliation = {
   deliveries: Array<{
     lineId: string
     itemId: string
     quantity: number
   }>
-  readyRequests: Array<{
-    id: string
-    referenceNo: string
-  }>
+  linkedRequests: PurchaseLinkedRequest[]
+  readyRequests: PurchaseReadyRequest[]
 }
 
 // Dates are Manila wall-clock text ("YYYY-MM-DDTHH:mm"), or a plain date on older and requester records.
@@ -171,17 +181,6 @@ export async function deleteInventoryCategory(id: string, reason: string) {
 export async function listInventoryCategoryItemNames() {
   const result = await apiRequest<{ itemNames: InventoryCategoryItemName[] }>('/inventory/item-names')
   return result.itemNames
-}
-
-export async function updateInventoryCategoryItemNamePolicy(
-  id: string,
-  change: { approvalPolicy: 'GSO_HEAD' | 'STAFF_ISSUE'; staffIssueMaxQuantity: number | null; reason: string },
-) {
-  const result = await apiRequest<{ itemName: Partial<InventoryCategoryItemName> }>(
-    `/inventory/item-names/${encodeURIComponent(id)}/policy`,
-    { method: 'PATCH', body: JSON.stringify(change) },
-  )
-  return result.itemName
 }
 
 export async function createInventoryCategoryItemName(categoryId: string, name: string) {

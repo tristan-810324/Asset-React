@@ -104,6 +104,7 @@ export default function ToRepaired() {
   const [completionChoice, setCompletionChoice] = useState<'repaired' | 'writeOff'>('repaired')
   const [repairActionError, setRepairActionError] = useState('')
   const [repairActionMessage, setRepairActionMessage] = useState('')
+  const [exportMessage, setExportMessage] = useState('')
 
   useEffect(() => {
     let isMounted = true
@@ -347,8 +348,9 @@ export default function ToRepaired() {
   }
 
   const handleGenerateCSV = () => {
+    setExportMessage('')
     if (filteredRepairs.length === 0) {
-      alert('There is no data to export to CSV.')
+      setExportMessage('There is no data to export to CSV.')
       return
     }
 
@@ -366,8 +368,9 @@ export default function ToRepaired() {
   }
 
   const handleGenerateExcel = () => {
+    setExportMessage('')
     if (filteredRepairs.length === 0) {
-      alert('There is no data to export to Excel.')
+      setExportMessage('There is no data to export to Excel.')
       return
     }
 
@@ -464,8 +467,9 @@ export default function ToRepaired() {
   }
 
   const handleGenerateWord = () => {
+    setExportMessage('')
     if (filteredRepairs.length === 0) {
-      alert('There is no data to export to Word.')
+      setExportMessage('There is no data to export to Word.')
       return
     }
 
@@ -698,6 +702,7 @@ export default function ToRepaired() {
             <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700">
               {filteredRepairs.length} item(s) in queue
             </span>
+            {exportMessage && <p role="alert" className="basis-full rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-bold text-amber-800">{exportMessage}</p>}
           </div>
         </div>
 

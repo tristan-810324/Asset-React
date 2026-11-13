@@ -99,6 +99,8 @@ export default function RequesterIssuedItems() {
   const [returningRequest, setReturningRequest] = useState('')
   const [returnNotice, setReturnNotice] = useState('')
   const [returnError, setReturnError] = useState('')
+  // Which records the page lists: both sections by default, or one of them on its own.
+  const [recordView, setRecordView] = useState<'all' | 'issuances' | 'borrowings'>('all')
 
   useEffect(() => {
     let active = true
@@ -109,7 +111,7 @@ export default function RequesterIssuedItems() {
         setRequests(requestRows)
       })
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang iyong issuance records.')
+        if (active) setError(reason instanceof Error ? reason.message : 'Could not load your issuance records.')
       })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
@@ -145,9 +147,9 @@ export default function RequesterIssuedItems() {
     try {
       const updated = await requestAssetReturn(request.id)
       setRequests((current) => current.map((entry) => entry.id === updated.id ? updated : entry))
-      setReturnNotice('Naipadala na sa GSO ang return request para sa ' + request.referenceNo + '.')
+      setReturnNotice('Return request sent to GSO for ' + request.referenceNo + '.')
     } catch (reason) {
-      setReturnError(reason instanceof Error ? reason.message : 'Hindi naipadala ang return request. Subukan ulit.')
+      setReturnError(reason instanceof Error ? reason.message : 'The return request was not sent. Try again.')
     } finally {
       setReturningRequest('')
     }
@@ -194,7 +196,13 @@ export default function RequesterIssuedItems() {
         </article>)}
       </section>
 
-      <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+      <div role="group" aria-label="Choose which records to show" className="inline-flex max-w-full flex-wrap gap-1 rounded-2xl bg-slate-100 p-1">
+        {([['all', 'All records'], ['issuances', 'Issued items'], ['borrowings', 'Borrowings']] as const).map(([key, label]) => (
+          <button key={key} type="button" aria-pressed={recordView === key} onClick={() => setRecordView(key)} className={`rounded-xl border px-3.5 py-2 text-xs font-extrabold transition ${recordView === key ? 'border-blue-100 bg-white text-blue-700 shadow-sm' : 'border-transparent text-slate-600 hover:text-blue-700'}`}>{label}</button>
+        ))}
+      </div>
+
+      {(recordView === 'all' || recordView === 'issuances') && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <span className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">GSO issuance</span>
@@ -232,7 +240,7 @@ export default function RequesterIssuedItems() {
               <p className="mt-1 max-w-sm text-xs leading-relaxed text-slate-500">Items recorded for your requester account by GSO will appear here.</p>
             </div>
           </div>
-            : <div className="mt-4 space-y-4">{visibleBatches.map((batch) => <article key={batch.id} className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+            : <div className="inventory-list-scrollbar mt-4 max-h-120 space-y-4 overflow-y-auto pr-1">{visibleBatches.map((batch) => <article key={batch.id} className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/80 px-4 py-3.5 sm:px-5">
                 <div>
                   <p className="text-sm font-extrabold text-slate-900">Issuance record <span className="text-blue-700">#{batch.id}</span></p>
@@ -241,7 +249,7 @@ export default function RequesterIssuedItems() {
                 <span className={'rounded-full px-3 py-1.5 text-[0.62rem] font-extrabold ' + statusTone(batch.status)}>{batch.status}</span>
               </div>
 
-              <div className="max-h-[26rem] space-y-2 overflow-y-auto p-3 sm:p-4">{groupIssuedItems(batch).map(({ item, quantity }) => {
+              <div className="max-h-104 space-y-2 overflow-y-auto p-3 sm:p-4">{groupIssuedItems(batch).map(({ item, quantity }) => {
                 const currentStatus = itemStatus(batch, item)
                 const isReturned = currentStatus === 'Returned'
                 const remaining = Math.max(Number(item.quantity) - Number(item.returnedQuantity || 0), 0)
@@ -252,7 +260,7 @@ export default function RequesterIssuedItems() {
                         <h3 className="text-sm font-black text-slate-900">{item.itemName}</h3>
                         
                       </div>
-                      <p className="mt-1.5 break-words text-xs font-semibold text-slate-600">{quantity} {item.unitOfMeasure}{item.issueBehavior === 'returnable' && item.trackingMode === 'quantity' ? <span className="text-amber-700"><span className="px-1.5 text-slate-300">·</span>{remaining} remaining</span> : null}</p>
+                      <p className="mt-1.5 wrap-break-word text-xs font-semibold text-slate-600">{quantity} {item.unitOfMeasure}{item.issueBehavior === 'returnable' && item.trackingMode === 'quantity' ? <span className="text-amber-700"><span className="px-1.5 text-slate-300">·</span>{remaining} remaining</span> : null}</p>
                       <p className="mt-1 text-xs font-bold text-blue-700">Assigned to {item.recipientEmployeeName} · {item.recipientEmployeeCode}</p>
                       {(item.recipientLocation || item.recipientPurpose) && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-500">{[item.recipientLocation, item.recipientPurpose].filter(Boolean).join(' · ')}</p>}
                     </div>
@@ -274,14 +282,14 @@ export default function RequesterIssuedItems() {
               </div>}
               {batch.decisionNote && <p className="mx-4 mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-xs leading-relaxed text-slate-600 sm:mx-5 sm:mb-5">GSO note: <span className="font-semibold text-slate-800">{batch.decisionNote}</span></p>}
             </article>)}</div>}
-      </section>
+      </section>}
 
-      {requestBorrowings.length > 0 && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+      {(recordView === 'all' || recordView === 'borrowings') && requestBorrowings.length > 0 && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div><span className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-emerald-700">Request Center</span><h2 className="mt-1 text-lg font-black tracking-tight text-slate-900">Borrowing request records</h2><p className="mt-1 text-xs text-slate-500">Requests, item quantities, and return dates.</p></div>
           <a href="/requester/my-requests" className="inline-flex items-center gap-1 text-xs font-extrabold text-blue-700 hover:underline">My requests <UiIcon name="arrow" className="h-3.5 w-3.5" /></a>
         </div>
-        <div className="mt-4 space-y-3">{requestBorrowings.map((request) => {
+        <div className="inventory-list-scrollbar mt-4 max-h-120 space-y-3 overflow-y-auto pr-1">{requestBorrowings.map((request) => {
           const hasOutstandingItems = request.assets.some((asset) => !asset.returnedAt)
           const canRequestReturn = request.status === 'Issued' && hasOutstandingItems
           return <article key={request.id} className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 transition hover:border-blue-200 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
@@ -303,7 +311,7 @@ export default function RequesterIssuedItems() {
                     <UiIcon name="return" className="h-4 w-4" />{returningRequest === request.id ? 'Sending request...' : 'Request return inspection'}
                   </button>
                 : request.status === 'Return Requested'
-                  ? <span className="text-xs font-semibold text-amber-800">Naipadala na sa GSO ang return request. Hintayin ang inspection.</span>
+                  ? <span className="text-xs font-semibold text-amber-800">Return request sent to GSO. Wait for the inspection.</span>
                   : null}
             </div>
           </article>

@@ -10,17 +10,20 @@ export type DashboardRequestItem = {
 }
 
 export function requestStatusLabel(request: ServiceRequest) {
+  // Handed to the department but barcode labels still unprinted: not ready for pickup yet.
+  if (request.requestType === 'PURCHASE_REQUISITION' && request.status === 'Ready for Pickup' && request.labelsAllPrinted === false) return 'Issued to department'
   if (request.status === 'Submitted' || request.status === 'Under Review') return 'Pending'
-  if (request.status === 'GSO Endorsed') return 'Endorsed'
-  if (request.status === 'Finance Handoff Pending') return 'Sending to Finance'
-  if (request.status === 'Finance Handoff Failed') return 'Finance email failed'
+  if (request.status === 'GSO Endorsed') return 'Ready for Finance handoff'
+  if (request.status === 'Finance Handoff Pending') return 'Preparing handoff'
+  if (request.status === 'Finance Handoff Failed') return 'Ready for physical handoff'
   if (request.status === 'Sent to Finance') return 'Being purchased'
   if (request.status === 'Cancelled') return 'Cancelled'
   return request.status
 }
 
 export function requestStatusTone(request: ServiceRequest) {
-  if (request.status === 'Rejected' || request.status === 'Finance Handoff Failed') return 'border-rose-200 bg-rose-50 text-rose-700'
+  if (requestStatusLabel(request) === 'Issued to department') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (request.status === 'Rejected') return 'border-rose-200 bg-rose-50 text-rose-700'
   if (request.status === 'Cancelled') return 'border-slate-200 bg-slate-100 text-slate-600'
   if (request.status === 'Approved' || request.status === 'GSO Endorsed') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (request.status === 'Needs Information') return 'border-amber-200 bg-amber-50 text-amber-800'

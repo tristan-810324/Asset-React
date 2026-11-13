@@ -253,6 +253,9 @@ export type RequesterDepartmentReturn = {
   department: string
   recipientLocation?: string
   recipientPurpose?: string
+  // BORROWING rows come from a returned borrowing; requestId links to its request details.
+  source?: 'ISSUANCE' | 'BORROWING'
+  requestId?: string | null
 }
 
 export type RequesterDepartmentIssuanceSummary = {

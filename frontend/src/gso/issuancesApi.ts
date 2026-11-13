@@ -317,6 +317,10 @@ export type AssetTagInspectionRecord = {
   lastInspectedAt: string | null
   lastInspectionNote: string
   lastInspectedBy: string | null
+  assignedLocation: string | null
+  issuedByCode: string | null
+  issuedByName: string | null
+  issuedByDepartment: string | null
 }
 
 export async function createEmployeeIssuance(

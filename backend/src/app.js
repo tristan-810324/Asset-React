@@ -13,6 +13,7 @@ const auditRoutes = require('./modules/audit/audit.routes');
 const requestsRoutes = require('./modules/requests/requests.routes');
 const requesterIdentityRoutes = require('./modules/requester-identity/requester-identity.routes');
 const notificationsRoutes = require('./modules/notifications/notifications.routes');
+const signaturesRoutes = require('./modules/signatures/signatures.routes');
 const errorMiddleware = require('./middleware/error.middleware');
 const expirySweepMiddleware = require('./middleware/expiry-sweep.middleware');
 
@@ -63,6 +64,7 @@ app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1/requests', requestsRoutes);
 app.use('/api/v1/requester-identity', requesterIdentityRoutes);
 app.use('/api/v1/notifications', notificationsRoutes);
+app.use('/api/v1/signatures', signaturesRoutes);
 app.use(errorMiddleware);
 
 module.exports = app;

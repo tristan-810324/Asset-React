@@ -1,8 +1,8 @@
 import { apiRequest } from '../auth/authApi'
 
 export type AuditLogAction = 'created' | 'updated' | 'renamed' | 'deleted' | 'requested' | 'issued' | 'returned' | 'received' | 'approved' | 'rejected' | 'cancelled' | 'moved'
-export type AuditLogEntityType = 'item' | 'category' | 'employee' | 'request'
-export type AuditLogFlag = 'MANUAL_ENTRY' | 'ITEM_LOST' | 'DELIVERY_UNDONE' | 'RECORD_DELETED' | 'LABEL_REPRINT'
+export type AuditLogEntityType = 'item' | 'category' | 'employee' | 'request' | 'signature'
+export type AuditLogFlag = 'MANUAL_ENTRY' | 'ITEM_LOST' | 'DELIVERY_UNDONE' | 'RECORD_DELETED' | 'LABEL_REPRINT' | 'FINANCE_PDF_REPRINT'
 
 export type AuditLogEntry = {
   id: string

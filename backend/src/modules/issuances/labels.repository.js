@@ -188,6 +188,41 @@ async function recordLabelPrint({ tagCode, userId }) {
   return label;
 }
 
+// A requisition becomes Issued only when every one of its unit labels has been printed, since printing happens at handover.
+async function markRequisitionIssuedIfLabelsPrinted(client, tagIds, userId) {
+  const requisitions = await client.query(
+    `SELECT DISTINCT batch.purchase_requisition_id AS id
+       FROM asset_unit_tags AS tag
+       JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
+       JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+      WHERE tag.id = ANY($1::bigint[]) AND batch.purchase_requisition_id IS NOT NULL`,
+    [tagIds],
+  );
+  for (const { id } of requisitions.rows) {
+    const left = await client.query(
+      `SELECT COUNT(*)::INTEGER AS left
+         FROM asset_unit_tags AS tag
+         JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
+         JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+        WHERE batch.purchase_requisition_id = $1 AND tag.label_printed_at IS NULL`,
+      [id],
+    );
+    if (left.rows[0].left > 0) continue;
+    const updated = await client.query(
+      `UPDATE service_requests SET status = 'Issued', updated_at = NOW()
+        WHERE id = $1 AND status = 'Approved' RETURNING status`,
+      [id],
+    );
+    if (updated.rowCount) {
+      await client.query(
+        `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+         VALUES ($1, 'Approved', 'Issued', 'All barcode labels are printed; the items were issued to the recipients.', $2)`,
+        [id, userId],
+      );
+    }
+  }
+}
+
 // Marks an entire issuance's labels in one transaction, so a failed group print does not consume only some labels.
 async function recordLabelPrintBatch({ tagCodes, userId }) {
   return inTransaction(async (client) => {
@@ -217,6 +252,7 @@ async function recordLabelPrintBatch({ tagCodes, userId }) {
       });
       labels.push({ tagCode: tag.tag_code, printedAt: printed.rows[0].printedAt });
     }
+    await markRequisitionIssuedIfLabelsPrinted(client, [...tagsByCode.values()].map((tag) => tag.id), userId);
     return labels;
   });
 }

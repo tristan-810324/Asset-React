@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import GsoNavbar, { GsoPageHeader, type GsoNavigationItem } from '../components/navbars/gsonavbar'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
-import HoldingsClearance from './holdingsclearance'
+import { listUnitLabels } from './issuancesApi'
+import { listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
+import { canRecordDelivery, deliveryOpen, linesOf, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
+import { listGsoRequests, listRequesterIdentityReviews, type RequesterIdentity, type ServiceRequest } from '../requesters/requesterApi'
 
 type IconName =
   | 'archive'
@@ -148,6 +151,7 @@ function Icon({ name, className = 'h-5 w-5' }: { name: IconName; className?: str
 }
 
 const departmentChartColors = ['#1e3a8a', '#1d4ed8', '#3b82f6', '#0ea5e9', '#64748b', '#8b5cf6']
+
 const conditionGroups = [
   { condition: 'New / Good', values: new Set(['new', 'good']), tone: 'bg-emerald-50 text-emerald-700', color: '#10b981' },
   { condition: 'Fair (Usable)', values: new Set(['fair']), tone: 'bg-amber-50 text-amber-700', color: '#f59e0b' },
@@ -166,6 +170,52 @@ export default function GsoDashboard() {
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [employeesLoading, setEmployeesLoading] = useState(true)
   const [employeesError, setEmployeesError] = useState('')
+  const [requisitions, setRequisitions] = useState<ServiceRequest[]>([])
+  const [borrowings, setBorrowings] = useState<ServiceRequest[]>([])
+  const [verifications, setVerifications] = useState<RequesterIdentity[]>([])
+  const [labelsToPrint, setLabelsToPrint] = useState(0)
+
+  const requisitionCounts = useMemo(() => {
+    const count = (statuses: string[]) => requisitions.filter((row) => statuses.includes(row.status)).length
+    return {
+      queue: count(['Submitted']),
+      pdfToPrint: count(['GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed']),
+      deliveriesToLink: requisitions.filter((row) => deliveryOpen(row) && linesOf(row).some(canRecordDelivery)).length,
+      ready: count(['Approved', 'Ready for Pickup']),
+    }
+  }, [requisitions])
+  const readyForIssuance = useMemo(
+    () => requisitions.filter((row) => row.requestType === 'PURCHASE_REQUISITION' && purchaseRequisitionReadyForIssuance(row)),
+    [requisitions],
+  )
+  const borrowingCounts = useMemo(() => {
+    const count = (statuses: string[]) => borrowings.filter((row) => statuses.includes(row.status)).length
+    return {
+      pending: count(['Submitted', 'Under Review']),
+      approved: count(['Approved']),
+      issued: count(['Issued']),
+      closed: count(['Returned', 'Completed', 'Closed', 'Rejected', 'Cancelled']),
+    }
+  }, [borrowings])
+  const borrowingAlerts = useMemo(() => {
+    const todayKey = new Date().toLocaleDateString('en-CA')
+    const dueOf = (row: ServiceRequest) => row.assets.find((asset) => asset.dueDate)?.dueDate || row.formData.returnDate || ''
+    return {
+      returns: borrowings.filter((row) => row.status === 'Return Requested').length,
+      overdue: borrowings.filter((row) => ['Issued', 'Return Requested'].includes(row.status) && Boolean(dueOf(row)) && dueOf(row) < todayKey).length,
+    }
+  }, [borrowings])
+  const pendingVerifications = verifications.filter((row) => ['Pending', 'Pending Review'].includes(row.status)).length
+
+  useEffect(() => {
+    let active = true
+    void listStaffPurchaseRequisitions().then((rows) => { if (active) setRequisitions(rows) }).catch(() => undefined)
+    void listGsoRequests({ type: 'BORROWING' }).then((rows) => { if (active) setBorrowings(rows) }).catch(() => undefined)
+    void listRequesterIdentityReviews().then((rows) => { if (active) setVerifications(rows) }).catch(() => undefined)
+    void listUnitLabels().then((rows) => { if (active) setLabelsToPrint(rows.filter((row) => row.needsPrinting && !row.isReturned).length) }).catch(() => undefined)
+    return () => { active = false }
+  }, [])
+
 
   useEffect(() => {
     let active = true
@@ -293,6 +343,16 @@ export default function GsoDashboard() {
     })).sort((left, right) => right.count - left.count)
   }, [employeeDepartmentByName, inventoryItems, inventorySummary.total])
 
+  const departmentChartGradient = departmentDistribution.length > 0 ? `conic-gradient(${departmentDistribution.reduce<{ end: number; stops: string[] }>(
+    (gradient, item) => {
+      const nextEnd = gradient.end + item.percentage
+      gradient.stops.push(`${item.color} ${gradient.end}% ${nextEnd}%`)
+      gradient.end = nextEnd
+      return gradient
+    },
+    { end: 0, stops: [] },
+  ).stops.join(', ')})` : 'conic-gradient(#e2e8f0 0% 100%)'
+
   const conditionBreakdown = useMemo(() => {
     const grouped = conditionGroups.map((group) => {
       const count = inventoryItems.reduce((total, item) => {
@@ -320,16 +380,6 @@ export default function GsoDashboard() {
     }
     return grouped.map((group) => ({ ...group, percent: `${group.percentage.toFixed(1)}%` }))
   }, [inventoryItems, inventorySummary.total])
-
-  const departmentChartGradient = departmentDistribution.length > 0 ? `conic-gradient(${departmentDistribution.reduce<{ end: number; stops: string[] }>(
-    (gradient, item) => {
-      const nextEnd = gradient.end + item.percentage
-      gradient.stops.push(`${item.color} ${gradient.end}% ${nextEnd}%`)
-      gradient.end = nextEnd
-      return gradient
-    },
-    { end: 0, stops: [] },
-  ).stops.join(', ')})` : 'conic-gradient(#e2e8f0 0% 100%)'
 
   return (
     <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
@@ -371,97 +421,63 @@ export default function GsoDashboard() {
           </section>
 
           {/* KPI CARDS */}
-          <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Key Performance Metrics">
-            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-bold text-slate-500">Total Cataloged Assets</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
-                    {inventoryLoading || inventoryError ? '—' : inventorySummary.total.toLocaleString('en-PH')}
-                  </p>
-                </div>
-                <span className="grid h-10 w-10 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700 shadow-sm shadow-blue-900/5">
-                  <Icon name="cube" className="h-5 w-5" />
-                </span>
-              </div>
-              <div className="mt-4 flex items-center gap-2">
-                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'}`}>
-                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : `${inventorySummary.operationalPercent}% Operational`}
-                </span>
-                <span className="text-[0.68rem] text-slate-400 font-medium" title={inventoryError || undefined}>
-                  {inventoryLoading ? 'Loading asset conditions…' : inventoryError ? 'Unable to load asset conditions' : `· ${inventorySummary.unserviceable.toLocaleString('en-PH')} unserviceable`}
-                </span>
-              </div>
-            </article>
+          {/* ANALYTICS CHARTS & DISTRIBUTION SECTION */}
 
-            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-bold text-slate-500">Currently Issued</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
-                    {inventoryLoading || inventoryError ? '—' : inventorySummary.currentlyIssued.toLocaleString('en-PH')}
-                  </p>
+          <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Requests and approvals">
+            {[
+              { label: 'Requisitions in queue', value: requisitionCounts.queue, note: 'New requests', href: '/gso/purchase-requisitions', icon: 'clipboard' as const },
+              { label: 'Account verifications', value: pendingVerifications, note: 'Pending review', href: '/gso/requester-verification', icon: 'users' as const },
+              { label: 'Borrowing requests', value: borrowingCounts.pending, note: 'Awaiting decision', href: '/gso/requests-borrowing', icon: 'calendar' as const },
+              { label: 'Ready for Main Issuance', value: readyForIssuance.length, note: 'Ready to issue', href: '/gso/main-issuance', icon: 'cube' as const },
+            ].map((card) => (
+              <a key={card.label} href={card.href} className="group rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-50/60 via-white to-white p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-slate-500">{card.label}</p>
+                    <p className="mt-2.5 text-4xl font-black tracking-tight text-slate-900">{card.value}</p>
+                    <p className="mt-1.5 text-xs font-medium text-slate-500">{card.note}</p>
+                  </div>
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm"><Icon name={card.icon} className="h-4 w-4" /></span>
                 </div>
-                <span className="grid h-10 w-10 place-items-center rounded-xl border border-sky-100 bg-sky-50 text-sky-700 shadow-sm shadow-sky-900/5">
-                  <Icon name="user-check" className="h-5 w-5" />
-                </span>
-              </div>
-              <div className="mt-4 flex items-center gap-2">
-                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-blue-50 text-blue-700'}`}>
-                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : `${inventorySummary.deployedPercent}% Deployed`}
-                </span>
-                <span className="text-[0.68rem] text-slate-400 font-medium">to active personnel</span>
-              </div>
-            </article>
-
-            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-bold text-slate-500">Storage Inventory</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
-                    {inventoryLoading || inventoryError ? '—' : inventorySummary.storage.toLocaleString('en-PH')}
-                  </p>
-                </div>
-                <span className="grid h-10 w-10 place-items-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-700 shadow-sm shadow-emerald-900/5">
-                  <Icon name="building" className="h-5 w-5" />
-                </span>
-              </div>
-              <div className="mt-4 flex items-center gap-2">
-                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700'}`}>
-                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : 'Available Stock'}
-                </span>
-                <span className="text-[0.68rem] text-slate-400 font-medium">ready for issuance</span>
-              </div>
-            </article>
-
-            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-bold text-slate-500">Maintenance Queue</p>
-                  <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">
-                    {inventoryLoading || inventoryError ? '—' : inventorySummary.maintenance.toLocaleString('en-PH')}
-                  </p>
-                </div>
-                <span className="grid h-10 w-10 place-items-center rounded-xl border border-amber-100 bg-amber-50 text-amber-700 shadow-sm shadow-amber-900/5">
-                  <Icon name="tool" className="h-5 w-5" />
-                </span>
-              </div>
-              <div className="mt-4 flex items-center gap-2">
-                <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${inventoryLoading || inventoryError ? 'bg-slate-100 text-slate-600' : 'bg-amber-50 text-amber-700'}`}>
-                  {inventoryLoading ? 'Loading inventory…' : inventoryError ? 'Inventory unavailable' : 'In Repair Stream'}
-                </span>
-                <span className="text-[0.68rem] text-slate-400 font-medium">· needs technician</span>
-              </div>
-            </article>
+              </a>
+            ))}
           </section>
 
-          {/* ANALYTICS CHARTS & DISTRIBUTION SECTION */}
+          {/* NEEDS YOUR ACTION */}
+          <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="needs-action-title">
+            <div className="border-b border-slate-200 px-6 py-5 sm:px-7">
+              <h2 id="needs-action-title" className="text-lg font-black tracking-tight text-slate-900">Needs your action</h2>
+              <p className="mt-0.5 text-xs font-medium text-slate-500">Open work for GSO staff. Select a row to go straight to it.</p>
+            </div>
+            <ul className="divide-y divide-slate-100">
+              {[
+                { label: 'Labels to print', count: labelsToPrint, href: '/gso/asset-labels', hint: 'Unit barcodes that have not been printed yet', icon: 'grid' as const },
+                { label: 'Deliveries to link', count: requisitionCounts.deliveriesToLink, href: '/gso/purchase-requisitions?tab=waiting', hint: 'Requests with bought items ready to link to a delivery', icon: 'truck' as const },
+                { label: 'Signed PDFs to print', count: requisitionCounts.pdfToPrint, href: '/gso/procurement', hint: 'Endorsed requisitions not yet handed to Finance', icon: 'clipboard' as const },
+                { label: 'Return requests', count: borrowingAlerts.returns, href: '/gso/borrowing-returns', hint: 'Borrowers asked to return items for inspection', icon: 'archive' as const },
+                { label: 'Overdue borrowings', count: borrowingAlerts.overdue, href: '/gso/requests-borrowing', hint: 'Items still out past their due date', icon: 'calendar' as const },
+              ].map((item) => (
+                <li key={item.label}>
+                  <a href={item.href} className="group flex items-center gap-4 px-6 py-4 transition hover:bg-blue-50/50 sm:px-7">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm"><Icon name={item.icon} className="h-4 w-4" /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-extrabold text-slate-800">{item.label}</span>
+                      <span className="mt-0.5 block text-xs font-medium text-slate-500">{item.hint}</span>
+                    </span>
+                    <span className={`shrink-0 rounded-full px-3 py-1 text-sm font-black tabular-nums ${item.count > 0 ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-500'}`}>{item.count}</span>
+                    <Icon name="arrow-right" className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-blue-700" />
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+
           <section className="mt-6 grid gap-6 xl:grid-cols-2">
             {/* DEPARTMENT ASSET DISTRIBUTION (CLEAN TOUCH OF BLUE PALETTE) */}
-            <article className="min-h-88 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+            <article className="min-h-96 rounded-2xl border-2 border-slate-300/80 bg-white p-7 sm:p-8 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-base font-black tracking-tight text-slate-900">Asset Distribution by Department</h2>
+                  <h2 className="text-lg font-black tracking-tight text-slate-900">Asset Distribution by Department</h2>
                   <p className="mt-0.5 text-xs font-medium text-slate-500">Proportion of campus equipment per office</p>
                 </div>
               </div>
@@ -506,10 +522,10 @@ export default function GsoDashboard() {
             </article>
 
             {/* ASSET CONDITION & HEALTH BREAKDOWN */}
-            <article className="min-h-88 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+            <article className="min-h-96 rounded-2xl border-2 border-slate-300/80 bg-white p-7 sm:p-8 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-base font-black tracking-tight text-slate-900">Condition Status</h2>
+                  <h2 className="text-lg font-black tracking-tight text-slate-900">Condition Status</h2>
                   <p className="mt-0.5 text-xs font-medium text-slate-500">Physical evaluation of cataloged inventory</p>
                 </div>
               </div>
@@ -558,9 +574,10 @@ export default function GsoDashboard() {
               </div>
 
             </article>
+
           </section>
 
-          <HoldingsClearance />
+
         </div>
       </section>
 

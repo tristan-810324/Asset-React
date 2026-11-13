@@ -91,7 +91,7 @@ export function headApproval(line: PurchaseRequisitionLine): { route: StaffRoute
 // Whether GSO Staff may still choose between issuing an item now and asking the GSO Head.
 export const staffDecides = (options: StaffRoute[]) => options.includes('ISSUE') && options.includes('HEAD_ISSUE')
 
-// The GSO Head emailed the purchase to Finance, so GSO Staff can buy the items and link the deliveries.
+// GSO Staff physically handed the GSO Head-approved PDF to Finance, so they can buy the items and link deliveries.
 export function deliveryOpen(request: ServiceRequest) {
   return request.status === 'Sent to Finance'
 }
@@ -123,6 +123,12 @@ export const categoryLabel = (value: string) => CATEGORIES[value]?.label || valu
 // Whether an Item Master Data category is the one a requisition item asked for.
 export function inventoryCategoryMatches(category: string, line: PurchaseRequisitionLine) {
   return (CATEGORIES[line.category]?.inventory || [normalizeCategory(line.category)]).includes(normalizeCategory(category))
+}
+
+// The Item Master Data category a requisition category points to, matched by name.
+export function matchingInventoryCategory<T extends { name: string }>(requisitionCategory: string, inventoryCategories: T[]) {
+  const names = CATEGORIES[requisitionCategory]?.inventory || [normalizeCategory(requisitionCategory)]
+  return inventoryCategories.find((category) => names.includes(normalizeCategory(category.name)))
 }
 
 // Same name-and-category match the server uses when it reserves stock for a requested item.

@@ -6,7 +6,8 @@ export default function GsoHeadNotifications() {
     <GsoHeadPageFrame activePage="notifications">
       <NotificationInbox
         eyebrow="GSO Head workspace"
-        description="Requests waiting for your decision, Finance follow-up, and returns to review."
+        description="Decisions, Finance follow-up, and returns to review."
+        variant="timeline"
       />
     </GsoHeadPageFrame>
   )

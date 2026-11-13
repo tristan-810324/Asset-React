@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { listGsoRequests, updateGsoRequestStatus, type RequestAsset, type ServiceRequest } from '../requesters/requesterApi'
+import { BorrowingPath } from '../components/requestpath'
 
 type ReturnView = 'pending' | 'records'
 
@@ -300,6 +301,8 @@ export default function BorrowingReturns() {
                   <span className={`rounded-full px-2.5 py-1.5 text-[0.62rem] font-extrabold ${statusTone(selected.status)}`}>{selected.status}</span>
                 </div>
 
+                <BorrowingPath status={selected.status} />
+
                 <section className="mt-4" aria-labelledby="returner-details-title">
                   <div className="flex items-center justify-between gap-3">
                     <h4 id="returner-details-title" className="text-xs font-extrabold text-slate-800">Returner and borrowing details</h4>
@@ -333,7 +336,7 @@ export default function BorrowingReturns() {
                         <div className="mt-3 grid gap-2 text-[0.62rem] font-semibold text-slate-500 sm:grid-cols-3">
                           <p><span className="block text-[0.54rem] font-extrabold uppercase tracking-wide text-slate-400">Issued</span>{formatDate(asset.issuedAt)}</p>
                           <p><span className="block text-[0.54rem] font-extrabold uppercase tracking-wide text-slate-400">Condition out</span>{asset.conditionOut || 'Not recorded'}</p>
-                          <p><span className="block text-[0.54rem] font-extrabold uppercase tracking-wide text-slate-400">Returned</span>{formatDate(asset.returnedAt)}</p>
+                          <p><span className="block text-[0.54rem] font-extrabold uppercase tracking-wide text-slate-400">Returned</span>{asset.returnedAt ? formatDate(asset.returnedAt) : 'Not yet'}</p>
                         </div>
                       </div>
                     ))}

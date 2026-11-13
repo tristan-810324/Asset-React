@@ -8,6 +8,7 @@ import {
 } from './purchaseRequisitionsApi'
 import { categoryLabel, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
 import { Banner, EmptyState, fieldInput, fieldLabel } from './requisitionParts'
+import type { PurchaseReadyRequest } from './inventoryApi'
 
 type PlannedPick = { itemId: string; itemCode: string; quantity: number; similar: boolean }
 type LinePlan = { taking: number; short: number; picks: PlannedPick[]; needsConfirm: boolean }
@@ -76,7 +77,7 @@ export function DeliveryChecklist({ lines, receiptDefault = '', restocked, skipL
   restocked?: { quantity: number; unit: string; name: string }
   skipLabel?: string
   onSkip?: () => void
-  onLinked: (message: string) => void
+  onLinked: (message: string, readyRequests: PurchaseReadyRequest[]) => void
   onRefresh?: () => void
 }) {
   const [confirmed, setConfirmed] = useState<ReadonlySet<string>>(() => new Set())
@@ -128,7 +129,10 @@ export function DeliveryChecklist({ lines, receiptDefault = '', restocked, skipL
     try {
       const updatedRequests = await recordPurchaseDeliveries({ deliveries, receiptReference: receipt.trim() })
       const references = [...new Set(rows.map((line) => line.referenceNo))]
-      const ready = updatedRequests.filter(purchaseRequisitionReadyForIssuance).map((request) => request.referenceNo)
+      const readyRequests = updatedRequests
+        .filter(purchaseRequisitionReadyForIssuance)
+        .map((request) => ({ id: request.id, referenceNo: request.referenceNo, requesterName: request.requesterName }))
+      const ready = readyRequests.map((request) => request.referenceNo)
       const stillWaiting = updatedRequests.filter((request) => !purchaseRequisitionReadyForIssuance(request)).map((request) => request.referenceNo)
       const readyText = ready.length
         ? `${ready.join(', ')} ${ready.length === 1 ? 'is' : 'are'} now ready to issue in Main Issuance.`
@@ -136,7 +140,7 @@ export function DeliveryChecklist({ lines, receiptDefault = '', restocked, skipL
       const waitingText = stillWaiting.length
         ? `${stillWaiting.join(', ')} ${stillWaiting.length === 1 ? 'still has' : 'still have'} another item or quantity waiting for purchase, so the complete request stays on hold.`
         : ''
-      onLinked([`Linked ${units} ${unitLabel} to ${plural(references.length, 'request')} (${references.join(', ')}).`, readyText, waitingText].filter(Boolean).join(' '))
+      onLinked([`Linked ${units} ${unitLabel} to ${plural(references.length, 'request')} (${references.join(', ')}).`, readyText, waitingText].filter(Boolean).join(' '), readyRequests)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to record the deliveries.')
       setAsking(false)
@@ -244,7 +248,7 @@ export function DeliveryLinkDialog({ itemIds, initialLines, restocked, receiptRe
   restocked: { quantity: number; unit: string; name: string }
   receiptReference: string
   onClose: () => void
-  onLinked: (message: string) => void
+  onLinked: (message: string, readyRequests: PurchaseReadyRequest[]) => void
 }) {
   const [lines, setLines] = useState(initialLines)
   const [refreshing, setRefreshing] = useState(false)

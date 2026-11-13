@@ -23,11 +23,26 @@ function formatDate(value: string | null | undefined, includeTime = false) {
   }).format(date)
 }
 
-const statusTone = (status: string) => status === 'Return Requested'
-  ? 'bg-amber-50 text-amber-800'
-  : status === 'For Repair'
-    ? 'bg-rose-50 text-rose-700'
-    : 'bg-blue-50 text-blue-700'
+const statusTone = (status: string) => {
+  if (status === 'Returned') return 'bg-emerald-50 text-emerald-700'
+  if (['Return Requested', 'Needs Information'].includes(status)) return 'bg-amber-50 text-amber-800'
+  if (['Rejected', 'Cancelled', 'For Repair'].includes(status)) return 'bg-rose-50 text-rose-700'
+  if (['Submitted', 'Under Review', 'Approved', 'Ready for Pickup'].includes(status)) return 'bg-slate-100 text-slate-700'
+  return 'bg-blue-50 text-blue-700'
+}
+
+const borrowingStatusNote: Record<string, string> = {
+  Submitted: 'Waiting for GSO to review.',
+  'Under Review': 'GSO is reviewing this request.',
+  'Needs Information': 'GSO needs more information. Open the request to reply.',
+  Approved: 'Approved. GSO will release the item.',
+  'Ready for Pickup': 'Approved. GSO will release the item.',
+  'Return Requested': 'GSO has the return request. Wait for the inspection and confirmation.',
+  'For Repair': 'Returned. Some items need repair.',
+  Returned: 'Returned to GSO. Thank you.',
+  Rejected: 'GSO declined this request.',
+  Cancelled: 'This request was cancelled.',
+}
 
 export default function RequesterReturnItems() {
   const [requests, setRequests] = useState<ServiceRequest[]>([])
@@ -46,7 +61,7 @@ export default function RequesterReturnItems() {
     const refresh = () => {
       listMyDepartmentReturns()
         .then((rows) => { if (active) { setDepartmentReturns(rows); setDepartmentReturnsError('') } })
-        .catch((reason: unknown) => { if (active) setDepartmentReturnsError(reason instanceof Error ? reason.message : 'Hindi ma-load ang returns.') })
+        .catch((reason: unknown) => { if (active) setDepartmentReturnsError(reason instanceof Error ? reason.message : 'Could not load returns.') })
     }
     refresh()
     const timer = window.setInterval(refresh, 30_000)
@@ -62,16 +77,15 @@ export default function RequesterReturnItems() {
         setBatches(issuanceRows)
       })
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang mga item na kailangang isauli.')
+        if (active) setError(reason instanceof Error ? reason.message : 'Could not load the items to return.')
       })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])
 
-  const borrowingRequests = useMemo(() => requests.filter((request) =>
-    request.requestType === 'BORROWING'
-    && ['Issued', 'Return Requested', 'For Repair'].includes(request.status)
-    && request.assets.some((asset) => !asset.returnedAt)), [requests])
+  // Every borrowing the requester made, so pending and returned ones stay visible as history.
+  const borrowingRequests = useMemo(() => requests.filter((request) => request.requestType === 'BORROWING' && request.assets.length > 0), [requests])
+  const activeBorrowingCount = useMemo(() => borrowingRequests.filter((request) => ['Issued', 'Return Requested', 'For Repair'].includes(request.status)).length, [borrowingRequests])
 
   const gsoBorrowings = useMemo(() => batches.filter((batch) => batch.status === 'Issued'
     && batch.items.some((item) => item.trackingMode === 'quantity'
@@ -85,9 +99,9 @@ export default function RequesterReturnItems() {
     try {
       const updated = await requestAssetReturn(request.id)
       setRequests((current) => current.map((entry) => entry.id === updated.id ? updated : entry))
-      setNotice(`Naipadala na sa GSO ang return request para sa ${request.referenceNo}.`)
+      setNotice(`Return request sent to GSO for ${request.referenceNo}.`)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Hindi naipadala ang return request. Subukan ulit.')
+      setError(reason instanceof Error ? reason.message : 'The return request was not sent. Try again.')
     } finally {
       setReturningRequest('')
     }
@@ -98,7 +112,7 @@ export default function RequesterReturnItems() {
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">Borrowing follow-up</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Return Items</h1><p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">Check due dates and send a return request for issued borrowing requests.</p></div>
-        <div className="flex gap-2 text-xs font-extrabold"><span className="rounded-xl border border-white/15 bg-white/10 px-3 py-2">{loading ? '—' : borrowingRequests.length} requests</span><span className="rounded-xl border border-white/15 bg-white/10 px-3 py-2">{loading ? '—' : gsoBorrowings.length} GSO borrowings</span></div>
+        <div className="flex gap-2 text-xs font-extrabold"><span className="rounded-xl border border-white/15 bg-white/10 px-3 py-2">{loading ? '—' : activeBorrowingCount} active</span><span className="rounded-xl border border-white/15 bg-white/10 px-3 py-2">{loading ? '—' : gsoBorrowings.length} GSO borrowings</span></div>
       </div>
     </section>
 
@@ -122,11 +136,11 @@ export default function RequesterReturnItems() {
       {departmentReturnsError && <p role="alert" className="mx-5 mb-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700 sm:mx-6">{departmentReturnsError}</p>}
       {departmentReturns.length === 0
         ? <div className="grid min-h-28 place-items-center px-4 text-center"><p className="text-sm font-bold text-slate-700">No recent returns</p></div>
-        : <div className="max-h-[28rem] space-y-2.5 overflow-y-auto p-4 sm:px-5">{departmentReturns.map((row) => <div key={row.id} className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 p-3.5">
+        : <div className="max-h-112 space-y-2.5 overflow-y-auto p-4 sm:px-5">{departmentReturns.map((row) => <div key={row.id} className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50/80 p-3.5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-black text-slate-900">{row.itemName}{Number(row.quantity) > 1 ? <span className="font-semibold text-slate-500"> · {row.quantity} {row.unitOfMeasure}</span> : null}</p>
-                  <p className="mt-1 text-xs font-bold text-blue-700">Assigned to {row.employeeName} · {row.employeeCode}</p>
+                  <p className="mt-1 text-xs font-bold text-blue-700">{row.source === 'BORROWING' ? `Borrowed by ${row.employeeName}` : `Assigned to ${row.employeeName} · ${row.employeeCode}`}</p>
                   <p className="mt-0.5 text-xs text-slate-500">{row.recipientLocation || 'Location not recorded'}</p>
                 </div>
                 <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[0.6rem] font-extrabold ${row.status === 'Returned' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>{row.status}</span>
@@ -137,17 +151,21 @@ export default function RequesterReturnItems() {
 }
 
     {view === 'borrowing' && <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4"><div><h2 className="text-sm font-black text-slate-900">Borrowing requests</h2><p className="mt-1 text-[0.68rem] font-medium text-slate-500">Send a return request when you are ready to bring an issued item to GSO.</p></div><span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">{loading ? 'Loading' : `${borrowingRequests.length} active`}</span></div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4"><div><h2 className="text-sm font-black text-slate-900">Borrowing requests</h2><p className="mt-1 text-[0.68rem] font-medium text-slate-500">Every borrowing you made, with its latest status.</p></div><span className="rounded-lg bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">{loading ? 'Loading' : `${activeBorrowingCount} active`}</span></div>
       {loading ? <div className="grid min-h-36 place-items-center text-sm font-bold text-slate-400">Loading return items...</div>
-        : borrowingRequests.length === 0 ? <div className="grid min-h-36 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center"><div><p className="text-sm font-extrabold text-slate-700">No active borrowing requests</p><p className="mt-1 text-xs text-slate-500">Issued borrowing items that need to be returned will appear here.</p></div></div>
+        : borrowingRequests.length === 0 ? <div className="grid min-h-36 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-5 text-center"><div><p className="text-sm font-extrabold text-slate-700">No borrowing requests yet</p><p className="mt-1 text-xs text-slate-500">Items you borrow from the Request Center will appear here.</p></div></div>
           : <div className="space-y-3">{borrowingRequests.map((request) => {
-            const dueDate = request.assets.find((asset) => asset.dueDate && !asset.returnedAt)?.dueDate || request.formData.returnDate || null
+            const activeAssets = request.assets.filter((asset) => !asset.returnedAt)
+            const dueDate = activeAssets.find((asset) => asset.dueDate)?.dueDate || request.formData.returnDate || null
+            const latestReturn = request.assets.map((asset) => asset.returnedAt).filter(Boolean).sort().at(-1) || null
+            const dateLine = latestReturn && activeAssets.length === 0 ? `Returned ${formatDate(latestReturn)}` : dueDate ? `Return by ${formatDate(dueDate)}` : 'No return date recorded'
+            const note = borrowingStatusNote[request.status]
             const canRequestReturn = request.status === 'Issued'
             return <article key={request.id} className="rounded-xl border-2 border-slate-300/80 bg-white p-4 shadow-sm sm:p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-extrabold text-slate-900">{request.title}</p><p className="mt-1 text-[0.68rem] font-semibold text-slate-500">{request.referenceNo} · {dueDate ? `Due ${formatDate(dueDate)}` : 'No due date recorded'}</p></div><span className={`rounded-full px-2.5 py-1.5 text-[0.62rem] font-extrabold ${statusTone(request.status)}`}>{request.status}</span></div>
-              <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100">{request.assets.filter((asset) => !asset.returnedAt).map((asset) => <li key={asset.id} className="flex flex-wrap items-start justify-between gap-2 px-3 py-3"><div><p className="text-xs font-extrabold text-slate-800">{asset.itemName}</p><p className="mt-0.5 text-[0.68rem] font-semibold text-slate-500">{asset.itemCode} · {asset.quantity} {asset.unitOfMeasure}</p></div>{asset.conditionOut && <span className="text-[0.68rem] font-semibold text-slate-500">Condition out: {asset.conditionOut}</span>}</li>)}</ul>
+              <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-extrabold text-slate-900">{request.title}</p><p className="mt-1 text-[0.68rem] font-semibold text-slate-500">{request.referenceNo} · {dateLine}</p></div><span className={`rounded-full px-2.5 py-1.5 text-[0.62rem] font-extrabold ${statusTone(request.status)}`}>{request.status}</span></div>
+              <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100">{request.assets.map((asset) => <li key={asset.id} className="flex flex-wrap items-start justify-between gap-2 px-3 py-3"><div><p className="text-xs font-extrabold text-slate-800">{asset.itemName}</p><p className="mt-0.5 text-[0.68rem] font-semibold text-slate-500">{asset.itemCode} · {asset.quantity} {asset.unitOfMeasure}</p></div>{asset.returnedAt ? <span className="text-[0.68rem] font-semibold text-emerald-700">Returned {formatDate(asset.returnedAt)}{asset.conditionIn ? ` · ${asset.conditionIn}` : ''}</span> : asset.conditionOut && <span className="text-[0.68rem] font-semibold text-slate-500">Condition out: {asset.conditionOut}</span>}</li>)}</ul>
               {canRequestReturn ? <button type="button" disabled={returningRequest === request.id} onClick={() => void submitReturnRequest(request)} className="mt-4 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-50">{returningRequest === request.id ? 'Sending...' : 'Request return inspection'}</button>
-                : <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">Nasa GSO na ang return request. Hintayin ang inspection at confirmation.</p>}
+                : note && <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">{note}</p>}
             </article>
           })}</div>}
     </section>
@@ -162,7 +180,7 @@ export default function RequesterReturnItems() {
             <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-extrabold text-slate-900">Borrowing recorded by GSO</p><p className="mt-1 text-[0.68rem] font-semibold text-slate-500">Request #{batch.id} · {formatDate(batch.decidedAt || batch.requestedAt, true)}</p></div><span className="rounded-full bg-amber-100 px-2.5 py-1.5 text-[0.62rem] font-extrabold text-amber-900">Return to GSO</span></div>
             <ul className="mt-3 divide-y divide-amber-100 rounded-lg border border-amber-100 bg-white">{reusableItems.map((item) => <li key={item.issuanceId} className="flex flex-wrap items-start justify-between gap-2 px-3 py-3"><div><p className="text-xs font-extrabold text-slate-800">{item.itemName}</p><p className="mt-0.5 text-[0.68rem] font-semibold text-slate-500">{item.itemCode} · {Math.max(Number(item.quantity) - Number(item.returnedQuantity || 0), 0)} of {item.quantity} {item.unitOfMeasure} remaining</p></div><span className="text-[0.68rem] font-semibold text-slate-500">{item.condition}</span></li>)}</ul>
             <div className="mt-3 grid gap-2 rounded-lg border border-amber-100 bg-white p-3 text-xs sm:grid-cols-2"><p><span className="font-bold text-slate-500">Borrowed:</span> <span className="font-semibold text-slate-800">{formatDate(batch.borrowUseAt || batch.borrowUseDate, true)}</span></p><p><span className="font-bold text-slate-500">Return by:</span> <span className="font-semibold text-slate-800">{formatDate(batch.expectedReturnAt || batch.expectedReturnDate, true)}</span></p><p><span className="font-bold text-slate-500">Event:</span> <span className="font-semibold text-slate-800">{batch.usePurpose || '—'}</span></p><p><span className="font-bold text-slate-500">Location:</span> <span className="font-semibold text-slate-800">{batch.useLocation || '—'}</span></p></div>
-            <p className="mt-3 text-xs font-semibold text-amber-900">Dalhin ang hiniram na stock sa GSO sa nakatakdang oras para maitala ang ibinalik na quantity at condition.</p>
+            <p className="mt-3 text-xs font-semibold text-amber-900">Bring the borrowed stock to GSO at the scheduled time so the returned quantity and condition can be recorded.</p>
           </article>
         })}</div>)}
     </section>

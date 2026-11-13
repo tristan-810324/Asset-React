@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { getCurrentUser } from '../auth/authApi'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
+import { IssuanceProgressPath } from '../components/requestpath'
 import {
   confirmTaggedAssetReturn,
   createEmployeeReturn,
@@ -52,6 +53,8 @@ function formatBorrowerHistoryDate(value: string | null) {
     timeZone: 'Asia/Manila',
   }).format(date)
 }
+
+const historyDotTones = { blue: 'bg-blue-500', emerald: 'bg-emerald-500', amber: 'bg-amber-500' }
 
 type BulkStep = 'employee' | 'item' | 'details' | 'confirm' | 'done'
 
@@ -804,7 +807,30 @@ export default function ReturnItems() {
   }
 
   const currentAssignment = scannedTag?.borrowerHistory?.find((entry) => entry.status === 'Issued')
-  const previousBorrowers = scannedTag?.borrowerHistory?.filter((entry) => entry.status !== 'Issued') ?? []
+  const issuerCode = scannedTag?.issuedByCode ?? scannedTag?.employeeCode ?? ''
+  const issuerName = scannedTag?.issuedByName ?? scannedTag?.employeeName ?? '—'
+  const holderIsIssuer = scannedTag?.employeeCode === issuerCode
+  const roomDesignated = Boolean(scannedTag?.assignedLocation)
+  const custodyEvents = (scannedTag?.borrowerHistory ?? [])
+    .flatMap((entry) => {
+      const issued = {
+        key: `issued-${entry.employeeCode}-${entry.issuedAt}`,
+        at: entry.issuedAt,
+        title: `Issued to ${entry.employeeName}`,
+        detail: [entry.employeeCode, entry.department, entry.status === 'Issued' ? (holderIsIssuer && roomDesignated ? 'Designated to the room, under this employee' : 'Currently with this employee') : ''].filter(Boolean).join(' · '),
+        tone: 'blue' as const,
+      }
+      if (!entry.returnedAt) return [issued]
+      const returned = {
+        key: `returned-${entry.employeeCode}-${entry.returnedAt}`,
+        at: entry.returnedAt,
+        title: `Returned by ${entry.employeeName}`,
+        detail: entry.returnCondition ? `Came back in ${entry.returnCondition} condition` : '',
+        tone: repairConditionNames.includes(entry.returnCondition ?? '') ? ('amber' as const) : ('emerald' as const),
+      }
+      return [issued, returned]
+    })
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
   const recordedConditionRank = conditionRank.indexOf(scannedTag?.condition ?? '')
   const isConditionDowngrade = recordedConditionRank >= 0 && conditionRank.indexOf(returnCondition) > recordedConditionRank
   const isRepairTag = repairConditionNames.includes(returnCondition)
@@ -970,6 +996,7 @@ export default function ReturnItems() {
                     Item return · <span className="font-mono tracking-normal">{scannedTag.tagCode}</span>
                   </p>
                   <h2 id="return-confirm-title" className="mt-1 truncate text-lg font-black text-slate-950 sm:text-xl">{scannedTag.itemName}</h2>
+                  {currentAssignment && <span className="mt-2 inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">Issued</span>}
                   <p className="mt-0.5 text-xs text-slate-500">
                     From <span className="font-bold text-slate-700">{scannedTag.employeeName}</span> · processed by <span className="font-bold text-slate-700">{staffName || 'your account'}</span>
                   </p>
@@ -986,48 +1013,48 @@ export default function ReturnItems() {
                       </p>
                     )}
 
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                    <dl className="grid grid-cols-2 gap-2">
                       {([
-                        ['Item code', `${scannedTag.itemCode} · Unit ${scannedTag.unitNumber}`],
-                        ['Serial no.', scannedTag.serialNumber ? 'On file · check it on the unit' : 'Not recorded'],
-                        ['Borrowed by', scannedTag.employeeName],
-                        ['Employee', [scannedTag.employeeCode, currentAssignment?.department].filter(Boolean).join(' · ')],
-                        ['Issued on', formatBorrowerHistoryDate(currentAssignment?.issuedAt ?? null)],
-                        ['Condition on record', scannedTag.condition],
-                      ] as const).map(([label, value]) => (
-                        <div key={label} className="min-w-0">
-                          <dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt>
-                          <dd className="mt-0.5 wrap-break-word text-xs font-bold text-slate-800">{value || '—'}</dd>
+                        { label: 'Item code', value: `${scannedTag.itemCode} · Unit ${scannedTag.unitNumber}`, note: '' },
+                        { label: 'Issued by', value: issuerName, note: [issuerCode, scannedTag.issuedByDepartment].filter(Boolean).join(' · ') },
+                        holderIsIssuer && roomDesignated
+                          ? { label: 'Used by', value: 'Not assigned to a person', note: `Designated to the room. Stays under ${issuerName}.` }
+                          : { label: 'Used by', value: scannedTag.employeeName ?? '—', note: holderIsIssuer ? 'Same as issued by' : [scannedTag.employeeCode, currentAssignment?.department].filter(Boolean).join(' · ') },
+                        { label: 'Location', value: scannedTag.assignedLocation || 'No room recorded', note: '' },
+                        { label: 'Issued on', value: formatBorrowerHistoryDate(currentAssignment?.issuedAt ?? null), note: '' },
+                        { label: 'Condition on record', value: scannedTag.condition, note: '' },
+                      ]).map((tile) => (
+                        <div key={tile.label} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/60 p-3">
+                          <dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{tile.label}</dt>
+                          <dd className="mt-0.5 wrap-break-word text-xs font-bold text-slate-800">
+                            {tile.value || '—'}
+                            {tile.note && <span className="mt-0.5 block text-[0.62rem] font-semibold text-slate-500">{tile.note}</span>}
+                          </dd>
                         </div>
                       ))}
                     </dl>
 
-                    <details className="group rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-                      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-2xl px-4 py-3 text-xs font-extrabold text-slate-700 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
-                        Previous borrowers ({previousBorrowers.length})
-                        <span className="transition group-open:rotate-90"><ChevronRight /></span>
-                      </summary>
-                      <div className="border-t border-slate-100 px-4 py-3">
-                        {previousBorrowers.length > 0 ? (
-                          <ol className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                            {previousBorrowers.map((borrower, index) => (
-                              <li key={`${borrower.employeeCode}-${borrower.issuedAt}-${index}`} className="rounded-lg bg-slate-50 px-3 py-2">
-                                <p className="text-xs font-extrabold text-slate-800">{borrower.employeeName} <span className="font-semibold text-slate-500">· {borrower.employeeCode}</span></p>
-                                <p className="mt-0.5 text-[0.62rem] text-slate-500">
-                                  Issued {formatBorrowerHistoryDate(borrower.issuedAt)}
-                                  {borrower.returnedAt ? ` · Returned ${formatBorrowerHistoryDate(borrower.returnedAt)}` : ''}
-                                  {borrower.returnCondition ? ` · ${borrower.returnCondition}` : ''}
-                                </p>
-                              </li>
-                            ))}
-                          </ol>
-                        ) : (
-                          <p className="text-[0.68rem] text-slate-500">No one else has borrowed this unit yet.</p>
-                        )}
-                      </div>
-                    </details>
+                    <IssuanceProgressPath status="Issued" />
 
-                    <p className="rounded-2xl border-2 border-slate-300/80 bg-white px-4 py-3 text-[0.68rem] leading-relaxed text-slate-500 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                    <section aria-labelledby="return-history-title">
+                      <h3 id="return-history-title" className="text-[0.65rem] font-black uppercase tracking-wide text-slate-500">History</h3>
+                      {custodyEvents.length > 0 ? (
+                        <ol className="mt-3 space-y-4 border-l-2 border-slate-100 pl-4">
+                          {custodyEvents.map((event) => (
+                            <li key={event.key} className="relative">
+                              <span aria-hidden="true" className={`absolute -left-5.5 top-1 h-2.5 w-2.5 rounded-full ${historyDotTones[event.tone]}`} />
+                              <p className="text-xs font-bold text-slate-800">{event.title}</p>
+                              <p className="text-[0.62rem] font-semibold text-slate-400">{formatBorrowerHistoryDate(event.at)}</p>
+                              {event.detail && <p className="mt-0.5 text-[0.65rem] leading-relaxed text-slate-600">{event.detail}</p>}
+                            </li>
+                          ))}
+                        </ol>
+                      ) : (
+                        <p className="mt-2 text-[0.68rem] text-slate-500">No custody history recorded for this unit yet.</p>
+                      )}
+                    </section>
+
+                    <p className="rounded-xl border border-slate-100 bg-slate-50/60 px-3.5 py-3 text-[0.68rem] leading-relaxed text-slate-600">
                       <span className="font-extrabold text-slate-700">Giving it to another employee?</span> Record this return first, then issue the unit from{' '}
                       <a href="/gso/main-issuance" className="font-extrabold text-blue-700 underline underline-offset-2 hover:no-underline">Main Issuance</a>
                       {' '}so the new employee confirms receipt.

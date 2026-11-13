@@ -2,9 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { clearAuthSession, getCurrentUser, type AuthUser } from '../auth/authApi'
 import GsoNotif from '../components/notifbell/gsonotif'
 
-export type GsoHeadPage = 'overview' | 'requests' | 'notifications' | 'items' | 'issuance' | 'audit-logs' | 'profile'
+export type GsoHeadPage = 'overview' | 'requests' | 'notifications' | 'items' | 'issuance' | 'audit-logs' | 'esignature' | 'profile'
 
-type NavIconName = 'archive' | 'audit' | 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'user'
+type NavIconName = 'archive' | 'audit' | 'bell' | 'chevron-down' | 'clipboard' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'signature' | 'user'
 
 type NavigationLink = {
   page: GsoHeadPage
@@ -20,6 +20,7 @@ const navigationLinks: NavigationLink[] = [
   { page: 'items', title: 'Item Master Data', href: '/gso-head/items', icon: 'archive' },
   { page: 'issuance', title: 'Issuance History', href: '/gso-head/issuance-history', icon: 'history' },
   { page: 'audit-logs', title: 'Audit Logs', href: '/gso-head/audit-logs', icon: 'audit' },
+  { page: 'esignature', title: 'E-Signature', href: '/gso-head/esignature', icon: 'signature' },
 ]
 
 const pageTitles: Record<GsoHeadPage, string> = {
@@ -29,6 +30,7 @@ const pageTitles: Record<GsoHeadPage, string> = {
   items: 'Item Master Data',
   issuance: 'Issuance History',
   'audit-logs': 'Audit Logs',
+  esignature: 'E-Signature',
   profile: 'My profile',
 }
 
@@ -45,6 +47,7 @@ function NavIcon({ name, className = 'h-[1.15rem] w-[1.15rem] shrink-0' }: { nam
     {name === 'chevron-down' && <path d="m7 10 5 5 5-5" />}
     {name === 'logout' && <><path d="M10 17l5-5-5-5m5 5H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>}
     {name === 'user' && <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>}
+    {name === 'signature' && <><path d="M15.5 5.5 18.5 8.5 9 18l-4 1 1-4z" /><path d="M3.5 21.5h17" /></>}
   </svg>
 }
 
@@ -91,7 +94,7 @@ export default function GsoHeadNavbar({ activePage, mobileOpen = false, onClose 
           <NavIcon name="clipboard" className="h-4 w-4" />
           <span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">Decision workspace</span>
         </div>
-        <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">Review staff-routed items, send approved purchases to Finance, and keep each decision traceable.</p>
+        <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">Review staff-routed items, approve purchase requisitions, and keep each decision traceable.</p>
         <a href="/gso-head/requests?tab=approval" className="mt-3 inline-block text-xs font-extrabold text-white transition hover:text-blue-200">Review pending decisions <span aria-hidden="true">→</span></a>
       </div>
     </aside>
@@ -102,6 +105,7 @@ export default function GsoHeadNavbar({ activePage, mobileOpen = false, onClose 
 export function GsoHeadPageHeader({ pageName, today, onOpenMenu }: { pageName: string; today: string; onOpenMenu: () => void }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [user, setUser] = useState<AuthUser | null>(null)
   const accountMenuRef = useRef<HTMLDivElement>(null)
 
@@ -179,9 +183,37 @@ export function GsoHeadPageHeader({ pageName, today, onOpenMenu }: { pageName: s
               </div>
             </div>
             <div className="px-1 py-2">
-              <p className="px-2.5 pb-1.5 pt-1 text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-slate-400">Settings</p>
-              <a href="/gso-head/profile" role="menuitem" aria-current={onProfilePage ? 'page' : undefined} onClick={() => setAccountMenuOpen(false)} className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-700'}`}><NavIcon name="user" className={`h-4 w-4 ${onProfilePage ? 'text-blue-600' : 'text-slate-400'}`} />Profile</a>
-              <a href="/gso-head/audit-logs" role="menuitem" onClick={() => setAccountMenuOpen(false)} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"><NavIcon name="history" className="h-4 w-4 text-slate-400" />Audit Trail</a>
+              <button
+                type="button"
+                aria-expanded={settingsOpen}
+                onClick={() => setSettingsOpen((open) => !open)}
+                className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-bold text-slate-700 transition hover:bg-blue-50 hover:text-blue-700"
+              >
+                <NavIcon name="user" className="h-4 w-4 text-slate-400" />
+                Settings
+                <NavIcon name="chevron-down" className={`ml-auto h-3.5 w-3.5 text-slate-400 transition ${settingsOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {settingsOpen && (
+                <div className="ml-4 mt-1 space-y-0.5 border-l-2 border-blue-100 pl-2">
+                  <a
+                    href="/gso-head/profile"
+                    role="menuitem"
+                    aria-current={onProfilePage ? 'page' : undefined}
+                    onClick={() => setAccountMenuOpen(false)}
+                    className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-xs font-bold transition ${onProfilePage ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-blue-50 hover:text-blue-700'}`}
+                  >
+                    Profile
+                  </a>
+                  <a
+                    href="/gso-head/audit-logs"
+                    role="menuitem"
+                    onClick={() => setAccountMenuOpen(false)}
+                    className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-blue-50 hover:text-blue-700"
+                  >
+                    Audit Trail
+                  </a>
+                </div>
+              )}
             </div>
             <div className="border-t border-slate-100 px-1 pb-1 pt-1">
               <button type="button" role="menuitem" onClick={signOut} className="flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left text-xs font-bold text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"><NavIcon name="logout" className="h-4 w-4" />Logout</button>

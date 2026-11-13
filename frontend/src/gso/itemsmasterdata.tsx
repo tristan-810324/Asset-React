@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import {
   createInventoryCategory,
@@ -22,10 +22,12 @@ import {
   type InventoryIssueBehavior,
   type InventoryReceiptRecord,
   type InventoryTrackingMode,
+  type PurchaseReadyRequest,
 } from './inventoryApi'
 import { addGsoNotification } from './notificationStore'
 import { DeliveryLinkDialog } from './deliveryLink'
 import { listAwaitingDeliveries, type AwaitingDeliveryLine } from './purchaseRequisitionsApi'
+import { categoryLabel, matchingInventoryCategory } from './requisitionFlow'
 
 type ItemHistoryEntry = {
   previous: string
@@ -35,6 +37,14 @@ type ItemHistoryEntry = {
   actorLabel?: string
   note: string
   tone: string
+}
+
+type ActionNoticeButton = { label: string; href: string; primary?: boolean }
+type ActionNotice = {
+  title: string
+  message: string
+  buttons?: ActionNoticeButton[]
+  readyRequests?: PurchaseReadyRequest[]
 }
 
 type InventoryItem = {
@@ -294,9 +304,9 @@ function downloadInventoryFile(fileName: string, content: BlobPart[], mimeType: 
   window.setTimeout(() => URL.revokeObjectURL(fileUrl), 0)
 }
 
-function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: string) {
+function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: string, onEmpty: (message: string) => void) {
   if (data.length === 0) {
-    alert('There is no inventory data to export to Excel.')
+    onEmpty('There is no inventory data to export to Excel.')
     return
   }
 
@@ -428,9 +438,9 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
   )
 }
 
-function generateInventoryWord(data: InventoryItem[], selectedDate: string) {
+function generateInventoryWord(data: InventoryItem[], selectedDate: string, onEmpty: (message: string) => void) {
   if (data.length === 0) {
-    alert('There is no inventory data to export to Word.')
+    onEmpty('There is no inventory data to export to Word.')
     return
   }
 
@@ -827,8 +837,24 @@ function ReusableStockStatus({ item }: { item: InventoryItem }) {
   )
 }
 
+type ProcurementPrefill = { category: string; itemName: string; quantity: number; requisitions: string[] }
+type ProcurementGuide = ProcurementPrefill & { categoryFound: boolean; itemNameFound: boolean }
+
+// Set when GSO Staff open an item to buy from the Procurement queue.
+function readProcurementPrefill(): ProcurementPrefill | null {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('from') !== 'procurement') return null
+  return {
+    category: params.get('category')?.trim() || '',
+    itemName: params.get('itemName')?.trim() || '',
+    quantity: Number(params.get('quantity')) || 0,
+    requisitions: (params.get('requisitions') || '').split(',').map((value) => value.trim()).filter(Boolean),
+  }
+}
+
 export default function ItemsMasterData() {
   const [showAddItemModal, setShowAddItemModal] = useState(false)
+  const [procurementGuide, setProcurementGuide] = useState<ProcurementGuide | null>(null)
 
   // Dynamic categories state
   const [categories, setCategories] = useState<InventoryCategory[]>([])
@@ -917,34 +943,97 @@ export default function ItemsMasterData() {
     receiptReference: string
   } | null>(null)
 
-  const showActionAlert = (message: string, title = 'Notice') => {
-    window.alert(`${title}\n\n${message}`)
+  // Inline notice in place of a browser popup, so the page stays usable and the notice can be closed.
+  const [actionNotice, setActionNotice] = useState<ActionNotice | null>(null)
+  // Zero-cost save: this prompt replaces the browser confirm, and the save runs again once it is accepted.
+  const [zeroCostPrompt, setZeroCostPrompt] = useState(false)
+  const zeroCostAcknowledged = useRef(false)
+
+  useEffect(() => {
+    if (!zeroCostPrompt) return
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setZeroCostPrompt(false) }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [zeroCostPrompt])
+
+  const showActionAlert = (message: string, title = 'Notice', buttons?: ActionNoticeButton[], readyRequests?: PurchaseReadyRequest[]) => {
+    setActionNotice({ title, message, buttons, readyRequests })
   }
 
-  const notifyAction = (title: string, message: string, action: { actionLabel?: string; href?: string } = {}) => {
+  const notifyAction = (title: string, message: string, action: {
+    actionLabel?: string
+    href?: string
+    buttons?: ActionNoticeButton[]
+    readyRequests?: PurchaseReadyRequest[]
+  } = {}) => {
+    const firstButton = action.buttons?.[0]
     addGsoNotification({
       module: 'Inventory',
       title,
       message,
-      actionLabel: action.actionLabel || 'View inventory',
-      href: action.href || '/gso/items',
+      actionLabel: action.actionLabel || firstButton?.label || 'View inventory',
+      href: action.href || firstButton?.href || '/gso/items',
     })
-    showActionAlert(message, title)
+    showActionAlert(message, title, action.buttons, action.readyRequests)
   }
 
-  const announceReadyRequisitions = (record: InventoryItemRecord) => {
-    const ready = record.purchaseReconciliation?.readyRequests || []
-    if (ready.length === 0) return false
-    const references = ready.map((request) => request.referenceNo).join(', ')
-    const href = ready.length === 1
-      ? `/gso/main-issuance?purchaseRequisitionId=${encodeURIComponent(ready[0].id)}`
-      : '/gso/main-issuance'
-    notifyAction(
-      'Purchase requisition ready to issue',
-      `${references} now has every requested item reserved. Open Main Issuance to issue the complete request.`,
-      { actionLabel: 'Open Main Issuance', href },
-    )
-    return true
+  const showReadyIssuanceNotice = (readyRequests: PurchaseReadyRequest[], message: string) => {
+    const uniqueRequests = [...new Map(readyRequests.map((request) => [request.id, request])).values()]
+    if (uniqueRequests.length === 0) return
+    const buttons: ActionNoticeButton[] = uniqueRequests.slice(0, 2).map((request, index) => ({
+      label: uniqueRequests.length === 1 ? 'Start issuance now' : `Open ${request.referenceNo}`,
+      href: `/gso/main-issuance?purchaseRequisitionId=${encodeURIComponent(request.id)}`,
+      primary: index === 0,
+    }))
+    buttons.push({ label: 'Open Main Issuance', href: '/gso/main-issuance' })
+    notifyAction('Purchase requisition ready to issue', message, {
+      actionLabel: buttons[0].label,
+      href: buttons[0].href,
+      buttons,
+      readyRequests: uniqueRequests,
+    })
+  }
+
+  const announcePurchaseReceipt = (record: InventoryItemRecord, quantityAdded: number) => {
+    const reconciliation = record.purchaseReconciliation
+    const linked = reconciliation?.linkedRequests || []
+    const ready = linked.filter((request) => request.readyForIssuance)
+    const linkedDescription = linked.map((request) => {
+      const requester = request.requesterName ? ` (${request.requesterName})` : ''
+      const items = request.items.map((item) => `${item.quantity} ${item.itemName}`).join(', ')
+      return `${request.referenceNo}${requester}: ${items}`
+    }).join('; ')
+
+    if (ready.length > 0) {
+      const readyNames = ready.map((request) => `${request.referenceNo}${request.requesterName ? ` (${request.requesterName})` : ''}`).join(', ')
+      const waiting = linked.filter((request) => !request.readyForIssuance)
+      const waitingText = waiting.length > 0
+        ? ` Other linked requisitions still have shortages: ${waiting.map((request) => request.referenceNo).join(', ')}.`
+        : ''
+      showReadyIssuanceNotice(
+        ready,
+        `${quantityAdded} ${record.unitOfMeasure} ${record.itemName} added to Item Master Data and reserved. ${readyNames} now has every requested item reserved and is ready for complete issuance.${waitingText}`,
+      )
+      return true
+    }
+
+    if (linked.length > 0) {
+      notifyAction(
+        'Purchased item reserved for requisitions',
+        `${quantityAdded} ${record.unitOfMeasure} ${record.itemName} was added and reserved for ${linkedDescription}. The complete request stays on hold until all requested items are available.`,
+        { buttons: [{ label: 'View Items to Buy', href: '/gso/procurement', primary: true }] },
+      )
+      return true
+    }
+
+    // Keep older API responses useful while deployments are being updated.
+    const legacyReady = reconciliation?.readyRequests || []
+    if (legacyReady.length > 0) {
+      const references = legacyReady.map((request) => request.referenceNo).join(', ')
+      showReadyIssuanceNotice(legacyReady, `${record.itemName} was added to Item Master Data. ${references} now has every requested item reserved and is ready for complete issuance.`)
+      return true
+    }
+    return false
   }
 
   const refreshInventoryItems = async () => {
@@ -978,8 +1067,22 @@ export default function ItemsMasterData() {
         setItems(savedItems)
         setCategories(categoryRecords)
         setItemNameOptions(itemNameRecords)
+        const prefill = readProcurementPrefill()
         const defaultCategory = categoryRecords[0]?.name || ''
+        const prefilledCategory = prefill ? matchingInventoryCategory(prefill.category, categoryRecords) : undefined
+        const prefilledItemName = prefilledCategory && prefill
+          ? itemNameRecords.find((itemName) => itemName.categoryId === prefilledCategory.id && itemName.name.trim().toLowerCase() === prefill.itemName.toLowerCase())
+          : undefined
         setFormData((current) => {
+          if (prefill) {
+            const next = {
+              ...current,
+              category: prefilledCategory?.name || '',
+              itemName: prefilledItemName?.name || '',
+              itemCode: prefilledCategory ? nextInventoryItemCode(prefilledCategory.name, savedItems) : '',
+            }
+            return { ...next, unitOfMeasure: unitAfterStockChange(current, next, savedItems) }
+          }
           const selectedCategory = categoryRecords.some((category) => category.name === current.category)
             ? current.category
             : defaultCategory
@@ -989,6 +1092,11 @@ export default function ItemsMasterData() {
             itemCode: nextInventoryItemCode(selectedCategory, savedItems),
           }
         })
+        if (prefill) {
+          setProcurementGuide({ ...prefill, categoryFound: Boolean(prefilledCategory), itemNameFound: Boolean(prefilledItemName) })
+          setShowAddItemModal(true)
+          window.history.replaceState(null, '', window.location.pathname)
+        }
         setInventoryLoadError('')
       })
       .catch((error: unknown) => {
@@ -1086,6 +1194,7 @@ export default function ItemsMasterData() {
 
   const closeAddItemModal = () => {
     setShowAddItemModal(false)
+    setProcurementGuide(null)
   }
 
   const handleAddCategory = async (e: React.FormEvent) => {
@@ -1368,7 +1477,7 @@ export default function ItemsMasterData() {
       setItems((current) => current.map((item) => item.id === updatedItem.id ? updatedItem : item))
       setSelectedItem(updatedItem)
       setShowItemEditModal(false)
-      if (!announceReadyRequisitions(savedRecord)) {
+      if (!announcePurchaseReceipt(savedRecord, quantity)) {
         notifyAction('Inventory item updated', `"${updatedItem.name}" (${updatedItem.code}) was updated successfully.`)
       }
       if (quantity > previousQuantity && updatedItem.id) {
@@ -1424,11 +1533,11 @@ export default function ItemsMasterData() {
       showActionAlert(`Enter a whole number from 1 to ${maximumQuantity.toLocaleString()} for the ${isIndividualTracking ? 'asset batch' : 'stock quantity'}.`, 'Invalid quantity')
       return
     }
-    if (unitCost === 0 && !window.confirm(
-      `Zero unit cost entered\n\nThis will be saved as PHP 0.00 per ${formData.unitOfMeasure.trim() || 'piece'}.\n\nClick OK only if this item really has no cost, such as a donation. Click Cancel to enter the price.`,
-    )) {
+    if (unitCost === 0 && !zeroCostAcknowledged.current) {
+      setZeroCostPrompt(true)
       return
     }
+    zeroCostAcknowledged.current = false
     setIsSavingItem(true)
     try {
       if (formRestockTarget?.id && !isIndividualTracking) {
@@ -1448,7 +1557,7 @@ export default function ItemsMasterData() {
         const refreshedItems = await refreshInventoryItems()
         handleClearForm(refreshedItems || nextItems, formData.category)
         closeAddItemModal()
-        if (!announceReadyRequisitions(updatedRecord)) {
+        if (!announcePurchaseReceipt(updatedRecord, quantity)) {
           notifyAction('Quantity-tracked stock restocked', `${quantity} ${updatedItem.unit} were added to ${updatedItem.code}. The delivery was saved in receipt history.`)
         }
         await offerDeliveryLink(updatedItem.id ? [updatedItem.id] : [], { quantity, unit: updatedItem.unit, name: updatedItem.name }, formData.receiptReference.trim())
@@ -1494,7 +1603,7 @@ export default function ItemsMasterData() {
       const refreshedItems = await refreshInventoryItems()
       handleClearForm(refreshedItems || nextItems, formData.category)
       closeAddItemModal()
-      if (!announceReadyRequisitions(savedRecords[0])) {
+      if (!announcePurchaseReceipt(savedRecords[0], quantity)) {
         notifyAction(
           isIndividualTracking
             ? (quantity === 1 ? 'Asset added' : 'Assets added')
@@ -1694,6 +1803,34 @@ export default function ItemsMasterData() {
 
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6">
           <div className="mx-auto max-w-4xl space-y-4">
+            {procurementGuide && (
+              <section role="status" aria-label="Started from Procurement" className="flex items-start gap-4 rounded-2xl border border-blue-200 bg-blue-50/80 p-4 sm:p-5">
+                <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white text-blue-700 shadow-sm">
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 4h2l2.4 10.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.6L21 8H7" /><circle cx="10" cy="20" r="1.2" /><circle cx="17" cy="20" r="1.2" /></svg>
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-extrabold text-blue-950">Started from Procurement</p>
+                  <p className="mt-1 text-sm leading-relaxed text-blue-900">
+                    Opened from the Procurement queue, so the category and item name are already filled in.{' '}
+                    <span className="font-extrabold">{procurementGuide.quantity > 0 ? `${procurementGuide.quantity} × ` : ''}{procurementGuide.itemName}</span>
+                    {' '}still needs to be bought
+                    {procurementGuide.requisitions.length > 0 && <> for <span className="font-bold">{procurementGuide.requisitions.join(', ')}</span></>}.
+                    {' '}Complete the remaining details below and save. After saving, you can link the new units to these requisitions.
+                  </p>
+                  {!procurementGuide.categoryFound && (
+                    <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-amber-900">
+                      No category here matches "{categoryLabel(procurementGuide.category)}". Choose the category yourself.
+                    </p>
+                  )}
+                  {procurementGuide.categoryFound && !procurementGuide.itemNameFound && (
+                    <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-amber-900">
+                      "{procurementGuide.itemName}" is not in this category's saved item names yet. Use Manage names to add it, then select it.
+                    </p>
+                  )}
+                </div>
+                <button type="button" onClick={() => setProcurementGuide(null)} aria-label="Dismiss this guide" className="shrink-0 rounded-lg px-2.5 py-1.5 text-sm font-extrabold text-blue-700 transition hover:bg-blue-100">×</button>
+              </section>
+            )}
             <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <div className="mb-4 border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-slate-900">Item details</h3>
@@ -2418,7 +2555,7 @@ export default function ItemsMasterData() {
                 )}
                 <button
                   type="button"
-                  onClick={() => generateInventorySpreadsheet(fullInventoryItems, selectedInventoryDate)}
+                  onClick={() => generateInventorySpreadsheet(fullInventoryItems, selectedInventoryDate, (message) => showActionAlert(message, 'Nothing to export'))}
                   className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#138548] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#0f7440] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2"
                 >
                   <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -2429,7 +2566,7 @@ export default function ItemsMasterData() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => generateInventoryWord(fullInventoryItems, selectedInventoryDate)}
+                  onClick={() => generateInventoryWord(fullInventoryItems, selectedInventoryDate, (message) => showActionAlert(message, 'Nothing to export'))}
                   className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#2d5aa3] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#264e8e] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2"
                 >
                   <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3093,14 +3230,97 @@ export default function ItemsMasterData() {
           restocked={deliveryPrompt.restocked}
           receiptReference={deliveryPrompt.receiptReference}
           onClose={() => setDeliveryPrompt(null)}
-          onLinked={(message) => {
+          onLinked={(message, readyRequests) => {
             setDeliveryPrompt(null)
             void refreshInventoryItems()
-            notifyAction('Deliveries linked', message)
+            const previouslyReady = actionNotice?.readyRequests || []
+            const combinedReady = [...new Map([...previouslyReady, ...readyRequests].map((request) => [request.id, request])).values()]
+            if (combinedReady.length > 0) {
+              showReadyIssuanceNotice(combinedReady, message)
+              return
+            }
+            notifyAction('Deliveries linked', message, {
+              buttons: [{ label: 'View Items to Buy', href: '/gso/procurement', primary: true }],
+            })
           }}
         />
       )}
 
+      {actionNotice && !deliveryPrompt && (actionNotice.buttons?.length
+        ? <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setActionNotice(null) }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="inventory-action-notice-title" className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border-2 border-slate-300/80 bg-white shadow-2xl shadow-slate-950/30">
+            <div className="sticky top-0 bg-white border-b border-slate-200 p-6 sm:p-8">
+              <div className="flex items-start gap-4">
+                <span aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
+                  <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6" /></svg>
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 id="inventory-action-notice-title" className="text-base font-black text-slate-900">{actionNotice.title}</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-600">{actionNotice.message}</p>
+                </div>
+                <button type="button" onClick={() => setActionNotice(null)} className="ml-auto shrink-0 rounded-lg px-2.5 py-2 text-sm font-extrabold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800" aria-label="Close notification">×</button>
+              </div>
+            </div>
+
+            {actionNotice.readyRequests && actionNotice.readyRequests.length > 0 && (
+              <div className="px-6 py-4 sm:px-8 border-b border-slate-100">
+                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-4">Ready Requisitions</h3>
+                <div className="space-y-3">
+                  {actionNotice.readyRequests.map((req) => (
+                    <div key={req.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900">{req.referenceNo}</p>
+                          <p className="text-xs text-slate-600 mt-1">Requester: <span className="font-semibold text-slate-800">{req.requesterName || 'N/A'}</span></p>
+                        </div>
+                      </div>
+                      {req.items && req.items.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-slate-200">
+                          <p className="text-xs font-semibold text-slate-700 mb-2">Items Ready to Issue:</p>
+                          <ul className="space-y-1">
+                            {req.items.map((item, idx) => (
+                              <li key={idx} className="text-sm text-slate-700 flex justify-between">
+                                <span>{item.itemName}</span>
+                                <span className="font-semibold text-emerald-700">{item.quantity} pcs</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="p-6 sm:p-8 border-t border-slate-200 flex flex-col gap-3 sm:flex-row-reverse sm:justify-start">
+              <button type="button" onClick={() => setActionNotice(null)} className="rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50">Dismiss</button>
+              {actionNotice.buttons.map((button) => <a key={`${button.href}-${button.label}`} href={button.href} onClick={() => setActionNotice(null)} className={`rounded-xl px-6 py-3 text-center text-sm font-bold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-offset-2 ${button.primary ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-700' : 'border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>{button.label}</a>)}
+            </div>
+          </section>
+        </div>
+        : <div role="status" className="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-2xl shadow-slate-900/20 ring-1 ring-slate-900/5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-black text-slate-900">{actionNotice.title}</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">{actionNotice.message}</p>
+            </div>
+            <button type="button" onClick={() => setActionNotice(null)} className="shrink-0 rounded-lg px-2 py-1 text-xs font-extrabold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800" aria-label="Close notification">Close</button>
+          </div>
+        </div>)}
+
+      {zeroCostPrompt && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setZeroCostPrompt(false) }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="zero-cost-title" className="w-full max-w-md rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-2xl sm:p-6">
+            <h2 id="zero-cost-title" className="text-base font-black text-slate-900">Zero unit cost entered</h2>
+            <p className="mt-2 text-xs leading-relaxed text-slate-600">This will be saved as PHP 0.00 per {formData.unitOfMeasure.trim() || 'piece'}. Save it only if the item really has no cost, such as a donation.</p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setZeroCostPrompt(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-extrabold text-slate-600 transition hover:border-slate-300">Enter a price</button>
+              <button type="button" onClick={() => { zeroCostAcknowledged.current = true; setZeroCostPrompt(false); void handleSaveItem() }} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700">Save at PHP 0.00</button>
+            </div>
+          </div>
+        </div>
+      )}
     </GsoPageFrame>
   )
 }

@@ -1,6 +1,30 @@
 import { apiRequest } from '../auth/authApi'
 import type { ServiceRequest, StaffRoute } from '../requesters/requesterApi'
 
+export type ItemToBuyRequest = {
+  requestId: string
+  referenceNo: string
+  requesterName: string
+  department: string
+  quantity: number
+  status: string
+  financeHandoffAt: string | null
+}
+
+export type ItemToBuy = {
+  itemName: string
+  category: string
+  specifications: string
+  totalQuantity: number
+  requestCount: number
+  requests: ItemToBuyRequest[]
+}
+
+export async function listItemsToBuy() {
+  const result = await apiRequest<{ items: ItemToBuy[] }>('/requests/purchase-requisitions/items-to-buy')
+  return result.items
+}
+
 export async function listStaffPurchaseRequisitions() {
   const result = await apiRequest<{ requests: ServiceRequest[] }>('/requests/purchase-requisitions/issuance-queue')
   return result.requests
@@ -73,4 +97,27 @@ export async function undoPurchaseDelivery(requestId: string, receiptId: string)
     { method: 'POST', body: JSON.stringify({}) },
   )
   return result.request
+}
+
+// Get the GSO Head-approved PDF for GSO Staff viewing and printing.
+export async function getFinancePdf(id: string) {
+  const result = await apiRequest<{ pdf: string; filename: string; referenceNo: string }>(
+    `/requests/purchase-requisitions/${encodeURIComponent(id)}/finance-pdf`,
+  )
+  return result
+}
+
+// After handing the printed, signed PDF to Finance, GSO Staff records the physical handoff.
+export async function handPurchaseRequisitionToFinance(id: string) {
+  return apiRequest<{ request: ServiceRequest; requesterNotified: boolean | null }>(
+    `/requests/purchase-requisitions/${encodeURIComponent(id)}/hand-to-finance`,
+    { method: 'POST', body: JSON.stringify({}) },
+  )
+}
+
+export async function logFinancePdfReprint(id: string, input: { reason: string; details: string }) {
+  return apiRequest<{ referenceNo: string }>(
+    `/requests/purchase-requisitions/${encodeURIComponent(id)}/finance-pdf-reprint`,
+    { method: 'POST', body: JSON.stringify(input) },
+  )
 }
