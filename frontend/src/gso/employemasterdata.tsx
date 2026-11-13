@@ -576,11 +576,41 @@ export default function EmployeeMasterData() {
     return matchesSearch && matchesDept
   })
 
+  // Summary tiles count the whole directory, so they stay the same while the search and department filter change.
+  const summaryTiles = [
+    {
+      label: 'Employee records',
+      value: employees.length,
+      hint: 'Saved in the directory',
+      icon: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+    },
+    {
+      label: 'Active',
+      value: employees.filter((employee) => employee.status === 'Active').length,
+      hint: 'Currently active employees',
+      icon: <><circle cx="12" cy="12" r="9" /><path d="m8.5 12.2 2.3 2.3 4.7-4.9" /></>,
+    },
+    {
+      label: 'Holding items',
+      value: employees.filter((employee) => employee.assigned > 0).length,
+      hint: 'Employees with assigned items',
+      icon: <><path d="M21 8 12 3 3 8v8l9 5 9-5V8z" /><path d="m3 8 9 5 9-5M12 13v8" /></>,
+    },
+    {
+      label: 'Departments',
+      value: departments.length,
+      hint: 'Offices and units on file',
+      icon: <><path d="M4 21V5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v16M16 9h4a1 1 0 0 1 1 1v11M3 21h18M8 8h2M8 12h2M8 16h2" /></>,
+    },
+  ]
+
   return (
     <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search employees...">
       {/* HEADER SECTION */}
-      <section className="rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-        <span className="inline-flex rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
+      <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+        <div className="relative">
+        <span className="inline-flex rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
           People Directory Workspace
         </span>
         <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Employees &amp; Requesters</h1>
@@ -597,11 +627,29 @@ export default function EmployeeMasterData() {
             </a>
             <a
               href="/gso/requester-verification"
-              className="rounded-xl border border-white/20 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               Requestors Verification
             </a>
         </nav>
+        </div>
+      </section>
+
+      <section aria-label="Employee summary" className="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4 lg:gap-4">
+        {summaryTiles.map((tile) => (
+          <article key={tile.label} className="flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">{tile.label}</p>
+                <p className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{tile.value.toLocaleString('en-PH')}</p>
+              </div>
+              <span aria-hidden="true" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10">
+                <svg className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{tile.icon}</svg>
+              </span>
+            </div>
+            <p className="mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">{tile.hint}</p>
+          </article>
+        ))}
       </section>
 
       {employeeDataError && (

@@ -886,17 +886,17 @@ export default function ReturnItems() {
 
       {returnLoadError && <p role="alert" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">{returnLoadError}</p>}
 
-      <section className="mt-6 rounded-2xl border-2 border-blue-100 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="return-process-title">
+      <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-6 sm:p-8 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="return-process-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 id="return-process-title" className="text-sm font-black text-slate-900">Process an item return</h2>
-            <p className="mt-1 text-xs text-slate-500">
+            <h2 id="return-process-title" className="text-lg font-black tracking-tight text-slate-900">Process an item return</h2>
+            <p className="mt-1.5 text-sm text-slate-600">
               {returnMode === 'scan'
                 ? 'Scan the barcode on an individually tagged unit, like a laptop.'
                 : 'Return reusable stock tracked by quantity, like chairs or tools. The employee confirms with an emailed code.'}
             </p>
           </div>
-          <div role="tablist" aria-label="Return type" className="inline-flex rounded-xl bg-slate-100 p-1">
+          <div role="tablist" aria-label="Return type" className="inline-flex rounded-xl border-2 border-slate-300 bg-white p-1">
             {([['scan', 'Tagged unit'], ['bulk', `Quantity-tracked stock (${bulkReturnOptions.length})`]] as const).map(([mode, label]) => (
               <button
                 key={mode}
@@ -909,7 +909,7 @@ export default function ReturnItems() {
                   setReturnMode(mode)
                   if (mode === 'scan') focusScannerInput(50)
                 }}
-                className={`rounded-lg px-3.5 py-2 text-xs font-extrabold transition ${returnMode === mode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`rounded-lg px-4 py-2.5 text-sm font-extrabold transition ${returnMode === mode ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-800'}`}
               >
                 {label}
               </button>
@@ -922,19 +922,19 @@ export default function ReturnItems() {
         </div>
 
         <div role="tabpanel" id="return-panel-scan" aria-labelledby="return-tab-scan" hidden={returnMode !== 'scan'}>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border-2 border-blue-200 bg-blue-50/70 px-5 py-4">
             <div>
-              <p className="flex items-center gap-2 text-xs font-extrabold text-blue-900" role="status" aria-live="polite">
-                <span className={`h-2.5 w-2.5 rounded-full ${isLookingUpBarcode ? 'animate-pulse bg-amber-500' : hasScannerFocus ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+              <p className="flex items-center gap-2.5 text-sm font-extrabold text-blue-900" role="status" aria-live="polite">
+                <span className={`h-3 w-3 rounded-full ${isLookingUpBarcode ? 'animate-pulse bg-amber-500' : hasScannerFocus ? 'bg-emerald-500' : 'bg-slate-400'}`} />
                 {isLookingUpBarcode ? 'Reading barcode...' : scannedTag ? 'Inspection in progress' : hasScannerFocus ? 'Scanner ready' : 'Scanner waiting for focus'}
               </p>
-              <p className="mt-1 text-[0.68rem] text-slate-600">Scan the label on one unit. The code appears in the box below and the item details pop up automatically. If the label is damaged, type the code and press Enter.</p>
+              <p className="mt-1.5 text-sm leading-relaxed text-slate-700">Scan the label on one unit. The code appears in the box below and the item details pop up automatically. If the label is damaged, type the code and press Enter.</p>
             </div>
-            <button type="button" onClick={() => focusScannerInput()} disabled={isLookingUpBarcode || Boolean(scannedTag)} className="rounded-lg border border-blue-200 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" onClick={() => focusScannerInput()} disabled={isLookingUpBarcode || Boolean(scannedTag)} className="rounded-xl border-2 border-blue-200 bg-white px-4 py-2.5 text-xs font-extrabold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">
               Focus scanner
             </button>
           </div>
-          <form onSubmit={handleBarcodeLookup} aria-label="USB barcode scanner input" className="mt-3 flex gap-2">
+          <form onSubmit={handleBarcodeLookup} aria-label="USB barcode scanner input" className="mt-4 flex gap-3">
             <input
               ref={scannerInputRef}
               type="text"
@@ -952,9 +952,9 @@ export default function ReturnItems() {
               placeholder="Scan the barcode here…"
               aria-label="Scan an individually tracked item barcode"
               disabled={isLookingUpBarcode || Boolean(scannedTag) || isConfirmingReturn}
-              className="h-12 min-w-0 flex-1 rounded-xl border-2 border-dashed border-blue-200 bg-white px-4 font-mono text-sm font-bold uppercase tracking-wider text-slate-800 outline-none transition placeholder:font-sans placeholder:font-semibold placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400 focus:border-solid focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
+              className="h-16 min-w-0 flex-1 rounded-xl border-2 border-dashed border-blue-300 bg-white px-5 font-mono text-lg font-bold uppercase tracking-wider text-slate-800 outline-none transition placeholder:font-sans placeholder:font-semibold placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400 focus:border-solid focus:border-blue-500 focus:ring-4 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
             />
-            <button type="submit" disabled={isLookingUpBarcode || Boolean(scannedTag) || isConfirmingReturn || !scannerCode.trim()} className="h-12 shrink-0 rounded-xl bg-blue-600 px-4 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="submit" disabled={isLookingUpBarcode || Boolean(scannedTag) || isConfirmingReturn || !scannerCode.trim()} className="h-16 shrink-0 rounded-xl bg-blue-600 px-8 text-sm font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
               {isLookingUpBarcode ? 'Reading…' : 'Find'}
             </button>
           </form>

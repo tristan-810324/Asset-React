@@ -1276,11 +1276,14 @@ export default function MainIssuance() {
         }
       `}</style>
       <div className="mx-auto max-w-7xl pb-8">
-        <section className="rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+        <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+          <div className="relative">
           <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff issuance</span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Main Issuance</h1>
           <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">Issue reserved requests, or give consumable stock to an employee.</p>
           <RequisitionIssuanceShortcuts active="issuance" />
+          </div>
         </section>
 
         {selectedPurchaseRequisitionId && <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3"><p className="text-xs font-extrabold text-indigo-900">Purchase requisition {purchaseRequisitionReference || selectedPurchaseRequisitionId}</p><p className="mt-1 text-[0.68rem] text-indigo-800">All items are reserved and ready.</p>{purchaseRequisitionReusableCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionReusableCount} reusable item record(s) are handled through the separate Borrowing workflow.</p>}{purchaseRequisitionOtherTypeCount > 0 && <p className="mt-2 text-[0.65rem] font-bold text-indigo-900">{purchaseRequisitionOtherTypeCount} other reserved item record(s) use another issuance type. Return to Purchase Requisitions after this batch.</p>}</div>}
@@ -1410,7 +1413,7 @@ export default function MainIssuance() {
                         selectPurchaseRequisition(request.id)
                         setIsRequisitionPickerOpen(false)
                       }}
-                      className={`w-full rounded-xl border p-3.5 text-left transition disabled:cursor-not-allowed disabled:opacity-60 sm:p-4 ${isSelectedRequest ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
+                      className={`w-full rounded-xl border-2 p-3.5 text-left shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 sm:p-4 ${isSelectedRequest ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-100' : 'border-slate-300/80 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
                     >
                       <span className="flex flex-wrap items-start justify-between gap-2">
                         <span className="min-w-0">
@@ -1593,7 +1596,7 @@ export default function MainIssuance() {
                       aria-pressed={isActive}
                       disabled={isSubmitting}
                       onClick={() => { setInventoryTypeFilter(option.value); setInventoryPage(1) }}
-                      className={`min-w-0 rounded-xl border px-3 py-2.5 text-left transition disabled:opacity-60 ${isActive ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/40'}`}
+                      className={`min-w-0 rounded-xl border-2 px-3 py-2.5 text-left shadow-sm transition disabled:opacity-60 ${isActive ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-300/80 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
                     >
                       <span className="block text-xs font-extrabold leading-snug text-slate-900">{option.label}</span>
                       <span className="mt-1 block text-[0.65rem] font-semibold text-slate-500">{inventoryTypeCounts[option.value].toLocaleString()} available</span>
@@ -1627,7 +1630,7 @@ export default function MainIssuance() {
                         aria-pressed={isSelected}
                         disabled={isSubmitting || isRequisitionIssuance}
                         onClick={() => toggleInventoryGroup(group.entries.map((entry) => entry.item))}
-                        className={`rounded-xl border p-3 text-left transition disabled:opacity-60 ${isFullySelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : isSelected ? 'border-amber-300 bg-amber-50/60' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
+                        className={`rounded-xl border-2 p-3 text-left shadow-sm transition disabled:opacity-60 ${isFullySelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : isSelected ? 'border-amber-300 bg-amber-50/60' : 'border-slate-300/80 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}
                       >
                         <span className="flex items-start justify-between gap-3">
                           <span className="min-w-0">

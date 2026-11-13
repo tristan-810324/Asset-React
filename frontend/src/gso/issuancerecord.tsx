@@ -259,13 +259,14 @@ export default function IssuanceRecord() {
   ].filter(Boolean).join(' · ') || 'All issuance records'
 
   const summaryCards = [
-    { key: 'out', label: 'Still out', tone: 'text-blue-700', value: records.filter((record) => record.outQuantity > 0).length },
-    { key: 'overdue', label: 'Overdue', tone: 'text-rose-700', value: records.filter((record) => record.isOverdue).length },
-    { key: 'pending', label: 'Pending acknowledgment', tone: 'text-amber-700', value: records.filter((record) => record.status === 'Pending acknowledgment').length },
+    { key: 'out', label: 'Still out', note: 'Not yet returned', icon: <><path d="M21 8 12 3 3 8v8l9 5 9-5V8z" /><path d="m3 8 9 5 9-5M12 13v8" /></>, value: records.filter((record) => record.outQuantity > 0).length },
+    { key: 'overdue', label: 'Overdue', note: 'Past the return date', icon: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>, value: records.filter((record) => record.isOverdue).length },
+    { key: 'pending', label: 'Pending acknowledgment', note: 'Waiting for the employee', icon: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>, value: records.filter((record) => record.status === 'Pending acknowledgment').length },
     {
       key: 'lost',
       label: 'Lost, not yet settled',
-      tone: 'text-rose-700',
+      note: 'Lost items awaiting settlement',
+      icon: <><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></>,
       value: records.reduce((count, record) => count + record.returns.filter((entry) => entry.status === 'Lost' && entry.settlementStatus === 'Pending').length, 0),
     },
   ]
@@ -333,10 +334,16 @@ export default function IssuanceRecord() {
             type="button"
             onClick={() => setStatusFilter(card.key)}
             aria-pressed={statusFilter === card.key}
-            className={`rounded-2xl border-2 bg-white p-4 text-left shadow-md shadow-slate-300/35 transition hover:-translate-y-0.5 hover:border-blue-200 ${statusFilter === card.key ? 'border-blue-500 ring-4 ring-blue-100' : 'border-slate-300/80 ring-1 ring-slate-900/5'}`}
+            className={`flex flex-col justify-between rounded-2xl border-2 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 text-left shadow-md shadow-slate-300/35 transition hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4 ${statusFilter === card.key ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-300/80 ring-1 ring-slate-900/5 hover:border-blue-300'}`}
           >
-            <span className="block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">{card.label}</span>
-            <span className={`mt-1 block text-2xl font-black ${card.tone}`}>{isLoading ? '—' : card.value}</span>
+            <span className="flex items-start justify-between gap-2">
+              <span className="min-w-0">
+                <span className="block text-[0.65rem] font-bold text-slate-500 sm:text-xs">{card.label}</span>
+                <span className="mt-1 block text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{isLoading ? '—' : card.value}</span>
+              </span>
+              <span aria-hidden="true" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><svg className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{card.icon}</svg></span>
+            </span>
+            <span className="mt-2 block border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">{card.note}</span>
           </button>
         ))}
       </section>

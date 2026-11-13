@@ -399,10 +399,10 @@ export default function AssetLabels() {
             {recipientSheetError && <p role="alert" className="mx-5 mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 sm:mx-6">{recipientSheetError}</p>}
             {isLabelsExpanded && <div id="asset-label-list">
               {loadError && <p role="alert" className="mx-5 mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 sm:mx-6">{loadError}</p>}
-              <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-3 sm:px-6">
-                <input type="search" value={labelSearch} onChange={(event) => setLabelSearch(event.target.value)} placeholder="Search item, barcode, or employee" aria-label="Search asset labels" className="h-9 w-full min-w-0 rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100 sm:w-72" />
+              <div className="flex flex-wrap items-center gap-3 border-b border-blue-100 bg-blue-50/50 px-5 py-3 sm:px-6">
+                <input type="search" value={labelSearch} onChange={(event) => setLabelSearch(event.target.value)} placeholder="Search item, barcode, or employee" aria-label="Search asset labels" className="h-10 w-full min-w-0 rounded-xl border-2 border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-900 shadow-sm outline-none placeholder:text-slate-500 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 sm:w-80" />
                 <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter asset labels">
-                  {labelFilters.map((filter) => <button key={filter.value} type="button" aria-pressed={labelStatusFilter === filter.value} onClick={() => setLabelStatusFilter(filter.value)} className={`rounded-full px-3 py-1.5 text-[0.65rem] font-extrabold transition ${labelStatusFilter === filter.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                  {labelFilters.map((filter) => <button key={filter.value} type="button" aria-pressed={labelStatusFilter === filter.value} onClick={() => setLabelStatusFilter(filter.value)} className={`rounded-full px-3.5 py-2 text-xs font-bold transition ${labelStatusFilter === filter.value ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border border-blue-200 bg-white text-blue-800 hover:bg-blue-100'}`}>
                     {filter.label}{filter.value === 'toPrint' && toPrintCount > 0 ? ` · ${toPrintCount}` : filter.value === 'returned' && returnedUnitLabels.length > 0 ? ` · ${returnedUnitLabels.length}` : ''}
                   </button>)}
                 </div>
@@ -410,7 +410,7 @@ export default function AssetLabels() {
               <div className="max-h-[58vh] overflow-y-auto bg-slate-50 p-3 sm:p-4">
                 {isLoading && <p role="status" className="rounded-xl bg-white px-4 py-8 text-center text-xs font-semibold text-slate-400">Loading asset labels…</p>}
                 {!isLoading && !loadError && visibleGroups.length > 0 && <div className="space-y-3">
-                  {visibleGroups.map((group) => {
+                  {visibleGroups.map((group, index) => {
                     const printableLabels = group.labels.filter((label) => label.needsPrinting)
                     const printedLabels = group.labels.filter((label) => !label.needsPrinting && !label.isReturned)
                     const returnedLabels = group.labels.filter((label) => label.isReturned)
@@ -426,59 +426,59 @@ export default function AssetLabels() {
                     const batchEmailName = group.labels[0]?.batchEmployeeName
                     const batchEmail = group.labels[0]?.batchEmployeeEmail
                     const isReturnedGroup = returnedLabels.length === group.labels.length
-                    return <article key={group.id} className={`overflow-hidden rounded-2xl border-2 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 ${isReturnedGroup ? 'border-slate-300/80 bg-slate-50' : 'border-emerald-200 bg-emerald-50/80'}`}>
+                    return <article key={group.id} className={`overflow-hidden rounded-2xl border-2 border-slate-300/80 ${index % 2 === 0 ? 'bg-blue-50/70' : 'bg-white'} shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5`}>
                       <div className="p-4 sm:p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-emerald-200/80 pb-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
                           <div className="min-w-0">
-                            <p className={`text-[0.62rem] font-black uppercase tracking-[0.12em] ${isReturnedGroup ? 'text-slate-500' : 'text-emerald-800'}`}>{isReturnedGroup ? 'Returned history' : 'Issuance complete'}</p>
-                            <h3 className="mt-1 truncate text-sm font-black text-slate-900">{groupTitle}</h3>
-                            <p className="mt-1 text-xs font-semibold text-slate-600">{group.batchId ? `${assignedRecipients.length} assigned recipient${assignedRecipients.length === 1 ? '' : 's'}` : group.holderCode} <span className="px-1 text-slate-400">·</span> {groupReference}{group.issuedAt ? ` · ${formatLabelDate(group.issuedAt)}` : ''}</p>
-                            {group.batchId && <p className={`mt-1 text-xs font-semibold ${batchEmailStatus ? 'text-emerald-800' : 'text-slate-500'}`}>{batchEmailStatus === undefined ? 'Head email status unavailable' : `Head email ${batchEmailStatus ? 'sent' : 'not sent'}`}{batchEmailName ? ` · ${batchEmailName}` : ''}{batchEmail ? ` · ${batchEmail}` : ''}</p>}
+                            <p className={`text-xs font-extrabold uppercase tracking-wide ${isReturnedGroup ? 'text-slate-500' : 'text-blue-700'}`}>{isReturnedGroup ? 'Returned history' : 'Issuance complete'}</p>
+                            <h3 className="mt-1 truncate text-base font-black text-slate-900">{groupTitle}</h3>
+                            <p className="mt-1 text-sm font-medium text-slate-700">{group.batchId ? `${assignedRecipients.length} assigned recipient${assignedRecipients.length === 1 ? '' : 's'}` : group.holderCode} <span className="px-1 text-slate-400">·</span> {groupReference}{group.issuedAt ? ` · ${formatLabelDate(group.issuedAt)}` : ''}</p>
+                            {group.batchId && <p className={`mt-1 text-sm font-semibold ${batchEmailStatus ? 'text-blue-700' : 'text-slate-600'}`}>{batchEmailStatus === undefined ? 'Head email status unavailable' : `Head email ${batchEmailStatus ? 'sent' : 'not sent'}`}{batchEmailName ? ` · ${batchEmailName}` : ''}{batchEmail ? ` · ${batchEmail}` : ''}</p>}
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="rounded-full bg-white/80 px-2.5 py-1 text-[0.65rem] font-extrabold text-slate-700 ring-1 ring-slate-200">{group.labels.length} {group.labels.length === 1 ? 'unit' : 'units'}</span>
-                            {printableLabels.length > 0 && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[0.65rem] font-extrabold text-amber-900">{printableLabels.length} to print</span>}
-                            {printedLabels.length > 0 && <span className="rounded-full bg-white px-2.5 py-1 text-[0.65rem] font-extrabold text-emerald-800 ring-1 ring-emerald-200">{printedLabels.length} printed</span>}
-                            {isReturnedGroup && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[0.65rem] font-extrabold text-slate-600">Returned</span>}
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{group.labels.length} {group.labels.length === 1 ? 'unit' : 'units'}</span>
+                            {printableLabels.length > 0 && <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white">{printableLabels.length} to print</span>}
+                            {printedLabels.length > 0 && <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">{printedLabels.length} printed</span>}
+                            {isReturnedGroup && <span className="rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700">Returned</span>}
                           </div>
                         </div>
 
-                        <div className="mt-3 overflow-hidden rounded-xl border border-emerald-200/80 bg-white/80">
-                          <div className="border-b border-emerald-200/70 px-3 py-2 text-[0.65rem] font-black uppercase tracking-wide text-slate-600">Individual barcode labels · {group.labels.length}</div>
-                          <div className="divide-y divide-emerald-100">
+                        <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700">Individual barcode labels · {group.labels.length}</div>
+                          <div className="divide-y divide-slate-100">
                             {group.labels.map((label) => <div key={label.tagCode} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
                               <div className="min-w-0">
-                                <p className="break-all font-mono text-xs font-extrabold text-slate-900">{label.tagCode}</p>
-                                <p className="mt-0.5 text-[0.68rem] font-semibold text-slate-700">{label.itemName} · {label.itemCode} · Unit {label.unitNumber}</p>
-                                <p className="mt-0.5 text-[0.68rem] text-slate-600">Assigned to: <span className="font-bold">{label.holderName}</span> · {label.holderCode}</p>
+                                <p className="break-all font-mono text-sm font-extrabold text-slate-900">{label.tagCode}</p>
+                                <p className="mt-0.5 text-sm font-semibold text-slate-800">{label.itemName} · {label.itemCode} · Unit {label.unitNumber}</p>
+                                <p className="mt-0.5 text-sm text-slate-700">Assigned to: <span className="font-bold">{label.holderName}</span> · {label.holderCode}</p>
                               </div>
                               <div className="flex shrink-0 items-center gap-2">
-                                <span className={`rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${label.isReturned ? 'bg-slate-100 text-slate-600' : label.needsPrinting ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'}`}>
+                                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${label.isReturned ? 'bg-slate-100 text-slate-600' : label.needsPrinting ? 'bg-blue-600 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
                                   {label.isReturned ? 'Returned' : label.needsPrinting ? 'To print' : 'Printed'}
                                 </span>
-                                {!label.isReturned && !label.needsPrinting && <button type="button" disabled={isReprinting || labelsToPrint.length > 0} onClick={() => { setReprintTarget(label); setReprintReason(''); setReprintDetails(''); setReprintError('') }} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[0.65rem] font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">Reprint</button>}
+                                {!label.isReturned && !label.needsPrinting && <button type="button" disabled={isReprinting || labelsToPrint.length > 0} onClick={() => { setReprintTarget(label); setReprintReason(''); setReprintDetails(''); setReprintError('') }} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">Reprint</button>}
                               </div>
                             </div>)}
                           </div>
                         </div>
-                        <p className="mt-3 border-t border-emerald-200/70 pt-3 text-xs font-bold text-emerald-900">Assigned to: {assignedRecipients.map((recipient) => `${recipient.name} (${recipient.code})`).join(', ')}</p>
+                        <p className="mt-3 border-t border-slate-200 pt-3 text-sm font-semibold text-slate-800">Assigned to: {assignedRecipients.map((recipient) => `${recipient.name} (${recipient.code})`).join(', ')}</p>
 
                         <div className="mt-4">
-                          <p className="mb-2 text-[0.62rem] font-black uppercase tracking-[0.12em] text-slate-600">Print steps</p>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-600">Print steps</p>
                           <div className="grid gap-2 sm:grid-cols-2">
-                            <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/90 p-3">
+                            <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
                               <div className="flex min-w-0 items-start gap-2.5">
                                 <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-blue-700 text-xs font-black text-white">1</span>
-                                <div><h4 className="text-xs font-extrabold text-slate-900">Full issuance sheet</h4><p className="mt-0.5 text-[0.68rem] text-slate-600">All items and assigned users</p></div>
+                                <div><h4 className="text-sm font-extrabold text-slate-900">Full issuance sheet</h4><p className="mt-0.5 text-sm text-slate-700">All items and assigned users</p></div>
                               </div>
-                              <button type="button" disabled={!group.batchId || isReturnedGroup || recipientSheetLoadingId === group.id} onClick={() => void printRecipientSheet(group)} className="rounded-lg bg-blue-700 px-3 py-2 text-[0.68rem] font-extrabold text-white transition hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50">{recipientSheetLoadingId === group.id ? 'Preparing…' : isReturnedGroup ? 'History only' : group.batchId ? 'Print full sheet' : 'Unavailable'}</button>
+                              <button type="button" disabled={!group.batchId || isReturnedGroup || recipientSheetLoadingId === group.id} onClick={() => void printRecipientSheet(group)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{recipientSheetLoadingId === group.id ? 'Preparing…' : isReturnedGroup ? 'History only' : group.batchId ? 'Print full sheet' : 'Unavailable'}</button>
                             </section>
-                            <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-white p-3">
+                            <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
                               <div className="flex min-w-0 items-start gap-2.5">
                                 <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-emerald-700 text-xs font-black text-white">2</span>
-                                <div><h4 className="text-xs font-extrabold text-slate-900">Barcode labels</h4><p className="mt-0.5 text-[0.68rem] text-slate-600">{printableLabels.length ? `${printableLabels.length} ready to print` : 'All labels are printed'}</p></div>
+                                <div><h4 className="text-sm font-extrabold text-slate-900">Barcode labels</h4><p className="mt-0.5 text-sm text-slate-700">{printableLabels.length ? `${printableLabels.length} ready to print` : 'All labels are printed'}</p></div>
                               </div>
-                              <button type="button" disabled={!printableLabels.length || labelsToPrint.length > 0 || isRecordingPrint} onClick={() => previewBarcodeLabels(printableLabels.map(toPrintableLabel))} className="rounded-lg bg-emerald-700 px-3 py-2 text-[0.68rem] font-extrabold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{printableLabels.length ? `Print ${printableLabels.length === 1 ? 'label' : 'all labels'}` : 'Printed'}</button>
+                              <button type="button" disabled={!printableLabels.length || labelsToPrint.length > 0 || isRecordingPrint} onClick={() => previewBarcodeLabels(printableLabels.map(toPrintableLabel))} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{printableLabels.length ? `Print ${printableLabels.length === 1 ? 'label' : 'all labels'}` : 'Printed'}</button>
                             </section>
                           </div>
                         </div>

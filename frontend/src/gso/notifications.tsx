@@ -6,6 +6,7 @@ export default function Notifications() {
     <GsoPageFrame activePage="Notifications" searchPlaceholder="Search notifications">
       <NotificationInbox
         eyebrow="GSO workspace"
+        variant="timeline"
         description="New requests, returns, issuances, and purchase updates that need your action."
       />
     </GsoPageFrame>

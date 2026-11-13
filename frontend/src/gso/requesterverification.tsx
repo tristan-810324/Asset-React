@@ -5,9 +5,9 @@ import { getRequesterIdentityPicture, listRequesterDepartments, listRequesterIde
 const statuses: Array<'all' | RequesterIdentityStatus> = ['all', 'Pending', 'Needs Correction', 'Verified']
 const statusStyle: Record<RequesterIdentityStatus, string> = {
   Incomplete: 'border-slate-200 bg-slate-100 text-slate-700',
-  Pending: 'border-amber-200 bg-amber-50 text-amber-800',
-  Verified: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  'Needs Correction': 'border-rose-200 bg-rose-50 text-rose-800',
+  Pending: 'border-blue-200 bg-blue-50 text-blue-800',
+  Verified: 'border-blue-600 bg-blue-600 text-white',
+  'Needs Correction': 'border-blue-300 bg-white text-blue-900',
 }
 
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—'
@@ -142,18 +142,20 @@ export default function RequesterVerification() {
   return (
     <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search requester identity">
       <div className="mx-auto max-w-7xl space-y-5 pb-8">
-        <section className="rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-          <span className="inline-flex rounded-full border border-white/15 bg-white/8 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
+        <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+          <div className="relative">
+          <span className="inline-flex rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
             GSO identity checks
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Requester Verification</h1>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-            Review employee codes and staff details. Newly approved requesters without an existing Employee Master Data record are added automatically and can then submit service requests.
+            Check staff details and approve requester accounts before they can submit requests.
           </p>
           <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Employees and requester pages">
             <a
               href="/gso/employees"
-              className="rounded-xl border border-white/20 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               View Employees
             </a>
@@ -165,29 +167,30 @@ export default function RequesterVerification() {
               Requestors Verification
             </a>
           </nav>
+          </div>
         </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Verification summary">
         {[
-          { title: 'Pending Review', value: counts.pending, badge: 'Awaiting review', caption: 'requester accounts', icon: 'clock', tone: 'border-amber-100 bg-amber-50 text-amber-700 shadow-amber-900/5', badgeTone: 'bg-amber-50 text-amber-700' },
-          { title: 'Corrections Needed', value: counts.corrections, badge: 'Action required', caption: 'requester updates', icon: 'alert', tone: 'border-rose-100 bg-rose-50 text-rose-700 shadow-rose-900/5', badgeTone: 'bg-rose-50 text-rose-700' },
-          { title: 'Verified Staff', value: counts.verified, badge: 'GSO approved', caption: 'requester accounts', icon: 'check', tone: 'border-emerald-100 bg-emerald-50 text-emerald-700 shadow-emerald-900/5', badgeTone: 'bg-emerald-50 text-emerald-700' },
+          { title: 'Pending Review', value: counts.pending, badge: 'Awaiting review', caption: 'requester accounts', icon: 'clock', tone: 'border-blue-100 bg-white text-blue-700 shadow-blue-900/5', badgeTone: 'bg-blue-50 text-blue-700' },
+          { title: 'Corrections Needed', value: counts.corrections, badge: 'Action required', caption: 'requester updates', icon: 'alert', tone: 'border-blue-100 bg-white text-blue-700 shadow-blue-900/5', badgeTone: 'bg-blue-50 text-blue-700' },
+          { title: 'Verified Staff', value: counts.verified, badge: 'GSO approved', caption: 'requester accounts', icon: 'check', tone: 'border-blue-100 bg-white text-blue-700 shadow-blue-900/5', badgeTone: 'bg-blue-50 text-blue-700' },
         ].map((item) => (
-          <article key={item.title} className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+          <article key={item.title} className="flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-bold text-slate-500">{item.title}</p>
-                <p className="mt-2 text-3xl font-black tracking-tight text-slate-900">{item.value}</p>
+                <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">{item.title}</p>
+                <p className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{item.value}</p>
               </div>
-              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border shadow-sm ${item.tone}`}>
+              <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-xl border shadow-sm sm:h-10 sm:w-10 ${item.tone}`}>
               <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 {item.icon === 'clock' ? <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></> : item.icon === 'alert' ? <><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></> : <><circle cx="12" cy="12" r="9" /><path d="m8 12 2.5 2.5L16 9" /></>}
               </svg>
               </span>
             </div>
-            <div className="mt-4 flex items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-blue-200/50 pt-2 sm:mt-4 sm:pt-3">
               <span className={`rounded-lg px-2 py-0.5 text-[0.65rem] font-extrabold ${item.badgeTone}`}>{item.badge}</span>
-              <span className="text-[0.68rem] font-medium text-slate-400">{item.caption}</span>
+              <span className="text-[0.68rem] font-medium text-slate-500">{item.caption}</span>
             </div>
           </article>
         ))}
@@ -209,7 +212,7 @@ export default function RequesterVerification() {
         </div>
 
         {error && <div role="alert" className="mx-4 mt-4 flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700 sm:mx-5 sm:flex-row sm:items-center sm:justify-between"><span>{error}</span><button type="button" onClick={() => retryDecision ? void decide(retryDecision.profile, retryDecision.status) : void loadProfiles()} disabled={loading || busyId !== null} className="shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-extrabold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60">{busyId !== null ? 'Retrying…' : retryDecision ? retryDecision.status === 'Verified' ? 'Retry approval' : 'Retry correction' : loading ? 'Checking connection…' : 'Retry connection'}</button></div>}
-        {notice && <p role="status" className="mx-4 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800 sm:mx-5">{notice}</p>}
+        {notice && <p role="status" className="mx-4 mt-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-800 sm:mx-5">{notice}</p>}
         {loading && <p className="p-8 text-center text-sm font-semibold text-slate-500">Loading requester profiles…</p>}
         {!loading && !filteredProfiles.length && (
           <div className="px-5 py-12 text-center">
@@ -246,24 +249,24 @@ export default function RequesterVerification() {
                     ['Contact number', profile.contactNumber],
                   ].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 px-3 py-2.5"><dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-1 wrap-break-word text-xs font-bold text-slate-800">{value}</dd></div>)}
                 </dl>
-                <div className={`mt-3 rounded-xl border p-3 ${profile.employeeRecordMatch ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
-                  <p className={`text-xs font-extrabold ${profile.employeeRecordMatch ? 'text-emerald-900' : 'text-amber-950'}`}>{profile.employeeRecordMatch ? 'Employee Master Data match found' : profile.matchedEmployeeCode ? 'Employee Master Data record needs manual review' : 'New employee record will be created after approval'}</p>
+                <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3">
+                  <p className="text-xs font-extrabold text-blue-950">{profile.employeeRecordMatch ? 'Employee Master Data match found' : profile.matchedEmployeeCode ? 'Employee Master Data record needs manual review' : 'New employee record will be created after approval'}</p>
                   {profile.matchedEmployeeCode && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-700">Record: {profile.matchedEmployeeCode} · {profile.matchedDepartment || 'No department'} · {profile.matchedPosition || 'No position'} · {profile.matchedEmail || 'No email'} · {profile.matchedEmployeeStatus || 'No status'}</p>}
-                  {!profile.matchedEmployeeCode && <p className="mt-1 text-[0.68rem] leading-relaxed text-amber-900">No existing employee code matched. If approved, the system will create an employee profile using the verified requester details.</p>}
+                  {!profile.matchedEmployeeCode && <p className="mt-1 text-[0.68rem] leading-relaxed text-blue-800">No existing employee code matched. If approved, the system will create an employee profile using the verified requester details.</p>}
                 </div>
                 {profile.status !== 'Verified' && !profile.matchedEmployeeCode && <section className="mt-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3.5">
                   <div className="mb-3"><p className="text-xs font-extrabold text-blue-950">Department and position master data</p><p className="mt-1 text-[0.68rem] leading-relaxed text-blue-800">Use a saved option, or approve the requester’s suggestion and add it to the shared list.</p></div>
-                  {masterDataError && <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[0.65rem] font-semibold leading-relaxed text-amber-800">{masterDataError}</p>}
+                  {masterDataError && <p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[0.65rem] font-semibold leading-relaxed text-rose-700">{masterDataError}</p>}
                   <label className="mb-3 block"><span className="mb-1.5 block text-[0.65rem] font-extrabold text-slate-700">Department / office</span><select value={masterChoice(profile.department, masterDepartments, departmentChoices[key])} onChange={(event) => setDepartmentChoices((current) => ({ ...current, [key]: event.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"><option value={ADD_PROPOSED_VALUE}>Approve as new: {profile.department}</option>{masterDepartments.map((department) => <option key={department} value={department}>{department}{department.trim().toLowerCase() === profile.department.trim().toLowerCase() ? ' (matches request)' : ''}</option>)}</select></label>
                   <label className="block"><span className="mb-1.5 block text-[0.65rem] font-extrabold text-slate-700">Position</span><select value={masterChoice(profile.position, masterPositions, positionChoices[key])} onChange={(event) => setPositionChoices((current) => ({ ...current, [key]: event.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"><option value={ADD_PROPOSED_VALUE}>Approve as new: {profile.position}</option>{masterPositions.map((position) => <option key={position} value={position}>{position}{position.trim().toLowerCase() === profile.position.trim().toLowerCase() ? ' (matches request)' : ''}</option>)}</select></label>
                 </section>}
                 <p className="mt-2 text-[0.65rem] text-slate-400">Submitted {formatDate(profile.submittedAt)}{profile.reviewedAt ? ` · Last reviewed ${formatDate(profile.reviewedAt)}` : ''}</p>
-                {profile.reviewNote && <p className="mt-2 text-xs font-semibold text-rose-700">Previous GSO note: {profile.reviewNote}</p>}
+                {profile.reviewNote && <p className="mt-2 text-xs font-semibold text-blue-800">Previous GSO note: {profile.reviewNote}</p>}
               </div>
 
               {profile.status !== 'Verified' && <div className="w-full xl:max-w-xs">
                 <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-slate-600">Review note <span className="font-medium text-slate-400">(required for correction or manual verification)</span></span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="Tell the requester what to correct, or add the basis for a manual verification." className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label>
-                <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => void decide(profile, 'Needs Correction')} disabled={isBusy} className="rounded-xl border border-rose-200 px-3 py-2.5 text-xs font-extrabold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">Needs correction</button><button type="button" onClick={() => void decide(profile, 'Verified')} disabled={isBusy} className="rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-extrabold text-white transition hover:bg-emerald-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Verify requester'}</button></div>
+                <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => void decide(profile, 'Needs Correction')} disabled={isBusy} className="rounded-xl border border-blue-200 bg-white px-3 py-2.5 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50">Needs correction</button><button type="button" onClick={() => void decide(profile, 'Verified')} disabled={isBusy} className="rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Verify requester'}</button></div>
               </div>}
             </div>
           </article>

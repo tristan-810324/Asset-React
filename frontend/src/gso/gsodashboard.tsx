@@ -430,15 +430,15 @@ export default function GsoDashboard() {
               { label: 'Borrowing requests', value: borrowingCounts.pending, note: 'Awaiting decision', href: '/gso/requests-borrowing', icon: 'calendar' as const },
               { label: 'Ready for Main Issuance', value: readyForIssuance.length, note: 'Ready to issue', href: '/gso/main-issuance', icon: 'cube' as const },
             ].map((card) => (
-              <a key={card.label} href={card.href} className="group rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-50/60 via-white to-white p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-bold text-slate-500">{card.label}</p>
-                    <p className="mt-2.5 text-4xl font-black tracking-tight text-slate-900">{card.value}</p>
-                    <p className="mt-1.5 text-xs font-medium text-slate-500">{card.note}</p>
+              <a key={card.label} href={card.href} className="group flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">{card.label}</p>
+                    <p className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{card.value}</p>
                   </div>
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm"><Icon name={card.icon} className="h-4 w-4" /></span>
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><Icon name={card.icon} className="h-4 w-4 sm:h-5 sm:w-5" /></span>
                 </div>
+                <p className="mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">{card.note}</p>
               </a>
             ))}
           </section>

@@ -1735,6 +1735,34 @@ export default function ItemsMasterData() {
   const editFieldLabelClass = 'mb-2 block text-sm font-extrabold text-slate-900'
   const editControlClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 
+  // Summary tiles count the whole saved list, so they stay the same while the table filters change.
+  const summaryTiles = [
+    {
+      label: 'Item records',
+      value: items.length,
+      hint: 'Saved in the master list',
+      icon: <><path d="M21 8 12 3 3 8v8l9 5 9-5V8z" /><path d="m3 8 9 5 9-5M12 13v8" /></>,
+    },
+    {
+      label: 'Ready to issue',
+      value: items.filter((item) => Number(item.availableQuantity) > 0).length,
+      hint: 'Records with stock available now',
+      icon: <><circle cx="12" cy="12" r="9" /><path d="m8.5 12.2 2.3 2.3 4.7-4.9" /></>,
+    },
+    {
+      label: 'Issued or borrowed',
+      value: items.filter((item) => item.status === 'Issued' || item.status === 'Borrowed').length,
+      hint: 'Records currently with a holder',
+      icon: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+    },
+    {
+      label: 'Needs attention',
+      value: items.filter((item) => /repair|maintenance/i.test(item.condition) || item.condition === 'Unserviceable').length,
+      hint: 'For repair, maintenance, or unserviceable',
+      icon: <><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></>,
+    },
+  ]
+
   return (
     <GsoPageFrame
       activePage="Item Master Data"
@@ -1745,7 +1773,7 @@ export default function ItemsMasterData() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
+            <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
               Inventory workspace
             </span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Item Master Data</h1>
@@ -1766,6 +1794,23 @@ export default function ItemsMasterData() {
             + Add & Overview
           </button>
         </div>
+      </section>
+
+      <section aria-label="Inventory summary" className="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4 lg:gap-4">
+        {summaryTiles.map((tile) => (
+          <article key={tile.label} className="flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">{tile.label}</p>
+                <p className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{tile.value.toLocaleString('en-PH')}</p>
+              </div>
+              <span aria-hidden="true" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10">
+                <svg className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{tile.icon}</svg>
+              </span>
+            </div>
+            <p className="mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">{tile.hint}</p>
+          </article>
+        ))}
       </section>
 
       {/* TAB 1: ADD ITEM FORM SECTION */}

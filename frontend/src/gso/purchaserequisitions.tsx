@@ -73,7 +73,7 @@ function QueueStageSelector({ active, counts, onChange }: { active: Tab; counts:
   return <div className="grid grid-cols-2 gap-2 lg:grid-cols-2" role="group" aria-label="Filter requisition queue">
     {TAB_ORDER.map((key) => {
       const selected = key === active
-      return <button key={key} type="button" aria-pressed={selected} onClick={() => onChange(key)} className={`rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}>
+      return <button key={key} type="button" aria-pressed={selected} onClick={() => onChange(key)} className={`rounded-xl border-2 p-3 text-left shadow-md transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-300/80 bg-white shadow-slate-300/35 ring-1 ring-slate-900/5 hover:border-blue-300 hover:bg-blue-50/40'}`}>
         <span className={`block text-xs font-extrabold ${selected ? 'text-blue-800' : 'text-slate-900'}`}>{TABS[key].label}</span>
         <span className={`mt-1 block text-[0.68rem] font-semibold ${selected ? 'text-blue-700' : 'text-slate-500'}`}>{counts[key]} {TABS[key].unit}{counts[key] === 1 ? '' : 's'}</span>
       </button>

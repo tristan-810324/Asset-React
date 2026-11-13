@@ -82,7 +82,7 @@ function actionsFor(request: ServiceRequest): Action[] {
 const actionClass = (tone: Action['tone']) => {
   if (tone === 'primary') return 'bg-blue-600 text-white shadow-md shadow-blue-600/20 hover:bg-blue-700'
   if (tone === 'danger') return 'border border-rose-200 bg-white text-rose-700 hover:bg-rose-50'
-  return 'border border-slate-200 bg-white text-slate-700 hover:border-blue-200 hover:text-blue-700'
+  return 'border-2 border-slate-300 bg-white text-slate-700 hover:border-blue-300 hover:text-blue-800'
 }
 
 function InspectReturnDialog({ request, assets, busy, error, onCancel, onConfirm }: {
@@ -125,8 +125,8 @@ function InspectReturnDialog({ request, assets, busy, error, onCancel, onConfirm
           {assets.map((asset) => (
             <div key={asset.id} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50/70 p-3 sm:grid-cols-[1fr_11rem] sm:items-center">
               <div className="min-w-0">
-                <p className="wrap-break-word text-xs font-extrabold text-slate-800">{asset.itemName}</p>
-                <p className="mt-1 text-[0.64rem] font-semibold text-slate-500">{asset.itemCode} · {asset.quantity} {asset.unitOfMeasure}</p>
+                <p className="wrap-break-word text-sm font-extrabold text-slate-900">{asset.itemName}</p>
+                <p className="mt-1 text-xs font-semibold text-slate-600">{asset.itemCode} · {asset.quantity} {asset.unitOfMeasure}</p>
               </div>
               <label>
                 <span className="sr-only">Returned condition of {asset.itemName}</span>
@@ -140,8 +140,8 @@ function InspectReturnDialog({ request, assets, busy, error, onCancel, onConfirm
         </div>
 
         <label className="mt-4 block">
-          <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Note {damaged ? '(required)' : '(optional)'}</span>
-          <textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} placeholder={damaged ? 'Describe the damage or missing part.' : 'Add a note if needed.'} className="min-h-20 w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-xs font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+          <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700">Note {damaged ? '(required)' : '(optional)'}</span>
+          <textarea value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} placeholder={damaged ? 'Describe the damage or missing part.' : 'Add a note if needed.'} className="min-h-20 w-full resize-y rounded-xl border-2 border-slate-300 bg-white p-3 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
         </label>
 
         {(localError || error) && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-bold text-rose-700">{localError || error}</p>}
@@ -297,63 +297,78 @@ export default function BorrowingPage() {
       </section>
 
       <section className="mt-5 grid gap-3 sm:grid-cols-3" aria-label="Borrowing summary">
-        <button type="button" onClick={() => showView('incoming')} aria-pressed={view === 'incoming'} className={`rounded-2xl border-2 p-4 text-left shadow-md shadow-slate-300/35 transition ${view === 'incoming' ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5 hover:border-blue-200'}`}>
-          <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Incoming</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{incomingRequests.length}</p>
-          <p className="mt-1 text-xs font-medium text-slate-500">Waiting for a decision</p>
+        <button type="button" onClick={() => showView('incoming')} aria-pressed={view === 'incoming'} className={`flex flex-col justify-between rounded-2xl border-2 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 text-left shadow-md shadow-slate-300/35 transition hover:shadow-lg hover:shadow-blue-950/15 sm:p-4 ${view === 'incoming' ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-300/80 ring-1 ring-slate-900/5 hover:border-blue-300'}`}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">Incoming</p>
+              <p className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{incomingRequests.length}</p>
+            </div>
+            <span aria-hidden="true" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><svg className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg></span>
+          </div>
+          <p className="mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">Waiting for a decision</p>
         </button>
-        <button type="button" onClick={() => { showView('active'); setOverdueOnly(true) }} className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 text-left shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-rose-200">
-          <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Overdue</p>
-          <p className={`mt-1 text-2xl font-black ${overdueCount > 0 ? 'text-rose-700' : 'text-slate-900'}`}>{overdueCount}</p>
-          <p className="mt-1 text-xs font-medium text-slate-500">Past the return date</p>
+        <button type="button" onClick={() => { showView('active'); setOverdueOnly(true) }} className="flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 text-left shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">Overdue</p>
+              <p className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{overdueCount}</p>
+            </div>
+            <span aria-hidden="true" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><svg className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16h.01" /></svg></span>
+          </div>
+          <p className="mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">Past the return date</p>
         </button>
-        <button type="button" onClick={() => showView('active')} aria-pressed={view === 'active' && !overdueOnly} className={`rounded-2xl border-2 p-4 text-left shadow-md shadow-slate-300/35 transition ${view === 'active' && !overdueOnly ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5 hover:border-blue-200'}`}>
-          <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Out now</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{activeRequests.length}</p>
-          <p className="mt-1 text-xs font-medium text-slate-500">{activeUnitCount} unit{activeUnitCount === 1 ? '' : 's'} borrowed</p>
+        <button type="button" onClick={() => showView('active')} aria-pressed={view === 'active' && !overdueOnly} className={`flex flex-col justify-between rounded-2xl border-2 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 text-left shadow-md shadow-slate-300/35 transition hover:shadow-lg hover:shadow-blue-950/15 sm:p-4 ${view === 'active' && !overdueOnly ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-300/80 ring-1 ring-slate-900/5 hover:border-blue-300'}`}>
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[0.65rem] font-bold text-slate-500 sm:text-xs">Out now</p>
+              <p className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:mt-2 sm:text-3xl">{activeRequests.length}</p>
+            </div>
+            <span aria-hidden="true" className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-blue-100 bg-white text-blue-700 shadow-sm shadow-blue-900/5 sm:h-10 sm:w-10"><svg className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z" /><path d="m3 8 9 5 9-5M12 13v8" /></svg></span>
+          </div>
+          <p className="mt-2 border-t border-blue-200/50 pt-2 text-[0.62rem] font-medium text-slate-500 sm:mt-4 sm:pt-3 sm:text-[0.68rem]">{activeUnitCount} unit{activeUnitCount === 1 ? '' : 's'} borrowed</p>
         </button>
       </section>
 
       <section className="mt-5 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="borrowing-queue-title">
-        <div className="border-b border-slate-100 bg-slate-50/65 px-4 py-4 sm:px-5">
+        <div className="border-b border-blue-100 bg-blue-50/50 px-4 py-4 sm:px-5">
           <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
             <div>
               <h2 id="borrowing-queue-title" className="text-lg font-black tracking-tight text-slate-900">{view === 'incoming' ? 'Incoming requests' : overdueOnly ? 'Overdue borrowings' : 'Items out now'}</h2>
-              <p className="mt-1 text-xs text-slate-500">{view === 'incoming' ? 'Approve a request to release the item.' : 'Inspect each item when it is returned.'}</p>
+              <p className="mt-1 text-sm text-slate-600">{view === 'incoming' ? 'Approve a request to release the item.' : 'Inspect each item when it is returned.'}</p>
             </div>
-            <button type="button" onClick={() => void loadRequests()} disabled={loading} className="self-start rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-700 disabled:cursor-wait disabled:opacity-60 lg:self-auto">
+            <button type="button" onClick={() => void loadRequests()} disabled={loading} className="self-start rounded-xl border-2 border-slate-300 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-wait disabled:opacity-60 lg:self-auto">
               {loading ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
-                <button type="button" onClick={() => showView('incoming')} aria-pressed={view === 'incoming'} className={`rounded-lg px-3 py-2 text-xs font-extrabold transition ${view === 'incoming' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}>Incoming</button>
-                <button type="button" onClick={() => showView('active')} aria-pressed={view === 'active'} className={`rounded-lg px-3 py-2 text-xs font-extrabold transition ${view === 'active' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}>Active</button>
+              <div className="inline-flex rounded-xl border-2 border-slate-300 bg-white p-1">
+                <button type="button" onClick={() => showView('incoming')} aria-pressed={view === 'incoming'} className={`rounded-lg px-3 py-2 text-xs font-extrabold transition ${view === 'incoming' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-800'}`}>Incoming</button>
+                <button type="button" onClick={() => showView('active')} aria-pressed={view === 'active'} className={`rounded-lg px-3 py-2 text-xs font-extrabold transition ${view === 'active' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-800'}`}>Active</button>
               </div>
-              {view === 'active' && <button type="button" onClick={() => setOverdueOnly((current) => !current)} aria-pressed={overdueOnly} className={`rounded-xl border px-3 py-2 text-xs font-extrabold transition ${overdueOnly ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-200 bg-white text-slate-600 hover:border-rose-200'}`}>Overdue only</button>}
+              {view === 'active' && <button type="button" onClick={() => setOverdueOnly((current) => !current)} aria-pressed={overdueOnly} className={`rounded-xl border-2 px-3 py-2 text-xs font-extrabold transition ${overdueOnly ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-300 bg-white text-slate-700 hover:border-rose-200'}`}>Overdue only</button>}
             </div>
-            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search reference, requester, or item" aria-label="Search borrowing requests" className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100 sm:max-w-xs" />
+            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search reference, requester, or item" aria-label="Search borrowing requests" className="h-10 w-full rounded-xl border-2 border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-900 shadow-sm outline-none placeholder:text-slate-500 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 sm:max-w-xs" />
           </div>
         </div>
 
         {error && !inspecting && <p role="alert" className="mx-4 mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-bold text-rose-700 sm:mx-5">{error}</p>}
-        {message && <p role="status" className="mx-4 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs font-bold text-emerald-700 sm:mx-5">{message}</p>}
+        {message && <p role="status" className="mx-4 mt-4 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-3 text-sm font-bold text-blue-800 sm:mx-5">{message}</p>}
 
         <div className="grid min-w-0 xl:grid-cols-[0.92fr_1.08fr]">
           <div className="min-w-0 border-b border-slate-100 p-4 sm:p-5 xl:border-b-0 xl:border-r">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-500">{view === 'incoming' ? 'Requests' : 'Borrowed items'}</h3>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-slate-700">{visibleRequests.length}</span>
+              <h3 className="text-xs font-extrabold uppercase tracking-wide text-blue-700">{view === 'incoming' ? 'Requests' : 'Borrowed items'}</h3>
+              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-extrabold text-blue-700">{visibleRequests.length}</span>
             </div>
-            <div className="inventory-list-scrollbar mt-3 max-h-160 overflow-y-auto rounded-xl border border-slate-100">
+            <div className="inventory-list-scrollbar mt-3 max-h-160 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
               {loading ? (
                 <div className="grid min-h-48 place-items-center px-5 text-center text-xs font-semibold text-slate-400">Loading…</div>
               ) : visibleRequests.length === 0 ? (
                 <div className="grid min-h-48 place-items-center px-5 text-center">
                   <div>
                     <p className="text-sm font-extrabold text-slate-700">Nothing here yet</p>
-                    <p className="mt-1 text-xs text-slate-500">{view === 'incoming' ? 'New borrowing requests appear here.' : overdueOnly ? 'No overdue borrowings.' : 'Released items appear here until they are returned.'}</p>
+                    <p className="mt-1 text-sm text-slate-600">{view === 'incoming' ? 'New borrowing requests appear here.' : overdueOnly ? 'No overdue borrowings.' : 'Released items appear here until they are returned.'}</p>
                   </div>
                 </div>
               ) : visibleRequests.map((request) => {
@@ -361,16 +376,16 @@ export default function BorrowingPage() {
                 const isSelected = selected?.id === request.id
                 const overdue = isOverdue(request)
                 return (
-                  <button key={request.id} type="button" onClick={() => selectRequest(request.id)} aria-pressed={isSelected} className={`block w-full border-b border-slate-100 p-3.5 text-left transition last:border-0 ${isSelected ? 'bg-blue-50/80 ring-1 ring-inset ring-blue-500' : 'bg-white hover:bg-blue-50/50'}`}>
+                  <button key={request.id} type="button" onClick={() => selectRequest(request.id)} aria-pressed={isSelected} className={`block w-full rounded-xl border-2 p-3.5 text-left transition ${isSelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-300/80 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-black text-slate-900">{request.referenceNo}</p>
-                        <p className="mt-1 truncate text-[0.7rem] font-bold text-slate-700">{request.requesterName}</p>
+                        <p className="truncate text-sm font-black text-slate-900">{request.referenceNo}</p>
+                        <p className="mt-1 truncate text-xs font-bold text-slate-700">{request.requesterName}</p>
                       </div>
-                      <span className={`shrink-0 rounded-full px-2 py-1 text-[0.58rem] font-extrabold ${overdue ? 'bg-rose-50 text-rose-700' : statusTone(request.status)}`}>{overdue ? 'Overdue' : request.status}</span>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${overdue ? 'bg-rose-50 text-rose-700' : statusTone(request.status)}`}>{overdue ? 'Overdue' : request.status}</span>
                     </div>
-                    <p className="mt-2 truncate text-[0.64rem] font-semibold text-slate-500">{itemSummary || 'No items'}</p>
-                    <p className="mt-1 text-[0.6rem] font-medium text-slate-400">{view === 'active' ? `Return by ${formatDate(dueDateOf(request))}` : `Submitted ${formatDate(request.createdAt)}`}</p>
+                    <p className="mt-2 truncate text-xs font-semibold text-slate-600">{itemSummary || 'No items'}</p>
+                    <p className="mt-1 text-[0.7rem] font-medium text-slate-500">{view === 'active' ? `Return by ${formatDate(dueDateOf(request))}` : `Submitted ${formatDate(request.createdAt)}`}</p>
                   </button>
                 )
               })}
@@ -379,32 +394,32 @@ export default function BorrowingPage() {
 
           <div className="min-w-0 p-4 sm:p-5">
             {!selected ? (
-              <div className="grid min-h-96 place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 text-center">
+              <div className="grid min-h-96 place-items-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-5 text-center">
                 <div>
                   <span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl bg-blue-50 text-xl font-black text-blue-600">↗</span>
                   <p className="mt-3 text-sm font-extrabold text-slate-700">Select a borrowing</p>
-                  <p className="mt-1 text-xs text-slate-500">Details and actions appear here.</p>
+                  <p className="mt-1 text-sm text-slate-600">Details and actions appear here.</p>
                 </div>
               </div>
             ) : (
               <div>
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-4">
                   <div className="min-w-0">
-                    <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">Borrowing</p>
+                    <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-blue-700">Borrowing</p>
                     <h3 className="mt-1 text-lg font-black text-slate-900">{selected.referenceNo}</h3>
-                    <p className="mt-1 wrap-break-word text-xs font-semibold text-slate-600">{selected.requesterName} · {selected.requesterEmail}</p>
-                    <p className="mt-1 text-[0.62rem] text-slate-400">Submitted {formatDateTime(selected.createdAt)}</p>
+                    <p className="mt-1 wrap-break-word text-sm font-semibold text-slate-700">{selected.requesterName} · {selected.requesterEmail}</p>
+                    <p className="mt-1 text-xs text-slate-500">Submitted {formatDateTime(selected.createdAt)}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {isOverdue(selected) && <span className="rounded-full bg-rose-50 px-2.5 py-1.5 text-[0.62rem] font-extrabold text-rose-700">Overdue</span>}
-                    <span className={`rounded-full px-2.5 py-1.5 text-[0.62rem] font-extrabold ${statusTone(selected.status)}`}>{selected.status}</span>
+                    {isOverdue(selected) && <span className="rounded-full bg-rose-50 px-2.5 py-1.5 text-xs font-extrabold text-rose-700">Overdue</span>}
+                    <span className={`rounded-full px-2.5 py-1.5 text-xs font-extrabold ${statusTone(selected.status)}`}>{selected.status}</span>
                   </div>
                 </div>
 
                 <BorrowingPath status={selected.status} />
 
                 <section className="mt-4" aria-labelledby="borrow-plan-title">
-                  <h4 id="borrow-plan-title" className="text-xs font-extrabold text-slate-800">Details</h4>
+                  <h4 id="borrow-plan-title" className="text-sm font-black text-slate-900">Details</h4>
                   <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                     {[
                       ['Date needed', formatDate(textValue(selected, 'neededDate'))],
@@ -414,25 +429,25 @@ export default function BorrowingPage() {
                       ['Return contact', textValue(selected, 'returnResponsibleName') || selected.requesterName],
                       ['Contact number', textValue(selected, 'returnResponsibleContact') || 'Not provided'],
                     ].map(([label, value]) => (
-                      <div key={label} className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
-                        <dt className="text-[0.56rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt>
-                        <dd className="mt-1 wrap-break-word text-xs font-semibold leading-relaxed text-slate-700">{value}</dd>
+                      <div key={label} className="min-w-0 rounded-xl border-2 border-slate-300/80 bg-white p-3 shadow-sm">
+                        <dt className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-600">{label}</dt>
+                        <dd className="mt-1 wrap-break-word text-sm font-semibold leading-relaxed text-slate-800">{value}</dd>
                       </div>
                     ))}
                   </dl>
-                  {textValue(selected, 'remarks') && <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50/70 p-3"><p className="text-[0.56rem] font-extrabold uppercase tracking-wide text-slate-400">Additional details</p><p className="mt-1 wrap-break-word text-xs font-semibold leading-relaxed text-slate-700">{textValue(selected, 'remarks')}</p></div>}
+                  {textValue(selected, 'remarks') && <div className="mt-2 rounded-xl border-2 border-slate-300/80 bg-white p-3 shadow-sm"><p className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-600">Additional details</p><p className="mt-1 wrap-break-word text-sm font-semibold leading-relaxed text-slate-800">{textValue(selected, 'remarks')}</p></div>}
                 </section>
 
                 <section className="mt-4 border-t border-slate-100 pt-4" aria-labelledby="borrowed-items-title">
-                  <h4 id="borrowed-items-title" className="text-xs font-extrabold text-slate-800">Items</h4>
+                  <h4 id="borrowed-items-title" className="text-sm font-black text-slate-900">Items</h4>
                   <div className="mt-3 space-y-2">
                     {selected.assets.map((asset) => (
-                      <div key={asset.id} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white p-3">
+                      <div key={asset.id} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border-2 border-slate-300/80 bg-white p-3 shadow-sm">
                         <div className="min-w-0">
-                          <p className="wrap-break-word text-xs font-extrabold text-slate-800">{asset.itemName}</p>
-                          <p className="mt-1 text-[0.64rem] font-semibold text-slate-500">{asset.itemCode} · {asset.quantity} {asset.unitOfMeasure}</p>
+                          <p className="wrap-break-word text-sm font-extrabold text-slate-900">{asset.itemName}</p>
+                          <p className="mt-1 text-xs font-semibold text-slate-600">{asset.itemCode} · {asset.quantity} {asset.unitOfMeasure}</p>
                         </div>
-                        <div className="text-right text-[0.62rem] font-semibold text-slate-500">
+                        <div className="text-right text-xs font-semibold text-slate-600">
                           {asset.issuedAt && <p>Released {formatDate(asset.issuedAt)}</p>}
                           {asset.returnedAt ? <p className="mt-1 text-emerald-700">Returned {formatDate(asset.returnedAt)}</p> : asset.conditionOut && <p className="mt-1">Out in {asset.conditionOut} condition</p>}
                         </div>
@@ -444,28 +459,28 @@ export default function BorrowingPage() {
                 {selected.status === 'For Repair' && <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-relaxed text-rose-900"><span className="font-extrabold">Sent for repair.</span> Track it in <a href="/gso/to-be-repaired" className="font-extrabold text-blue-700 underline">Repair &amp; Maintenance</a>.</div>}
 
                 {selected.history.length > 0 && <section className="mt-4 border-t border-slate-100 pt-4" aria-labelledby="borrow-history-title">
-                  <h4 id="borrow-history-title" className="text-xs font-extrabold text-slate-800">Recent activity</h4>
+                  <h4 id="borrow-history-title" className="text-sm font-black text-slate-900">Recent activity</h4>
                   <ul className="mt-3 space-y-2">
-                    {[...selected.history].slice(-3).reverse().map((event) => <li key={event.id} className="rounded-xl bg-slate-50 px-3 py-2.5"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[0.68rem] font-extrabold text-slate-800">{event.status}</span><span className="text-[0.58rem] font-semibold text-slate-400">{formatDateTime(event.changedAt)}</span></div>{event.note && <p className="mt-1 text-[0.65rem] leading-relaxed text-slate-600">{event.note}</p>}</li>)}
+                    {[...selected.history].slice(-3).reverse().map((event) => <li key={event.id} className="rounded-xl border-2 border-slate-300/80 bg-white px-3 py-2.5 shadow-sm"><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-extrabold text-slate-900">{event.status}</span><span className="text-[0.65rem] font-semibold text-slate-500">{formatDateTime(event.changedAt)}</span></div>{event.note && <p className="mt-1 text-xs leading-relaxed text-slate-700">{event.note}</p>}</li>)}
                   </ul>
                 </section>}
 
-                {canInspect && <section className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
-                  <p className="text-xs font-semibold text-slate-700">Item back from the borrower?</p>
+                {canInspect && <section className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-blue-200 bg-blue-50/60 p-4 shadow-sm">
+                  <p className="text-sm font-bold text-blue-950">Item back from the borrower?</p>
                   <button type="button" onClick={() => setInspecting(true)} disabled={Boolean(busyStatus) || openAssets.length === 0} className="rounded-xl bg-blue-600 px-3.5 py-2.5 text-xs font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">Inspect return</button>
                 </section>}
 
-                {selectedActions.length > 0 && <section className="mt-4 border-t border-slate-100 pt-4" aria-labelledby="borrow-actions-title">
-                  <h4 id="borrow-actions-title" className="text-xs font-extrabold text-slate-800">Decision</h4>
-                  <label className="mt-3 block"><span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Note {needsNote ? '(required)' : '(optional)'}</span><textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} maxLength={2000} className="min-h-20 w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-xs font-medium text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" placeholder={needsNote ? 'Explain what is needed or why it is declined.' : 'Add a note if needed.'} /></label>
+                {selectedActions.length > 0 && <section className="mt-4 border-t border-slate-200 pt-4" aria-labelledby="borrow-actions-title">
+                  <h4 id="borrow-actions-title" className="text-sm font-black text-slate-900">Decision</h4>
+                  <label className="mt-3 block"><span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700">Note {needsNote ? '(required)' : '(optional)'}</span><textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} maxLength={2000} className="min-h-20 w-full resize-y rounded-xl border-2 border-slate-300 bg-white p-3 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" placeholder={needsNote ? 'Explain what is needed or why it is declined.' : 'Add a note if needed.'} /></label>
 
-                  {needsRelease && <div className="mt-3 grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Return by</span><input type="date" min={today()} value={dueDate || dueDateOf(selected)} onChange={(event) => setDueDate(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 px-3 text-xs font-bold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label><label><span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Condition on release</span><select value={conditionOut} onChange={(event) => setConditionOut(event.target.value)} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-bold outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">{['New', 'Good', 'Fair'].map((condition) => <option key={condition}>{condition}</option>)}</select></label></div>}
+                  {needsRelease && <div className="mt-3 grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700">Return by</span><input type="date" min={today()} value={dueDate || dueDateOf(selected)} onChange={(event) => setDueDate(event.target.value)} className="h-10 w-full rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" /></label><label><span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700">Condition on release</span><select value={conditionOut} onChange={(event) => setConditionOut(event.target.value)} className="h-10 w-full rounded-xl border-2 border-slate-300 bg-white px-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100">{['New', 'Good', 'Fair'].map((condition) => <option key={condition}>{condition}</option>)}</select></label></div>}
 
                   <div className="mt-3 flex flex-wrap gap-2">
                     {selectedActions.filter((action) => action.tone !== 'secondary').map((action) => <button key={action.status} type="button" disabled={Boolean(busyStatus)} onClick={() => void changeStatus(action.status)} className={`rounded-xl px-3.5 py-2.5 text-xs font-extrabold transition disabled:cursor-wait disabled:opacity-60 ${actionClass(action.tone)}`}>{busyStatus === action.status ? 'Saving…' : action.label}</button>)}
                   </div>
-                  {selectedActions.some((action) => action.tone === 'secondary') && <details className="mt-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3">
-                    <summary className="cursor-pointer text-xs font-extrabold text-slate-600">More options</summary>
+                  {selectedActions.some((action) => action.tone === 'secondary') && <details className="mt-3 rounded-xl border-2 border-slate-300/80 bg-white p-3">
+                    <summary className="cursor-pointer text-sm font-bold text-slate-700">More options</summary>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {selectedActions.filter((action) => action.tone === 'secondary').map((action) => <button key={action.status} type="button" disabled={Boolean(busyStatus)} onClick={() => void changeStatus(action.status)} className={`rounded-xl px-3.5 py-2.5 text-xs font-extrabold transition disabled:cursor-wait disabled:opacity-60 ${actionClass(action.tone)}`}>{busyStatus === action.status ? 'Saving…' : action.label}</button>)}
                     </div>
