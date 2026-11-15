@@ -1,4 +1,5 @@
 import type { ServiceRequest } from './requesterApi'
+import { serviceStatusLabel } from './serviceWorkflow'
 
 export type DashboardRequestItem = {
   itemName: string
@@ -10,8 +11,12 @@ export type DashboardRequestItem = {
 }
 
 export function requestStatusLabel(request: ServiceRequest) {
+  if (request.requestType === 'JOB_REQUEST') return serviceStatusLabel(request.status)
   // Handed to the department but barcode labels still unprinted: not ready for pickup yet.
   if (request.requestType === 'PURCHASE_REQUISITION' && request.status === 'Ready for Pickup' && request.labelsAllPrinted === false) return 'Issued to department'
+  if (request.requestType === 'FACILITY_USE' && request.status === 'Issued') return 'Released'
+  if (request.requestType === 'FACILITY_USE' && request.status === 'For Repair' && request.assets.some((asset) => Number(asset.damagedQuantity || 0) > 0 && asset.conditionIn === 'Unserviceable' && asset.settlementStatus === 'Pending')) return 'Damage decision needed'
+  if (request.requestType === 'FACILITY_USE' && request.status === 'Returned' && request.assets.some((asset) => asset.settlementStatus === 'Pending')) return 'Missing items'
   if (request.status === 'Submitted' || request.status === 'Under Review') return 'Pending'
   if (request.status === 'GSO Endorsed') return 'Ready for Finance handoff'
   if (request.status === 'Finance Handoff Pending') return 'Preparing handoff'

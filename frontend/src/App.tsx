@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import AdminDashboard from './admin/admindashboard'
 import UserManagement from './admin/usermanagement'
+import AdminNotifications from './admin/notifications'
+import AdminProfile from './admin/profile'
 import AuditLogs from './admin/auditlogs'
 import ReturnsReview from './admin/returnsreview'
 import RequesterDashboard from './requesters/requesterdashboard'
@@ -25,12 +27,13 @@ import MainIssuance from './gso/mainissuance'
 import AssetLabels from './gso/assetlabels'
 import GsoPurchaseRequisitions from './gso/purchaserequisitions'
 import GsoProcurement from './gso/procurement'
-import BorrowingPage from './gso/borrowing'
+import ViewFacilities from './gso/viewfacilities'
+import FacilityRequests from './gso/facilityrequest'
 import IssuanceRecord from './gso/issuancerecord'
 import GsoHeadIssuanceRecord from './gsohead/issuancerecord'
 import ReturnItems from './gso/returnitems'
-import BorrowingReturns from './gso/borrowingreturns'
 import ToRepaired from './gso/torepaired'
+import LossDamageCases from './gso/lossdamagecases'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
 import Notifications from './gso/notifications'
@@ -40,6 +43,9 @@ import GsoHeadESignature from './gsohead/esignature'
 import RequesterVerification from './gso/requesterverification'
 import GsoAuditLogs from './gso/auditlogs'
 import GsoProfile from './gso/profilesettings'
+import ServiceWorkboard from './gso/serviceworkboard'
+import ITSSSupportQueue from './itstaff/itsssupportqueue'
+import AdminSupportQueue from './admin/supportqueue'
 
 
 
@@ -55,11 +61,14 @@ import LandingHome from './landing/home'
 import { ApiError, clearAuthSession, dashboardPathForRoles, getCurrentUser, hasAuthToken } from './auth/authApi'
 import USBScannerMonitor from './components/scanner/USBScannerMonitor'
 
-function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; children: ReactNode }) {
+function ProtectedDashboard({ requiredRole, children }: { requiredRole: string | string[]; children: ReactNode }) {
   const [status, setStatus] = useState<'checking' | 'ready' | 'error'>('checking')
+  // A string key keeps the check stable when a route passes a list of roles on every render.
+  const roleKey = Array.isArray(requiredRole) ? requiredRole.join(',') : requiredRole
 
   useEffect(() => {
     let active = true
+    const allowedRoles = roleKey.split(',')
 
     if (!hasAuthToken()) {
       window.location.replace('/login')
@@ -69,7 +78,7 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
     getCurrentUser()  
       .then((user) => {
         if (!active) return
-        if (user.roles.includes(requiredRole)) {
+        if (user.roles.some((role) => allowedRoles.includes(role))) {
           setStatus('ready')
           return
         }
@@ -92,7 +101,7 @@ function ProtectedDashboard({ requiredRole, children }: { requiredRole: string; 
       })
 
     return () => { active = false }
-  }, [requiredRole])
+  }, [roleKey])
 
   if (status === 'ready') {
     return (
@@ -128,6 +137,9 @@ export default function App() {
   if (path === '/admin' || path === '/admin/dashboard') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminDashboard /></ProtectedDashboard>
   }
+  if (path === '/admin/support-queue') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminSupportQueue /></ProtectedDashboard>
+  }
   if (path === '/admin/audit-logs') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AuditLogs /></ProtectedDashboard>
   }
@@ -137,8 +149,18 @@ export default function App() {
   if (path === '/admin/users') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><UserManagement /></ProtectedDashboard>
   }
+  if (path === '/admin/notifications') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminNotifications /></ProtectedDashboard>
+  }
+  if (path === '/admin/profile') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminProfile /></ProtectedDashboard>
+  }
   if (path === '/itss' || path === '/itss/dashboard') {
     return <ProtectedDashboard requiredRole="IT_STAFF"><ITStaffDashboard /></ProtectedDashboard>
+  }
+  if (path === '/itss/service-workboard') {
+    // Computer lab notifications link here for both IT Staff and IT Admin accounts.
+    return <ProtectedDashboard requiredRole={['IT_STAFF', 'IT_ADMIN']}><ITSSSupportQueue /></ProtectedDashboard>
   }
   if (path === '/gso-head' || path === '/gso-head/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadDashboard /></ProtectedDashboard>
@@ -201,14 +223,24 @@ export default function App() {
   if (path === '/gso/return-items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ReturnItems /></ProtectedDashboard>
   }
-  if (path === '/gso/borrowing-returns') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><BorrowingReturns /></ProtectedDashboard>
-  }
   if (path === '/gso/to-be-repaired') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ToRepaired /></ProtectedDashboard>
   }
-  if (path === '/gso/borrowing-requests' || path === '/gso/requests-borrowing') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><BorrowingPage /></ProtectedDashboard>
+  if (path === '/gso/loss-damage-cases') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><LossDamageCases /></ProtectedDashboard>
+  }
+  if (path === '/gso/facility-requests') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><FacilityRequests /></ProtectedDashboard>
+  }
+  if (path === '/gso/facilities-equipment') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><ViewFacilities /></ProtectedDashboard>
+  }
+  if (path === '/gso/service-workboard') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><ServiceWorkboard /></ProtectedDashboard>
+  }
+  if (path === '/gso/facility-reservations' || path === '/gso/facility-use-permits') {
+    window.location.replace('/gso')
+    return null
   }
   if (path === '/gso' || path === '/gso/dashboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoDashboard /></ProtectedDashboard>

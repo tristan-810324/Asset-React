@@ -6,6 +6,8 @@ const pool = require('./src/config/db');
 const app = require('./src/app');
 const issuancesService = require('./src/modules/issuances/issuances.service');
 const returnsService = require('./src/modules/issuances/returns.service');
+const facilityFlowService = require('./src/modules/requests/facility-flow.service');
+const serviceWorkOrdersService = require('./src/modules/requests/service-work-orders.service');
 
 async function startServer() {
   await pool.query('SELECT 1');
@@ -24,6 +26,12 @@ async function startServer() {
     });
     void returnsService.sendOverdueReminders().catch(() => {
       console.error('Could not send the overdue borrowing reminders.');
+    });
+    void facilityFlowService.sendFacilityOverdueReminders().catch(() => {
+      console.error('Could not send the overdue facility reminders.');
+    });
+    void serviceWorkOrdersService.runServiceWorkOrderAutomation().catch(() => {
+      console.error('Could not run the service job reminders and automatic closing.');
     });
   }, 60 * 1000);
   issuanceExpirySweep.unref();

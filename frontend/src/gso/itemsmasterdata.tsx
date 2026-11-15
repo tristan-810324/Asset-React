@@ -20,6 +20,7 @@ import {
   type InventoryCurrentBorrower,
   type InventoryItemRecord,
   type InventoryIssueBehavior,
+  type NewInventoryItem,
   type InventoryReceiptRecord,
   type InventoryTrackingMode,
   type PurchaseReadyRequest,
@@ -93,7 +94,7 @@ const addItemConditionOptions = ['New', 'Good', 'Fair']
 type UnitGroup = { label?: string; units: string[] }
 
 const perUnitAssetUnits: UnitGroup[] = [{ units: ['piece', 'set'] }]
-const reusableStockUnits: UnitGroup[] = [{ units: ['piece', 'set', 'pair'] }]
+const returnableStockUnits: UnitGroup[] = [{ units: ['piece', 'set', 'pair'] }]
 const consumableStockUnits: UnitGroup[] = [
   { label: 'Count', units: ['piece', 'pair'] },
   { label: 'Pack / container', units: ['box', 'pack', 'ream', 'pad', 'roll', 'bottle', 'can', 'tube', 'sack'] },
@@ -101,20 +102,20 @@ const consumableStockUnits: UnitGroup[] = [
 ]
 
 function inventoryTypeLabel(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
-  if (trackingMode === 'individual') return 'Individually tracked item'
-  return issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock'
+  if (trackingMode === 'individual') return 'Track each item separately'
+  return issueBehavior === 'consumable' ? 'Consumable stock' : 'Group stock (returned)'
 }
 
 function unitGroupsFor(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
   if (trackingMode === 'individual') return perUnitAssetUnits
-  return issueBehavior === 'consumable' ? consumableStockUnits : reusableStockUnits
+  return issueBehavior === 'consumable' ? consumableStockUnits : returnableStockUnits
 }
 
 function unitHintFor(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
-  if (trackingMode === 'individual') return 'Keep piece unless one barcode covers several parts, such as a desktop set.'
+  if (trackingMode === 'individual') return 'Use piece for one asset, or set when the set receives one barcode.'
   return issueBehavior === 'consumable'
-    ? 'Choose the smallest amount you give out. Example: ballpens bought by the box but given one at a time → piece.'
-    : 'Choose what you count when it comes back. Example: chairs → piece, sound system → set.'
+    ? 'Choose the smallest amount distributed, such as piece, pack, or liter. Consumable quantities are not expected back.'
+    : 'This existing returnable record keeps its original unit so its issue and return history stays accurate.'
 }
 
 // existingUnits keeps units already saved on records selectable, even when they are no longer offered for new stock.
@@ -254,6 +255,16 @@ function toneForCondition(condition: string) {
     Retired: 'bg-slate-100 text-slate-600',
   }
   return tones[condition] || 'bg-slate-100 text-slate-600'
+}
+
+function unserviceableUnitCount(item: Pick<InventoryItem, 'assetTags'>) {
+  return item.assetTags.filter((tag) => tag.condition === 'Unserviceable').length
+}
+
+function currentConditionForList(item: Pick<InventoryItem, 'condition' | 'assetTags'>) {
+  return item.assetTags.length > 0 && item.assetTags.every((tag) => tag.condition === 'Unserviceable')
+    ? 'Unserviceable'
+    : item.condition
 }
 
 function assignedCustodianForList(item: Pick<InventoryItem, 'assignedTo' | 'condition'>) {
@@ -734,7 +745,7 @@ function inventoryAvatarTone(index: number) {
     : 'border-[#17377f] bg-[#d6b333] text-[#17377f]'
 }
 
-function isReusableStock(item: Pick<InventoryItem, 'trackingMode' | 'issueBehavior'>) {
+function isLegacyReturnableStock(item: Pick<InventoryItem, 'trackingMode' | 'issueBehavior'>) {
   return item.trackingMode === 'quantity' && item.issueBehavior === 'returnable'
 }
 
@@ -765,7 +776,7 @@ function BorrowerDetail({ label, value }: { label: string; value: string }) {
   )
 }
 
-function ReusableStockStatus({ item }: { item: InventoryItem }) {
+function LegacyReturnableStockStatus({ item }: { item: InventoryItem }) {
   const total = Number(item.quantity) || 0
   const available = Number(item.availableQuantity) || 0
   const quantityIn = (state: InventoryCurrentBorrower['state']) => item.currentBorrowers
@@ -910,7 +921,7 @@ export default function ItemsMasterData() {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all')
   const [selectedItemNameFilter, setSelectedItemNameFilter] = useState('all')
   const [selectedConditionStatusFilter, setSelectedConditionStatusFilter] = useState('all')
-  const [selectedTrackingModeFilter, setSelectedTrackingModeFilter] = useState<'all' | 'individual' | 'consumable' | 'reusable'>('all')
+  const [selectedTrackingModeFilter, setSelectedTrackingModeFilter] = useState<'all' | 'individual' | 'consumable'>('all')
   const [selectedInventoryDate, setSelectedInventoryDate] = useState('')
 
   // Add Item form state
@@ -1112,7 +1123,7 @@ export default function ItemsMasterData() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
-    const resetsRestockTarget = name === 'trackingMode' || name === 'issueBehavior' || name === 'category' || ['itemName', 'description', 'unitOfMeasure', 'condition'].includes(name)
+    const resetsRestockTarget = name === 'trackingMode' || name === 'category' || ['itemName', 'description', 'unitOfMeasure', 'condition'].includes(name)
     if (resetsRestockTarget) {
       setBulkRestockItemId('')
     }
@@ -1122,17 +1133,15 @@ export default function ItemsMasterData() {
     setFormData((previous) => {
       const next = { ...previous, [name]: value }
       if (name === 'trackingMode') {
-        next.trackingMode = value === 'quantity' ? 'quantity' : 'individual'
-        next.issueBehavior = next.trackingMode === 'quantity' ? 'consumable' : 'returnable'
-      }
-      if (name === 'issueBehavior') {
+        // Radio values: individual, group (quantity kept and returned after use), consumable.
+        next.trackingMode = value === 'individual' ? 'individual' : 'quantity'
         next.issueBehavior = value === 'consumable' ? 'consumable' : 'returnable'
       }
       if (name === 'category') {
         next.itemName = ''
         next.itemCode = nextInventoryItemCode(value, items)
       }
-      if (['category', 'itemName', 'trackingMode', 'issueBehavior'].includes(name)) {
+      if (['category', 'itemName', 'trackingMode'].includes(name)) {
         next.unitOfMeasure = unitAfterStockChange(previous, next, items)
       }
       if (name === 'description') {
@@ -1375,9 +1384,6 @@ export default function ItemsMasterData() {
         next.trackingMode = value === 'quantity' ? 'quantity' : 'individual'
         next.issueBehavior = next.trackingMode === 'quantity' ? 'consumable' : 'returnable'
       }
-      if (name === 'issueBehavior') {
-        next.issueBehavior = value === 'consumable' ? 'consumable' : 'returnable'
-      }
       if (name === 'unitCost' || name === 'quantity') {
         const nextUnitCost = name === 'unitCost' ? value : current.unitCost
         const nextQuantity = name === 'quantity' ? value : current.quantity
@@ -1462,7 +1468,9 @@ export default function ItemsMasterData() {
         itemName: editFormData.itemName.trim(),
         description: editFormData.description.trim(),
         trackingMode: editFormData.trackingMode,
-        issueBehavior: editFormData.trackingMode === 'individual' ? 'returnable' : editFormData.issueBehavior,
+        issueBehavior: editFormData.trackingMode === 'individual'
+          ? 'returnable'
+          : isLegacyReturnableStock(selectedItem) ? 'returnable' : 'consumable',
         dateAcquired: editFormData.dateAcquired,
         timeAcquired: editFormData.timeAcquired,
         unitCost,
@@ -1574,13 +1582,13 @@ export default function ItemsMasterData() {
       if (itemCodes.length !== codeCount) {
         throw new Error('Unable to generate item codes. Please check the quantity and try again.')
       }
-      const newInventoryRecords = itemCodes.map((itemCode) => ({
+      const newInventoryRecords: NewInventoryItem[] = itemCodes.map((itemCode) => ({
         itemCode,
         category: formData.category,
         itemName: formData.itemName.trim(),
         description: formData.description.trim(),
         trackingMode: formData.trackingMode,
-        issueBehavior: isIndividualTracking ? 'returnable' : formData.issueBehavior,
+        issueBehavior: formData.issueBehavior,
         storageLocation: 'GSO Storage',
         receiptReference: formData.receiptReference.trim(),
         dateAcquired: formData.dateAcquired,
@@ -1651,11 +1659,11 @@ export default function ItemsMasterData() {
       || item.name.toLocaleLowerCase() === selectedItemNameFilter.toLocaleLowerCase()
     const [conditionStatusType, conditionStatusValue] = selectedConditionStatusFilter.split(':', 2)
     const matchesCondition = conditionStatusType !== 'condition' || item.condition === conditionStatusValue
+      || (conditionStatusValue === 'Unserviceable' && unserviceableUnitCount(item) > 0)
     const matchesStatus = conditionStatusType !== 'status' || item.status === conditionStatusValue
     const matchesTrackingMode = selectedTrackingModeFilter === 'all'
       || (selectedTrackingModeFilter === 'individual' && item.trackingMode === 'individual')
       || (selectedTrackingModeFilter === 'consumable' && item.trackingMode === 'quantity' && item.issueBehavior === 'consumable')
-      || (selectedTrackingModeFilter === 'reusable' && item.trackingMode === 'quantity' && item.issueBehavior === 'returnable')
 
     return matchesSearch && matchesCategory && matchesItemName && matchesCondition && matchesStatus && matchesTrackingMode
   })
@@ -1683,6 +1691,7 @@ export default function ItemsMasterData() {
       && selectedItem.name.toLocaleLowerCase() === editFormData.itemName.toLocaleLowerCase(),
   )
   const requestedItemCount = Number(formData.quantity)
+  const selectedInventoryType = formData.trackingMode === 'individual' ? 'individual' : formData.issueBehavior === 'consumable' ? 'consumable' : 'group'
   const formRestockCandidates = formData.trackingMode === 'quantity'
     && formData.category && formData.itemName.trim() && formData.description.trim() && formData.condition
     ? items.filter((item) => item.id
@@ -1778,7 +1787,7 @@ export default function ItemsMasterData() {
             </span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Item Master Data</h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
-              Catalog assets and consumable stock with their condition, quantity, valuation, and current availability status.
+              Track fixed assets one by one, or manage consumable supplies as shared quantity stock with clear condition, value, and availability details.
             </p>
           </div>
          
@@ -2007,19 +2016,20 @@ export default function ItemsMasterData() {
                 <p className="mt-1 text-sm text-slate-600">Choose how this item is tracked and enter its acquisition details.</p>
               </div>
               <fieldset>
-              <legend className={editFieldLabelClass}>Tracking mode <span className="text-rose-600">*</span></legend>
-              <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Select how this inventory will be counted and issued.</p>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <legend className={editFieldLabelClass}>Inventory type <span className="text-rose-600">*</span></legend>
+              <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">How GSO tracks this item.</p>
+              <div className="grid gap-2 sm:grid-cols-3">
                 {([
-                  { value: 'individual' as const, title: 'Track each item separately', description: 'Each physical item gets its own inventory record and barcode after issuance approval.' },
-                  { value: 'quantity' as const, title: 'Track as quantity', description: 'Matching items share one stock record. Choose below whether they are consumed or returned by quantity.' },
+                  { value: 'individual' as const, title: 'Track each item', description: 'Each item gets its own barcode.' },
+                  { value: 'group' as const, title: 'Group (returned)', description: 'One shared count. Borrowing lowers it; returns add back.' },
+                  { value: 'consumable' as const, title: 'Consumable', description: 'Used up, not returned.' },
                 ]).map((option) => (
-                  <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${formData.trackingMode === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                  <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${selectedInventoryType === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                     <input
                       type="radio"
                       name="trackingMode"
                       value={option.value}
-                      checked={formData.trackingMode === option.value}
+                      checked={selectedInventoryType === option.value}
                       onChange={handleInputChange}
                       required={option.value === 'individual'}
                       className="mt-0.5 h-4 w-4 accent-blue-600"
@@ -2032,35 +2042,6 @@ export default function ItemsMasterData() {
                 ))}
               </div>
               </fieldset>
-
-              {formData.trackingMode === 'quantity' && (
-                <fieldset className="mt-5">
-                  <legend className={editFieldLabelClass}>How is this stock issued? <span className="text-rose-600">*</span></legend>
-                  <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">Items in this mode share a stock record. No separate barcode is created for each piece.</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {([
-                      { value: 'consumable' as const, title: 'Consumable stock', description: 'Used up or given out; the quantity is not expected to be returned.' },
-                      { value: 'returnable' as const, title: 'Reusable quantity stock', description: 'Temporarily issued and returned by count; individual units are not identified.' },
-                    ]).map((option) => (
-                      <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${formData.issueBehavior === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                        <input
-                          type="radio"
-                          name="issueBehavior"
-                          value={option.value}
-                          checked={formData.issueBehavior === option.value}
-                          onChange={handleInputChange}
-                          required={option.value === 'consumable'}
-                          className="mt-0.5 h-4 w-4 accent-blue-600"
-                        />
-                        <span>
-                          <span className="block text-sm font-extrabold text-slate-900">{option.title}</span>
-                          <span className="mt-1 block text-xs leading-relaxed text-slate-600">{option.description}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              )}
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
 
@@ -2698,16 +2679,15 @@ export default function ItemsMasterData() {
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Tracking mode</span>
+              <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Inventory type</span>
               <select
                 value={selectedTrackingModeFilter}
-                onChange={(event) => setSelectedTrackingModeFilter(event.target.value as 'all' | 'individual' | 'consumable' | 'reusable')}
+                onChange={(event) => setSelectedTrackingModeFilter(event.target.value as 'all' | 'individual' | 'consumable')}
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
-                <option value="all">All stock types</option>
+                <option value="all">All inventory</option>
                 <option value="individual">Track each item separately</option>
                 <option value="consumable">Consumable stocks</option>
-                <option value="reusable">Reusable stocks</option>
               </select>
             </label>
           </div>
@@ -2768,9 +2748,12 @@ export default function ItemsMasterData() {
                     <span className="block whitespace-nowrap text-xs font-extrabold text-slate-700">
                       {item.availableQuantity} available / {item.quantity} total <span className="font-medium text-slate-500">{item.unit}</span>
                     </span>
-                    <span className={`mt-1.5 inline-flex rounded-full px-2 py-1 text-[0.6rem] font-extrabold ${item.conditionTone}`}>
-                      {item.condition}
+                    <span className={`mt-1.5 inline-flex rounded-full px-2 py-1 text-[0.6rem] font-extrabold ${toneForCondition(currentConditionForList(item))}`}>
+                      {currentConditionForList(item)}
                     </span>
+                    {unserviceableUnitCount(item) > 0 && <span className="mt-1.5 block text-[0.6rem] font-extrabold text-rose-700">
+                      {unserviceableUnitCount(item)} tracked unit{unserviceableUnitCount(item) === 1 ? '' : 's'} marked Unserviceable
+                    </span>}
                   </td>
                   <td className="px-5 py-4 text-xs font-semibold text-slate-600">{assignedCustodianForList(item)}</td>
                   <td className="px-5 py-4 sm:px-6">
@@ -2824,7 +2807,7 @@ export default function ItemsMasterData() {
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-8 sm:py-6">
               <div className="mx-auto max-w-4xl space-y-4">
-                {isReusableStock(selectedItem) && <ReusableStockStatus item={selectedItem} />}
+                {isLegacyReturnableStock(selectedItem) && <LegacyReturnableStockStatus item={selectedItem} />}
                 <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Item overview</h3>
@@ -2846,7 +2829,7 @@ export default function ItemsMasterData() {
                           <dt className="text-sm font-medium text-slate-600">Tracking</dt>
                           <dd className="text-right text-sm font-bold text-slate-900">{inventoryTypeLabel(selectedItem.trackingMode, selectedItem.issueBehavior)}</dd>
                         </div>
-                        {!isReusableStock(selectedItem) && (
+                        {!isLegacyReturnableStock(selectedItem) && (
                           <>
                             <div className="flex flex-wrap justify-between gap-x-3 gap-y-1">
                               <dt className="text-sm font-medium text-slate-600">Issued to</dt>
@@ -2892,6 +2875,25 @@ export default function ItemsMasterData() {
                     </span>
                   </div>
                 </section>
+
+                {selectedItem.assetTags.length > 0 && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Tracked units and current condition</h3>
+                    <p className="mt-1 text-sm text-slate-600">Each barcode keeps its own current condition and location, including units settled through a Loss / Damage case.</p>
+                  </div>
+                  <ul className="inventory-list-scrollbar max-h-64 space-y-2 overflow-y-auto">
+                    {selectedItem.assetTags.map((tag) => <li key={tag.tagCode} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-slate-900">{tag.tagCode} <span className="font-semibold text-slate-500">· Unit {tag.unitNumber}</span></p>
+                        <p className="mt-1 text-[0.68rem] text-slate-600">{tag.location || 'Location not recorded'}{tag.serialNumber ? ` · Serial ${tag.serialNumber}` : ''}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`rounded-full px-2.5 py-1 text-[0.6rem] font-extrabold ${toneForCondition(tag.condition)}`}>{tag.condition}</span>
+                        <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[0.6rem] font-extrabold text-slate-700">{tag.lifecycleStatus === 'Disposed' ? 'Disposed' : tag.custodyStatus}</span>
+                      </div>
+                    </li>)}
+                  </ul>
+                </section>}
 
                 <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
@@ -3130,48 +3132,30 @@ export default function ItemsMasterData() {
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block sm:col-span-2">
-                      <span className={editFieldLabelClass}>Tracking mode <span className="text-rose-600">*</span></span>
+                      <span className={editFieldLabelClass}>Inventory type <span className="text-rose-600">*</span></span>
                       <select
                         name="trackingMode"
                         value={editFormData.trackingMode}
                         onChange={handleEditInputChange}
-                        disabled={selectedItem.assetTags.length > 0}
+                        disabled={selectedItem.assetTags.length > 0 || isLegacyReturnableStock(selectedItem)}
                         required
                         className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
                       >
-                        <option value="individual">Track each item separately — unique barcode for each item</option>
-                        <option value="quantity">Track as quantity — one stock record for matching items</option>
+                        <option value="individual">Track each item separately - unique barcode for each item</option>
+                        <option value="quantity">
+                          {isLegacyReturnableStock(selectedItem)
+                            ? 'Group stock (returned) - existing record'
+                            : 'Consumable stock - quantity-based supplies without individual barcodes'}
+                        </option>
                       </select>
-                      <span className="mt-2 block text-xs leading-relaxed text-slate-600">Tracking mode can only change before asset tags are created. Existing barcode history is preserved.</span>
+                      <span className="mt-2 block text-xs leading-relaxed text-slate-600">
+                        {isLegacyReturnableStock(selectedItem)
+                          ? 'This existing record keeps its issue and return history, so its inventory type is locked.'
+                          : selectedItem.assetTags.length > 0
+                            ? 'Inventory type is locked because unique barcode history already exists.'
+                            : 'Choose whether each physical item receives its own record or supplies are grouped as consumable stock.'}
+                      </span>
                     </label>
-                    {editFormData.trackingMode === 'quantity' && (
-                      <fieldset className="sm:col-span-2">
-                        <legend className={editFieldLabelClass}>How is this stock issued? <span className="text-rose-600">*</span></legend>
-                        <p className="mb-3 text-xs leading-relaxed text-slate-600">Choose whether stock is used up or expected back. Items in this mode do not have separate barcodes.</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {([
-                            { value: 'consumable' as const, title: 'Consumable stock', description: 'Used up or given out; the quantity is not expected to be returned.' },
-                            { value: 'returnable' as const, title: 'Reusable quantity stock', description: 'Temporarily issued and returned by count; individual units are not identified.' },
-                          ]).map((option) => (
-                            <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${editFormData.issueBehavior === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                              <input
-                                type="radio"
-                                name="issueBehavior"
-                                value={option.value}
-                                checked={editFormData.issueBehavior === option.value}
-                                onChange={handleEditInputChange}
-                                required={option.value === 'consumable'}
-                                className="mt-0.5 h-4 w-4 accent-blue-600"
-                              />
-                              <span>
-                                <span className="block text-sm font-extrabold text-slate-900">{option.title}</span>
-                                <span className="mt-1 block text-xs leading-relaxed text-slate-600">{option.description}</span>
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      </fieldset>
-                    )}
                     <label className="block">
                       <span className={editFieldLabelClass}>Date acquired <span className="text-rose-600">*</span></span>
                       <input type="date" name="dateAcquired" required value={editFormData.dateAcquired} onChange={handleEditInputChange} className={editControlClass} />

@@ -469,3 +469,52 @@ export default function AuditLogView({ frame, variant = 'table' }: { frame: (con
     </>,
   )
 }
+
+// Newest entries for the admin dashboard. The full history stays on the Audit logs page.
+export function RecentAuditList({ limit = 5 }: { limit?: number }) {
+  const [logs, setLogs] = useState<AuditLogEntry[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState('')
+
+  useEffect(() => {
+    let active = true
+    listAuditLogs({ limit, offset: 0, action: 'all', entityType: 'all', flag: 'all', search: '', from: '', to: '' })
+      .then((result) => { if (active) setLogs(result.logs) })
+      .catch((error: unknown) => { if (active) setErrorMessage(error instanceof Error ? error.message : 'Could not load recent activity.') })
+      .finally(() => { if (active) setIsLoading(false) })
+    return () => { active = false }
+  }, [limit])
+
+  if (isLoading) return <p className="py-10 text-center text-sm font-semibold text-slate-400">Loading recent activity…</p>
+  if (errorMessage) return <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">{errorMessage}</p>
+  if (logs.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-10 text-center">
+        <p className="text-sm font-bold text-slate-700">No activity yet</p>
+        <p className="mt-1 text-xs text-slate-400">Changes will show here as they happen.</p>
+      </div>
+    )
+  }
+
+  return (
+    <ol className="space-y-2">
+      {logs.map((log) => {
+        const info = actionInfo(log.action)
+        return (
+          <li key={log.id} className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-3">
+            <span className={`mt-0.5 inline-flex shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${info.tone}`}>{info.label}</span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-extrabold text-slate-800">{log.entityName}</p>
+              <p title={log.reason} className="mt-0.5 truncate text-xs text-slate-500">{log.reason}</p>
+              {log.flag && <div className="mt-1.5"><FlagBadge flag={log.flag} /></div>}
+            </div>
+            <p className="shrink-0 whitespace-nowrap text-right text-[0.65rem] font-semibold text-slate-400">
+              {formatShortDate(log.changedAt)}
+              <span className="block">{log.changedBy || 'System'}</span>
+            </p>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}

@@ -1,0 +1,285 @@
+-- Item categories, suggested item names, Item Master stock records, receipts, and blind stock counts.
+-- Consolidated from the pre-consolidation migrations (archived in migrations_archive/pre-consolidation-2026-11-15).
+-- Reference data is included. One-time data conversions are not, because a new database has no rows to convert.
+BEGIN;
+
+CREATE TABLE public.inventory_counts (
+    id bigint NOT NULL,
+    counted_by_user_id bigint,
+    note text DEFAULT ''::text NOT NULL,
+    lines jsonb NOT NULL,
+    discrepancy_count integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT inventory_counts_note_length CHECK ((length(note) <= 1000))
+);
+
+CREATE TABLE public.inventory_receipts (
+    id bigint NOT NULL,
+    item_id bigint NOT NULL,
+    quantity integer NOT NULL,
+    unit_cost numeric(12,2) DEFAULT 0 NOT NULL,
+    total_cost numeric(12,2) DEFAULT 0 NOT NULL,
+    date_acquired date,
+    time_acquired time without time zone,
+    reference_number text DEFAULT ''::text NOT NULL,
+    recorded_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT inventory_receipts_costs_nonnegative CHECK (((unit_cost >= (0)::numeric) AND (total_cost >= (0)::numeric))),
+    CONSTRAINT inventory_receipts_quantity_positive CHECK ((quantity > 0))
+);
+
+CREATE TABLE public.item_catalog (
+    id bigint NOT NULL,
+    item_code text NOT NULL,
+    item_name text NOT NULL,
+    description text NOT NULL,
+    category_id bigint NOT NULL,
+    category text NOT NULL,
+    serial_number text,
+    tracking_mode text DEFAULT 'individual'::text NOT NULL,
+    issue_behavior text DEFAULT 'returnable'::text NOT NULL,
+    quantity integer DEFAULT 1 NOT NULL,
+    repair_quantity integer DEFAULT 0 NOT NULL,
+    unit_of_measure text DEFAULT 'piece'::text NOT NULL,
+    condition text DEFAULT 'New'::text NOT NULL,
+    inventory_status text DEFAULT 'Available'::text NOT NULL,
+    location text DEFAULT 'GSO Storage'::text NOT NULL,
+    date_acquired date,
+    time_acquired time without time zone,
+    unit_cost numeric(12,2) DEFAULT 0 NOT NULL,
+    acquisition_cost numeric(12,2) DEFAULT 0 NOT NULL,
+    current_value numeric(12,2),
+    created_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT item_catalog_category_not_blank CHECK ((length(TRIM(BOTH FROM category)) > 0)),
+    CONSTRAINT item_catalog_code_not_blank CHECK ((length(TRIM(BOTH FROM item_code)) > 0)),
+    CONSTRAINT item_catalog_condition_check CHECK ((condition = ANY (ARRAY['New'::text, 'Good'::text, 'Fair'::text, 'Needs Repair'::text, 'Under Maintenance'::text, 'Unserviceable'::text, 'Retired'::text]))),
+    CONSTRAINT item_catalog_costs_nonnegative CHECK (((unit_cost >= (0)::numeric) AND (acquisition_cost >= (0)::numeric) AND ((current_value IS NULL) OR (current_value >= (0)::numeric)))),
+    CONSTRAINT item_catalog_description_not_blank CHECK ((length(TRIM(BOTH FROM description)) > 0)),
+    CONSTRAINT item_catalog_issue_behavior_check CHECK ((issue_behavior = ANY (ARRAY['consumable'::text, 'returnable'::text]))),
+    CONSTRAINT item_catalog_item_name_not_blank CHECK ((length(TRIM(BOTH FROM item_name)) > 0)),
+    CONSTRAINT item_catalog_quantity_nonnegative CHECK ((quantity >= 0)),
+    CONSTRAINT item_catalog_repair_quantity_check CHECK ((repair_quantity >= 0)),
+    CONSTRAINT item_catalog_status_check CHECK ((inventory_status = ANY (ARRAY['Available'::text, 'Issued'::text, 'Reserved'::text, 'Borrowed'::text]))),
+    CONSTRAINT item_catalog_tracking_mode_check CHECK ((tracking_mode = ANY (ARRAY['individual'::text, 'quantity'::text]))),
+    CONSTRAINT item_catalog_unit_not_blank CHECK ((length(TRIM(BOTH FROM unit_of_measure)) > 0))
+);
+
+CREATE TABLE public.item_categories (
+    id bigint NOT NULL,
+    name text NOT NULL,
+    created_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT item_categories_name_not_blank CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+CREATE TABLE public.item_category_item_names (
+    id bigint NOT NULL,
+    category_id bigint NOT NULL,
+    name text NOT NULL,
+    created_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    approval_policy text DEFAULT 'STAFF_ISSUE'::text NOT NULL,
+    staff_issue_max_quantity integer,
+    policy_updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    policy_updated_by_user_id bigint,
+    CONSTRAINT item_category_item_names_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['GSO_HEAD'::text, 'STAFF_ISSUE'::text]))),
+    CONSTRAINT item_category_item_names_name_not_blank CHECK ((length(TRIM(BOTH FROM name)) > 0)),
+    CONSTRAINT item_category_item_names_staff_limit_check CHECK (((staff_issue_max_quantity IS NULL) OR (staff_issue_max_quantity > 0)))
+);
+
+ALTER TABLE public.inventory_counts ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.inventory_counts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+ALTER TABLE public.inventory_receipts ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.inventory_receipts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+ALTER TABLE public.item_catalog ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.item_catalog_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+ALTER TABLE public.item_categories ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.item_categories_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+ALTER TABLE public.item_category_item_names ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.item_category_item_names_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+ALTER TABLE ONLY public.inventory_counts
+    ADD CONSTRAINT inventory_counts_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.inventory_receipts
+    ADD CONSTRAINT inventory_receipts_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.item_catalog
+    ADD CONSTRAINT item_catalog_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.item_categories
+    ADD CONSTRAINT item_categories_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.item_category_item_names
+    ADD CONSTRAINT item_category_item_names_pkey PRIMARY KEY (id);
+
+CREATE INDEX inventory_counts_created_idx ON public.inventory_counts USING btree (created_at DESC, id DESC);
+
+CREATE INDEX inventory_receipts_item_date_idx ON public.inventory_receipts USING btree (item_id, date_acquired DESC, id DESC);
+
+CREATE INDEX item_catalog_category_condition_idx ON public.item_catalog USING btree (category, condition);
+
+CREATE INDEX item_catalog_category_id_condition_idx ON public.item_catalog USING btree (category_id, condition);
+
+CREATE UNIQUE INDEX item_catalog_code_lower_unique_idx ON public.item_catalog USING btree (lower(item_code));
+
+CREATE INDEX item_catalog_created_at_idx ON public.item_catalog USING btree (created_at DESC, id DESC);
+
+CREATE INDEX item_catalog_issue_behavior_idx ON public.item_catalog USING btree (tracking_mode, issue_behavior, created_at DESC);
+
+CREATE UNIQUE INDEX item_catalog_serial_number_lower_unique_idx ON public.item_catalog USING btree (lower(btrim(serial_number))) WHERE ((serial_number IS NOT NULL) AND (btrim(serial_number) <> ''::text));
+
+CREATE INDEX item_catalog_tracking_mode_idx ON public.item_catalog USING btree (tracking_mode, created_at DESC);
+
+CREATE UNIQUE INDEX item_categories_name_lower_unique_idx ON public.item_categories USING btree (lower(name));
+
+CREATE UNIQUE INDEX item_category_item_names_category_name_lower_unique_idx ON public.item_category_item_names USING btree (category_id, lower(name));
+
+ALTER TABLE ONLY public.inventory_counts
+    ADD CONSTRAINT inventory_counts_counted_by_user_id_fkey FOREIGN KEY (counted_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.inventory_receipts
+    ADD CONSTRAINT inventory_receipts_item_id_fkey FOREIGN KEY (item_id) REFERENCES public.item_catalog(id) ON DELETE RESTRICT;
+
+ALTER TABLE ONLY public.inventory_receipts
+    ADD CONSTRAINT inventory_receipts_recorded_by_user_id_fkey FOREIGN KEY (recorded_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.item_catalog
+    ADD CONSTRAINT item_catalog_category_id_fk FOREIGN KEY (category_id) REFERENCES public.item_categories(id) ON DELETE RESTRICT;
+
+ALTER TABLE ONLY public.item_catalog
+    ADD CONSTRAINT item_catalog_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.item_categories
+    ADD CONSTRAINT item_categories_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.item_category_item_names
+    ADD CONSTRAINT item_category_item_names_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.item_categories(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.item_category_item_names
+    ADD CONSTRAINT item_category_item_names_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.item_category_item_names
+    ADD CONSTRAINT item_category_item_names_policy_updated_by_user_id_fkey FOREIGN KEY (policy_updated_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+INSERT INTO item_categories (name)
+VALUES
+    ('Office Supplies'),
+    ('Office Equipment'),
+    ('Machinery/ Parts'),
+    ('Computer Parts/ Peripherals'),
+    ('Tools/ Equipment'),
+    ('Publications'),
+    ('Electrical Supplies'),
+    ('Other Consumables'),
+    ('Others');
+
+INSERT INTO item_category_item_names (category_id, name)
+SELECT category.id, item_name.name
+  FROM item_categories AS category
+  JOIN (VALUES
+    ('Computer Parts/ Peripherals', 'Laptop'),
+    ('Computer Parts/ Peripherals', 'Desktop Computer'),
+    ('Computer Parts/ Peripherals', 'Computer Monitor'),
+    ('Computer Parts/ Peripherals', 'Keyboard'),
+    ('Computer Parts/ Peripherals', 'Mouse'),
+    ('Computer Parts/ Peripherals', 'Webcam'),
+    ('Computer Parts/ Peripherals', 'Headset'),
+    ('Computer Parts/ Peripherals', 'Speaker'),
+    ('Computer Parts/ Peripherals', 'Printer'),
+    ('Computer Parts/ Peripherals', 'Network Router'),
+    ('Computer Parts/ Peripherals', 'External Hard Drive'),
+    ('Computer Parts/ Peripherals', 'USB Flash Drive'),
+    ('Electrical Supplies', 'Electrical Wire'),
+    ('Electrical Supplies', 'Circuit Breaker'),
+    ('Electrical Supplies', 'Switch'),
+    ('Electrical Supplies', 'Electrical Outlet'),
+    ('Electrical Supplies', 'LED Bulb'),
+    ('Electrical Supplies', 'Extension Cord'),
+    ('Electrical Supplies', 'Power Strip'),
+    ('Electrical Supplies', 'Electrical Tape'),
+    ('Electrical Supplies', 'Plug'),
+    ('Machinery/ Parts', 'Generator'),
+    ('Machinery/ Parts', 'Water Pump'),
+    ('Machinery/ Parts', 'Electric Motor'),
+    ('Machinery/ Parts', 'Air Compressor'),
+    ('Machinery/ Parts', 'Machine Part'),
+    ('Machinery/ Parts', 'Conveyor'),
+    ('Machinery/ Parts', 'Drill Press'),
+    ('Office Equipment', 'Printer'),
+    ('Office Equipment', 'Photocopier'),
+    ('Office Equipment', 'Projector'),
+    ('Office Equipment', 'Scanner'),
+    ('Office Equipment', 'Telephone'),
+    ('Office Equipment', 'Shredder'),
+    ('Office Equipment', 'Laminator'),
+    ('Office Equipment', 'Air Conditioner'),
+    ('Office Supplies', 'Bond Paper'),
+    ('Office Supplies', 'Ballpen'),
+    ('Office Supplies', 'Pencil'),
+    ('Office Supplies', 'Notebook'),
+    ('Office Supplies', 'Folder'),
+    ('Office Supplies', 'Envelope'),
+    ('Office Supplies', 'Stapler'),
+    ('Office Supplies', 'Paper Clip'),
+    ('Office Supplies', 'Marker'),
+    ('Office Supplies', 'Tape'),
+    ('Other Consumables', 'Cleaning Supplies'),
+    ('Other Consumables', 'Hand Soap'),
+    ('Other Consumables', 'Tissue Paper'),
+    ('Other Consumables', 'Trash Bag'),
+    ('Other Consumables', 'Disinfectant'),
+    ('Other Consumables', 'Batteries'),
+    ('Publications', 'Book'),
+    ('Publications', 'Manual'),
+    ('Publications', 'Journal'),
+    ('Publications', 'Magazine'),
+    ('Publications', 'Reference Material'),
+    ('Publications', 'Dictionary'),
+    ('Tools/ Equipment', 'Hammer'),
+    ('Tools/ Equipment', 'Screwdriver'),
+    ('Tools/ Equipment', 'Pliers'),
+    ('Tools/ Equipment', 'Wrench'),
+    ('Tools/ Equipment', 'Power Drill'),
+    ('Tools/ Equipment', 'Measuring Tape'),
+    ('Tools/ Equipment', 'Ladder'),
+    ('Tools/ Equipment', 'Tool Set')
+  ) AS item_name(category_name, name) ON lower(category.name) = lower(item_name.category_name);
+
+COMMIT;

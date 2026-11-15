@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const nodemailer = require('nodemailer');
 const env = require('../../config/env');
 const issuancesRepository = require('./issuances.repository');
+const { groupIssuanceLines, describeCodes } = require('./issuance-summary');
 const notificationsRepository = require('../notifications/notifications.repository');
 
 const mailTransport = env.smtp
@@ -290,9 +291,18 @@ async function createIssuanceBatch(input, user) {
   const itemTypeLabel = (item) => item.trackingMode === 'individual'
     ? 'Individually tracked item'
     : item.issueBehavior === 'consumable' ? 'Consumable stock' : 'Reusable quantity stock';
-  const textItems = batch.items.map((item, index) =>
-    `${index + 1}. ${item.itemName} (${item.itemCode})\n   Type: ${itemTypeLabel(item)}\n   Quantity: ${item.quantity} ${item.unitOfMeasure}\n   Condition: ${item.condition}\n   Assigned to: ${item.recipientEmployeeName} (${item.recipientEmployeeCode})${item.recipientLocation ? `\n   Use location: ${item.recipientLocation}` : ''}${item.recipientPurpose ? `\n   Intended use: ${item.recipientPurpose}` : ''}`
-  );
+  // One line per item, recipient, and location (issuance-summary.js); the total counts pieces, not lines.
+  const recordedLines = groupIssuanceLines(batch.items);
+  const totalPieces = batch.items.reduce((sum, item) => sum + Number(item.quantity), 0);
+  const textItems = recordedLines.map((line, index) => [
+    `${index + 1}. ${line.itemName} × ${line.quantity} ${line.unitOfMeasure}`,
+    `   Asset codes: ${describeCodes(line.codes)}`,
+    `   Type: ${itemTypeLabel(line)}`,
+    `   Condition: ${line.condition}`,
+    `   Assigned to: ${line.recipientEmployeeName} (${line.recipientEmployeeCode})`,
+    ...(line.recipientLocation ? [`   Use location: ${line.recipientLocation}`] : []),
+    ...(line.recipientPurpose ? [`   Intended use: ${line.recipientPurpose}`] : []),
+  ].join('\n'));
   const borrowingDetailsText = batch.borrowDetails ? [
     '',
     'Face-to-face reusable-stock borrowing details:',
@@ -309,16 +319,15 @@ async function createIssuanceBatch(input, user) {
       <div style="margin-top:4px">Event / purpose: <strong>${escapeHtml(batch.borrowDetails.purpose)}</strong></div>
       <div style="margin-top:4px">Location: <strong>${escapeHtml(batch.borrowDetails.useLocation)}</strong></div>
     </div>` : '';
-  const htmlItems = batch.items.map((item) => `
+  const htmlItems = recordedLines.map((line) => `
     <li style="margin:0 0 12px">
-      <strong>${escapeHtml(item.itemName)}</strong>
-      <div style="margin-top:4px;color:#64748b">Asset code: ${escapeHtml(item.itemCode)}</div>
-      <div style="margin-top:4px;color:#64748b">Type: ${escapeHtml(itemTypeLabel(item))}</div>
-      <div style="margin-top:4px;color:#334155">Quantity: <strong>${item.quantity} ${escapeHtml(item.unitOfMeasure)}</strong></div>
-      <div style="margin-top:4px;color:#334155">Condition: <strong>${escapeHtml(item.condition)}</strong></div>
-      <div style="margin-top:4px;color:#334155">Assigned to: <strong>${escapeHtml(item.recipientEmployeeName)} (${escapeHtml(item.recipientEmployeeCode)})</strong></div>
-      ${item.recipientLocation ? `<div style="margin-top:4px;color:#334155">Use location: <strong>${escapeHtml(item.recipientLocation)}</strong></div>` : ''}
-      ${item.recipientPurpose ? `<div style="margin-top:4px;color:#334155">Intended use: <strong>${escapeHtml(item.recipientPurpose)}</strong></div>` : ''}
+      <strong>${escapeHtml(line.itemName)} × ${line.quantity} ${escapeHtml(line.unitOfMeasure)}</strong>
+      <div style="margin-top:4px;color:#64748b">Asset codes: ${escapeHtml(describeCodes(line.codes))}</div>
+      <div style="margin-top:4px;color:#64748b">Type: ${escapeHtml(itemTypeLabel(line))}</div>
+      <div style="margin-top:4px;color:#334155">Condition: <strong>${escapeHtml(line.condition)}</strong></div>
+      <div style="margin-top:4px;color:#334155">Assigned to: <strong>${escapeHtml(line.recipientEmployeeName)} (${escapeHtml(line.recipientEmployeeCode)})</strong></div>
+      ${line.recipientLocation ? `<div style="margin-top:4px;color:#334155">Use location: <strong>${escapeHtml(line.recipientLocation)}</strong></div>` : ''}
+      ${line.recipientPurpose ? `<div style="margin-top:4px;color:#334155">Intended use: <strong>${escapeHtml(line.recipientPurpose)}</strong></div>` : ''}
     </li>`).join('');
 
   let emailSent = false;
@@ -326,11 +335,11 @@ async function createIssuanceBatch(input, user) {
     await mailTransport.sendMail({
       from: env.smtp.from,
       to: batch.employee_email,
-      subject: `${subject} (${batch.items.length} item${batch.items.length === 1 ? '' : 's'})`,
+      subject: `${subject} (${totalPieces} item${totalPieces === 1 ? '' : 's'})`,
       text: [
         `Hello ${batch.employee_name},`,
         '',
-        `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : needsDepartmentDistribution ? 'issuance with staff recipient assignments' : 'individually tracked items ready for pickup'} for these ${batch.items.length} item${batch.items.length === 1 ? '' : 's'}:`,
+        `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : needsDepartmentDistribution ? 'issuance with staff recipient assignments' : 'individually tracked items ready for pickup'} for these ${totalPieces} item${totalPieces === 1 ? '' : 's'}:`,
         ...textItems,
         ...borrowingDetailsText,
         `Notes: ${notes || 'No additional notes.'}`,
@@ -344,7 +353,7 @@ async function createIssuanceBatch(input, user) {
             <h1 style="margin:16px 0 8px;font-size:22px">${escapeHtml(subject)}</h1>
             <p style="margin:0 0 24px;color:#475569">Hello ${employeeName}, ${escapeHtml(employeeActionText)}</p>
             <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">
-              <div style="margin-bottom:14px;font-size:16px;font-weight:700">Items recorded (${batch.items.length})</div>
+              <div style="margin-bottom:14px;font-size:16px;font-weight:700">Items recorded (${totalPieces})</div>
               <ul style="margin:0;padding-left:20px">${htmlItems}</ul>
               ${borrowingDetailsHtml}
               <div style="margin-top:16px;color:#334155">GSO notes: ${note}</div>
@@ -374,7 +383,7 @@ async function createIssuanceBatch(input, user) {
 
   // The requester's own account sees the same batch in the app, so tell them there too.
   if (batch.requesterUserId) {
-    const count = batch.items.length;
+    const count = totalPieces;
     const needsConfirmation = batch.status === 'Pending';
     try {
       await notificationsRepository.createUserNotification({

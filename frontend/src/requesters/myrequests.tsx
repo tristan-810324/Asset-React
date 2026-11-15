@@ -3,9 +3,11 @@ import RequesterLayout from './requesterlayout'
 import { MetricIcon } from './requesterrequestcard'
 import { formatDateTime, getRequestItems, requestStatusLabel, requestStatusTone } from './requesterrequestutils'
 import { listMyRequests, REQUEST_TYPE_LABELS, type ServiceRequest } from './requesterApi'
+import { serviceRequestView, serviceRouteLabel, serviceStatusLabel, serviceStatusTone } from './serviceWorkflow'
 
 // Same status colors as the dashboard: Pending amber, Ready for Pickup green.
 function myRequestTone(request: ServiceRequest) {
+  if (request.requestType === 'JOB_REQUEST') return serviceStatusTone(request.status)
   const label = requestStatusLabel(request)
   if (label === 'Pending') return 'border-amber-200 bg-amber-50 text-amber-800'
   if (label === 'Ready for Pickup') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
@@ -72,15 +74,18 @@ export default function MyRequests() {
             : <ul className="inventory-list-scrollbar max-h-120 space-y-2.5 overflow-y-auto px-3 py-3 sm:px-6 sm:py-4">{filtered.map((request) => {
               const items = getRequestItems(request)
               const [firstItem] = items
+              const service = request.requestType === 'JOB_REQUEST' ? serviceRequestView(request) : null
+              const requestLabel = service ? serviceStatusLabel(request.status) : requestStatusLabel(request)
               return <li key={request.id}>
                 <div className="rounded-xl border-2 border-slate-300/80 bg-white p-4 shadow-sm transition hover:border-blue-300 hover:bg-blue-50/40">
                   <div className="flex items-start justify-between gap-3">
                     <span className="text-sm font-black text-slate-900">{request.referenceNo}</span>
-                    <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[0.6rem] font-extrabold ${myRequestTone(request)}`}>{requestStatusLabel(request)}</span>
+                    <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[0.6rem] font-extrabold ${myRequestTone(request)}`}>{requestLabel}</span>
                   </div>
                   <p className="mt-1 text-xs font-bold text-blue-700">{request.title}</p>
+                  {service && <div className="mt-2 flex flex-wrap gap-1.5 text-[0.62rem] font-bold"><span className={`rounded-md px-2 py-1 ${service.routeTeam === 'ITSS' ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{serviceRouteLabel(service.routeTeam)}</span><span className="rounded-md bg-slate-100 px-2 py-1 text-slate-600">{service.category}</span>{typeof request.formData?.location === 'string' && request.formData.location && <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-600">{request.formData.location}</span>}{(service.priority === 'Urgent' || service.priority === 'High') && <span className={`rounded-md px-2 py-1 ${service.priority === 'Urgent' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-800'}`}>{service.priority}</span>}{service.deadlineLabel && <span className={`rounded-md px-2 py-1 ${service.deadlineLabel.toLowerCase().includes('overdue') ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{service.deadlineLabel}</span>}</div>}
                   {firstItem && <p className="mt-1 text-xs text-slate-500">{firstItem.quantity} × {firstItem.itemName}{items.length > 1 ? ` · +${items.length - 1} more` : ''}</p>}
-                  {request.status === 'Needs Information' && <p className="mt-2 text-xs font-bold text-amber-700">GSO needs more information.</p>}
+                  {request.status === 'Needs Information' && <p className="mt-2 text-xs font-bold text-amber-700">{service ? `${serviceRouteLabel(service.routeTeam)} needs more information.` : 'GSO needs more information.'}</p>}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
                     <p className="text-[0.62rem] font-medium text-slate-400">Updated {formatDateTime(request.updatedAt)}</p>
                     <a href={`/requester/requests/${request.id}`} aria-label={`Request details for ${request.referenceNo}`} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-[0.65rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">

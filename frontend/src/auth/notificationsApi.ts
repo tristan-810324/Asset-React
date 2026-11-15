@@ -27,7 +27,7 @@ function announceChange<T>(result: T) {
 
 // Groups the backend notification types under the names shown in the inbox.
 export function notificationModuleFor(type: string) {
-  if (type === 'PURCHASE_REQUISITION' || type === 'REQUEST') return 'Requests'
+  if (type === 'PURCHASE_REQUISITION' || type === 'REQUEST' || type === 'SERVICE_WORK_ORDER') return 'Requests'
   if (type === 'ISSUANCE') return 'Issuance'
   if (type === 'RETURN' || type === 'OVERDUE') return 'Returns'
   if (type === 'LOW_STOCK') return 'Inventory'

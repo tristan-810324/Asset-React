@@ -11,18 +11,19 @@ export type GsoNavigationItem =
   | 'Purchase Requisitions'
   | 'Asset Labels'
   | 'Procurement'
-  | 'Borrowing Requests'
+  | 'Facilities and equipment'
+  | 'Service Workboard'
   | 'Issuance History'
   | 'Audit Logs'
   | 'Returns & Histories'
   | 'Return Items'
-  | 'Borrowing Returns'
+  | 'Loss & Damage Cases'
   | 'Repair & Maintenance'
   | 'Notifications'
   | 'Profile'
 
 type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Returns & Histories'>
-type NavigationIconName = 'archive' | 'bell' | 'cart' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
+type NavigationIconName = 'alert' | 'archive' | 'bell' | 'building' | 'cart' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
 
 type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string; activePages?: GsoNavigationItem[] }
 type NavigationGroup = {
@@ -35,6 +36,12 @@ type NavigationGroup = {
 type NavigationEntry = NavigationLink | NavigationGroup
 
 const iconPaths: Record<NavigationIconName, ReactNode> = {
+  alert: (
+    <>
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      <path d="M12 9v4M12 17h.01" />
+    </>
+  ),
   archive: (
     <>
       <path d="M3 7.5h18" />
@@ -47,6 +54,11 @@ const iconPaths: Record<NavigationIconName, ReactNode> = {
     <>
       <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
       <path d="M10 21h4" />
+    </>
+  ),
+  building: (
+    <>
+      <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6M9 10h.01M15 10h.01" />
     </>
   ),
   'chevron-down': <path d="m7 10 5 5 5-5" />,
@@ -157,14 +169,16 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
   { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/purchase-requisitions', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
   { kind: 'link', name: 'Procurement', icon: 'cart', href: '/gso/procurement' },
-  { kind: 'link', name: 'Borrowing Requests', icon: 'clipboard-plus', href: '/gso/borrowing-requests' },
+  { kind: 'link', name: 'Facilities and equipment', icon: 'building', href: '/gso/facilities-equipment' },
+  { kind: 'link', name: 'Service Workboard', icon: 'wrench', href: '/gso/service-workboard' },
   {
     kind: 'group',
     name: 'Returns & Histories',
     icon: 'history',
     href: '/gso/return-items',
-    activePages: ['Return Items', 'Borrowing Returns'],
+    activePages: ['Return Items'],
   },
+  { kind: 'link', name: 'Loss & Damage Cases', icon: 'alert', href: '/gso/loss-damage-cases' },
   { kind: 'link', name: 'Repair & Maintenance', icon: 'wrench', href: '/gso/to-be-repaired' },
   { kind: 'link', name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
 ]

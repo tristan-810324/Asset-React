@@ -21,9 +21,8 @@ const actionsFor = (request: ServiceRequest) => {
     if (request.status === 'For Repair') return ['Returned']
     if (request.status === 'Returned') return ['Closed']
   } else if (request.requestType === 'JOB_REQUEST') {
-    if (request.status === 'Approved') return ['In Progress']
-    if (request.status === 'In Progress') return ['Completed']
-    if (request.status === 'Completed') return ['Closed']
+    // Jobs are claimed, worked, and closed in the Service Workboard, so this inbox does not change them.
+    return []
   } else if (request.status === 'Approved') {
     return request.requestType === 'LOSS_DAMAGE_REPORT' ? ['In Progress', 'Completed', 'Closed'] : ['Completed', 'Closed']
   } else if (request.status === 'In Progress' || request.status === 'Completed') {
@@ -56,10 +55,10 @@ function formatFormValue(value: unknown) {
   return String(value ?? '—')
 }
 
-export default function RequesterRequestInbox() {
+export default function RequesterRequestInbox({ initialType = '' }: { initialType?: string }) {
   const [requests, setRequests] = useState<ServiceRequest[]>([])
   const [selectedId, setSelectedId] = useState('')
-  const [type, setType] = useState('')
+  const [type, setType] = useState(initialType)
   const [status, setStatus] = useState('')
   const [search, setSearch] = useState('')
   const [reviewNote, setReviewNote] = useState('')
@@ -333,6 +332,9 @@ export default function RequesterRequestInbox() {
                   </label>
                 )}
 
+                {selected?.requestType === 'JOB_REQUEST' && (
+                  <a href={`/gso/service-workboard?request=${encodeURIComponent(selected.id)}`} className="mt-3 inline-flex min-h-10 items-center rounded-xl bg-blue-600 px-3.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700">Open in Service Workboard</a>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {selectedActions.map((action) => (
                     <button key={action} type="button" disabled={Boolean(busyStatus)} onClick={() => void updateStatus(action)} className={`rounded-xl px-3 py-2.5 text-[0.65rem] font-extrabold transition disabled:cursor-wait disabled:opacity-50 ${action === 'Rejected' ? 'border border-rose-100 bg-rose-50 text-rose-700 hover:bg-rose-100' : action === 'Needs Information' ? 'border border-amber-100 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>

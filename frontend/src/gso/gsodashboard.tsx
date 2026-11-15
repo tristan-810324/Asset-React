@@ -1,11 +1,35 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import GsoNavbar, { GsoPageHeader, type GsoNavigationItem } from '../components/navbars/gsonavbar'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 import { listUnitLabels } from './issuancesApi'
 import { listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
 import { canRecordDelivery, deliveryOpen, linesOf, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
-import { listGsoRequests, listRequesterIdentityReviews, type RequesterIdentity, type ServiceRequest } from '../requesters/requesterApi'
+import { listRequesterIdentityReviews, type RequesterIdentity, type ServiceRequest } from '../requesters/requesterApi'
+import { claimServiceWorkOrder, listServiceWorkOrders, startServiceWorkOrder, type ServiceWorkOrder, type ServiceWorkSummary } from './serviceWorkboardApi'
+
+// One job in the Service Operations lists. Claim and Start work act here; Mark completed opens the workboard form.
+function ServiceJobRow({ job, busy, onClaim, onStart }: { job: ServiceWorkOrder; busy: boolean; onClaim?: () => void; onStart?: () => void }) {
+  const status = (job.status || '').toLowerCase()
+  const canStart = Boolean(onStart) && (status === 'submitted' || status === 'under review')
+  const canComplete = status === 'in progress'
+  const buttonClass = 'inline-flex min-h-8 items-center rounded-lg px-2.5 py-1.5 text-[0.65rem] font-extrabold transition disabled:cursor-wait disabled:opacity-50'
+  return (
+    <li className="flex flex-wrap items-center gap-3 px-5 py-3 sm:px-6">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${job.isOverdue ? 'bg-rose-500' : job.priority === 'Urgent' ? 'bg-amber-500' : 'bg-blue-500'}`} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs font-extrabold text-slate-800">{job.title || 'Service request'}</span>
+        <span className="mt-0.5 block truncate text-[0.62rem] font-semibold text-slate-500">{job.referenceNo} · {job.location || 'Location not set'} · {job.deadlineLabel || (job.isOverdue ? 'Overdue' : 'Open')}</span>
+      </span>
+      <span className="flex shrink-0 flex-wrap gap-1.5">
+        <a href={`/gso/service-workboard?request=${encodeURIComponent(job.id)}`} className={`${buttonClass} border border-slate-300 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800`}>View job</a>
+        {!job.assignedStaffId && onClaim && <button type="button" disabled={busy} onClick={onClaim} className={`${buttonClass} bg-blue-600 text-white hover:bg-blue-700`}>{busy ? 'Saving...' : 'Claim job'}</button>}
+        {canStart && <button type="button" disabled={busy} onClick={onStart} className={`${buttonClass} border border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100`}>{busy ? 'Saving...' : 'Start work'}</button>}
+        {canComplete && <a href={`/gso/service-workboard?request=${encodeURIComponent(job.id)}&action=complete`} className={`${buttonClass} bg-emerald-600 text-white hover:bg-emerald-700`}>Mark completed</a>}
+      </span>
+    </li>
+  )
+}
 
 type IconName =
   | 'archive'
@@ -171,9 +195,13 @@ export default function GsoDashboard() {
   const [employeesLoading, setEmployeesLoading] = useState(true)
   const [employeesError, setEmployeesError] = useState('')
   const [requisitions, setRequisitions] = useState<ServiceRequest[]>([])
-  const [borrowings, setBorrowings] = useState<ServiceRequest[]>([])
   const [verifications, setVerifications] = useState<RequesterIdentity[]>([])
   const [labelsToPrint, setLabelsToPrint] = useState(0)
+  const [serviceSummary, setServiceSummary] = useState<ServiceWorkSummary | null>(null)
+  const [needsAttention, setNeedsAttention] = useState<ServiceWorkOrder[]>([])
+  const [myActive, setMyActive] = useState<ServiceWorkOrder[]>([])
+  const [serviceBusyId, setServiceBusyId] = useState('')
+  const [serviceError, setServiceError] = useState('')
 
   const requisitionCounts = useMemo(() => {
     const count = (statuses: string[]) => requisitions.filter((row) => statuses.includes(row.status)).length
@@ -188,33 +216,51 @@ export default function GsoDashboard() {
     () => requisitions.filter((row) => row.requestType === 'PURCHASE_REQUISITION' && purchaseRequisitionReadyForIssuance(row)),
     [requisitions],
   )
-  const borrowingCounts = useMemo(() => {
-    const count = (statuses: string[]) => borrowings.filter((row) => statuses.includes(row.status)).length
-    return {
-      pending: count(['Submitted', 'Under Review']),
-      approved: count(['Approved']),
-      issued: count(['Issued']),
-      closed: count(['Returned', 'Completed', 'Closed', 'Rejected', 'Cancelled']),
-    }
-  }, [borrowings])
-  const borrowingAlerts = useMemo(() => {
-    const todayKey = new Date().toLocaleDateString('en-CA')
-    const dueOf = (row: ServiceRequest) => row.assets.find((asset) => asset.dueDate)?.dueDate || row.formData.returnDate || ''
-    return {
-      returns: borrowings.filter((row) => row.status === 'Return Requested').length,
-      overdue: borrowings.filter((row) => ['Issued', 'Return Requested'].includes(row.status) && Boolean(dueOf(row)) && dueOf(row) < todayKey).length,
-    }
-  }, [borrowings])
   const pendingVerifications = verifications.filter((row) => ['Pending', 'Pending Review'].includes(row.status)).length
 
   useEffect(() => {
     let active = true
     void listStaffPurchaseRequisitions().then((rows) => { if (active) setRequisitions(rows) }).catch(() => undefined)
-    void listGsoRequests({ type: 'BORROWING' }).then((rows) => { if (active) setBorrowings(rows) }).catch(() => undefined)
     void listRequesterIdentityReviews().then((rows) => { if (active) setVerifications(rows) }).catch(() => undefined)
     void listUnitLabels().then((rows) => { if (active) setLabelsToPrint(rows.filter((row) => row.needsPrinting && !row.isReturned).length) }).catch(() => undefined)
     return () => { active = false }
   }, [])
+
+  const loadService = useCallback(async () => {
+    try {
+      const [overview, active] = await Promise.all([
+        listServiceWorkOrders({ team: 'GSO', limit: 8 }),
+        listServiceWorkOrders({ team: 'GSO', queue: 'active', limit: 3 }),
+      ])
+      setServiceSummary(overview.summary)
+      setNeedsAttention(overview.workOrders.filter((job) => job.isOverdue || job.priority === 'Urgent').slice(0, 3))
+      setMyActive(active.workOrders)
+    } catch {
+      // The rest of the dashboard stays usable while the workboard is unavailable or has no jobs yet.
+      setServiceSummary(null)
+      setNeedsAttention([])
+      setMyActive([])
+    }
+  }, [])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadService() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadService])
+
+  const runServiceQuick = async (job: ServiceWorkOrder, action: 'claim' | 'start') => {
+    setServiceBusyId(job.id)
+    setServiceError('')
+    try {
+      if (action === 'claim') await claimServiceWorkOrder(job.id)
+      else await startServiceWorkOrder(job.id)
+      await loadService()
+    } catch (error) {
+      setServiceError(error instanceof Error ? error.message : 'The job could not be updated.')
+    } finally {
+      setServiceBusyId('')
+    }
+  }
 
 
   useEffect(() => {
@@ -423,11 +469,10 @@ export default function GsoDashboard() {
           {/* KPI CARDS */}
           {/* ANALYTICS CHARTS & DISTRIBUTION SECTION */}
 
-          <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Requests and approvals">
+          <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Requests and approvals">
             {[
               { label: 'Requisitions in queue', value: requisitionCounts.queue, note: 'New requests', href: '/gso/purchase-requisitions', icon: 'clipboard' as const },
               { label: 'Account verifications', value: pendingVerifications, note: 'Pending review', href: '/gso/requester-verification', icon: 'users' as const },
-              { label: 'Borrowing requests', value: borrowingCounts.pending, note: 'Awaiting decision', href: '/gso/requests-borrowing', icon: 'calendar' as const },
               { label: 'Ready for Main Issuance', value: readyForIssuance.length, note: 'Ready to issue', href: '/gso/main-issuance', icon: 'cube' as const },
             ].map((card) => (
               <a key={card.label} href={card.href} className="group flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4">
@@ -443,6 +488,47 @@ export default function GsoDashboard() {
             ))}
           </section>
 
+          <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="service-operations-title">
+            <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <div className="flex items-center gap-3">
+                <span className="grid h-9 w-9 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700"><Icon name="tool" className="h-4 w-4" /></span>
+                <div>
+                  <h2 id="service-operations-title" className="text-sm font-black tracking-tight text-slate-900">Service Operations</h2>
+                  <p className="mt-0.5 text-[0.68rem] font-medium text-slate-500">Facility jobs for GSO Staff. Claim, start, and finish them here.</p>
+                </div>
+              </div>
+              <a href="/gso/service-workboard" className="inline-flex min-h-9 items-center justify-center gap-1.5 self-start rounded-xl border border-slate-300 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 sm:self-auto">Open Service Workboard <Icon name="arrow-right" className="h-3.5 w-3.5" /></a>
+            </div>
+            <div className="grid divide-y divide-slate-100 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+              {[
+                { label: 'New', value: serviceSummary?.new ?? 0, tone: 'text-blue-700', queue: 'new' },
+                { label: 'Due today', value: serviceSummary?.dueToday ?? 0, tone: 'text-amber-700', queue: 'due_today' },
+                { label: 'Overdue', value: serviceSummary?.overdue ?? 0, tone: 'text-rose-700', queue: 'overdue' },
+                { label: 'Awaiting confirmation', value: serviceSummary?.awaitingConfirmation ?? 0, tone: 'text-violet-700', queue: 'awaiting_confirmation' },
+              ].map((metric) => (
+                <a key={metric.label} href={`/gso/service-workboard?queue=${metric.queue}`} className="group flex items-center justify-between px-5 py-3.5 transition hover:bg-slate-50 sm:block sm:px-5 sm:py-4">
+                  <span className="text-[0.6rem] font-extrabold uppercase tracking-widest text-slate-500">{metric.label}</span>
+                  <span className={`mt-0.5 block text-xl font-black tabular-nums sm:mt-1 sm:text-2xl ${metric.tone}`}>{metric.value}</span>
+                </a>
+              ))}
+            </div>
+            {serviceError && <p role="alert" className="border-t border-rose-100 bg-rose-50 px-5 py-3 text-xs font-semibold text-rose-700">{serviceError}</p>}
+            <div className="grid border-t border-slate-100 md:grid-cols-2 md:divide-x md:divide-slate-100">
+              <div className="min-w-0">
+                <p className="px-5 pb-1 pt-4 text-[0.6rem] font-extrabold uppercase tracking-widest text-slate-500 sm:px-6">Needs attention</p>
+                {needsAttention.length === 0
+                  ? <p className="px-5 pb-4 text-xs font-medium text-slate-500 sm:px-6">No urgent or overdue jobs right now.</p>
+                  : <ul className="divide-y divide-slate-100">{needsAttention.map((job) => <ServiceJobRow key={job.id} job={job} busy={serviceBusyId === job.id} onClaim={() => void runServiceQuick(job, 'claim')} />)}</ul>}
+              </div>
+              <div className="min-w-0 border-t border-slate-100 md:border-t-0">
+                <p className="px-5 pb-1 pt-4 text-[0.6rem] font-extrabold uppercase tracking-widest text-slate-500 sm:px-6">My active jobs</p>
+                {myActive.length === 0
+                  ? <p className="px-5 pb-4 text-xs font-medium text-slate-500 sm:px-6">You have no active jobs. Claim a job to start.</p>
+                  : <ul className="divide-y divide-slate-100">{myActive.map((job) => <ServiceJobRow key={job.id} job={job} busy={serviceBusyId === job.id} onStart={() => void runServiceQuick(job, 'start')} />)}</ul>}
+              </div>
+            </div>
+          </section>
+
           {/* NEEDS YOUR ACTION */}
           <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="needs-action-title">
             <div className="border-b border-slate-200 px-6 py-5 sm:px-7">
@@ -454,8 +540,6 @@ export default function GsoDashboard() {
                 { label: 'Labels to print', count: labelsToPrint, href: '/gso/asset-labels', hint: 'Unit barcodes that have not been printed yet', icon: 'grid' as const },
                 { label: 'Deliveries to link', count: requisitionCounts.deliveriesToLink, href: '/gso/purchase-requisitions?tab=waiting', hint: 'Requests with bought items ready to link to a delivery', icon: 'truck' as const },
                 { label: 'Signed PDFs to print', count: requisitionCounts.pdfToPrint, href: '/gso/procurement', hint: 'Endorsed requisitions not yet handed to Finance', icon: 'clipboard' as const },
-                { label: 'Return requests', count: borrowingAlerts.returns, href: '/gso/borrowing-returns', hint: 'Borrowers asked to return items for inspection', icon: 'archive' as const },
-                { label: 'Overdue borrowings', count: borrowingAlerts.overdue, href: '/gso/requests-borrowing', hint: 'Items still out past their due date', icon: 'calendar' as const },
               ].map((item) => (
                 <li key={item.label}>
                   <a href={item.href} className="group flex items-center gap-4 px-6 py-4 transition hover:bg-blue-50/50 sm:px-7">

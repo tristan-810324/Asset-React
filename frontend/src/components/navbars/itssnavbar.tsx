@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { clearAuthSession, getCurrentUser, type AuthUser } from '../../auth/authApi'
 
-export type ITSSPage = 'Overview'
-type ITSSIconName = 'grid' | 'menu' | 'users'
+export type ITSSPage = 'Overview' | 'Support Queue'
+type ITSSIconName = 'grid' | 'menu' | 'tool' | 'users'
 
 const iconPaths: Record<ITSSIconName, ReactNode> = {
   grid: <><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1" /><rect x="14" y="3.5" width="6.5" height="6.5" rx="1" /><rect x="3.5" y="14" width="6.5" height="6.5" rx="1" /><rect x="14" y="14" width="6.5" height="6.5" rx="1" /></>,
   menu: <path d="M4 7h16M4 12h16M4 17h16" />,
+  tool: <path d="M14.7 6.3a5.3 5.3 0 0 0-7.4 7.4l-5.1 5.1a2.1 2.1 0 0 0 3 3l5.1-5.1a5.3 5.3 0 0 0 7.4-7.4l-3.1 3.1-3-3z" />,
   users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
 }
 
@@ -16,6 +17,7 @@ function Icon({ name }: { name: ITSSIconName }) {
 
 const navigation: Array<{ name: ITSSPage; href: string; icon: ITSSIconName }> = [
   { name: 'Overview', href: '/itss', icon: 'grid' },
+  { name: 'Support Queue', href: '/itss/service-workboard', icon: 'tool' },
 ]
 
 export default function ITSSNavbar({ currentPage, title, subtitle, children }: {

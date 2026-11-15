@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
 import { ProgressPath } from '../components/requestpath'
-import { listCatalogAssets, listPurchaseItemNames, listRequesterDepartmentStaff, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType, type RequesterDepartmentStaff } from './requesterApi'
+import { listFacilityVenues, type FacilityVenue } from '../facilities/facilityOptionsApi'
+import { listCatalogAssets, listMyIssuanceActivity, listPurchaseItemNames, listRequesterDepartmentStaff, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType, type RequesterDepartmentStaff, type RequesterIssuanceApproval } from './requesterApi'
 
 type FormRow = Record<string, string | number>
 type PlannedDistributionDestination = 'employee' | 'department_location'
@@ -29,9 +30,11 @@ type FormValues = {
   date?: string
   startTime?: string
   endTime?: string
-  participantsMale?: string
-  participantsFemale?: string
+  participants?: string
   venue?: string
+  serviceCategory?: string
+  serviceRoute?: ServiceRoute
+  location?: string
   equipment?: FormRow[]
   requiredDate?: string
   urgency?: string
@@ -46,6 +49,14 @@ type FormValues = {
 }
 
 const requestTypes = Object.keys(REQUEST_TYPE_LABELS) as RequestType[]
+
+// A venue that asks for details is sent to GSO as "Venue – detail", so the same room matches when GSO checks for conflicts.
+function facilityVenueText(option: FacilityVenue | undefined, detail: string) {
+  if (!option) return ''
+  if (!option.requiresDetail) return option.label
+  return detail.trim() ? `${option.label} – ${detail.trim()}` : ''
+}
+
 const purchaseCategoryOptions = [
   ['OFFICE_SUPPLIES', 'Office supplies'],
   ['OFFICE_EQUIPMENT', 'Office equipment'],
@@ -87,6 +98,36 @@ const borrowingLocationOptions = [
   'Off-campus / field location',
   'Other',
 ] as const
+
+type ServiceRoute = 'GSO' | 'ITSS'
+type ServiceCategoryOption = {
+  value: string
+  label: string
+  route: ServiceRoute
+  group: 'Facilities' | 'IT support'
+  description: string
+  urgent?: boolean
+}
+
+// The server remains the source of truth for routing. This client-side map only
+// previews the destination before a requester submits the form.
+const serviceCategoryOptions: ServiceCategoryOption[] = [
+  { value: 'ELECTRICAL_LIGHTING', label: 'Electrical & Lighting', route: 'GSO', group: 'Facilities', description: 'Lights, outlets, switches, or wiring concerns.' },
+  { value: 'PLUMBING_WATER', label: 'Plumbing & Water', route: 'GSO', group: 'Facilities', description: 'Leaks, faucets, drainage, or water concerns.' },
+  { value: 'FURNITURE_CARPENTRY', label: 'Furniture & Carpentry', route: 'GSO', group: 'Facilities', description: 'Chairs, tables, doors, cabinets, or fixtures.' },
+  { value: 'BUILDING_REPAIR', label: 'Classroom / Building Repair', route: 'GSO', group: 'Facilities', description: 'Ceilings, walls, windows, flooring, air-conditioning, or projector mounts.' },
+  { value: 'CLEANING_SANITATION', label: 'Cleaning & Sanitation', route: 'GSO', group: 'Facilities', description: 'Cleaning, waste, sanitation, grounds, or pests.' },
+  { value: 'EVENT_SETUP_MOVING', label: 'Event Setup & Moving', route: 'GSO', group: 'Facilities', description: 'Room setup or moving approved furniture and equipment.' },
+  { value: 'SAFETY_HAZARD', label: 'Safety Hazard', route: 'GSO', group: 'Facilities', description: 'Unsafe conditions requiring urgent facilities attention.', urgent: true },
+  { value: 'COMPUTER_DEVICE', label: 'Computer & Device', route: 'ITSS', group: 'IT support', description: 'PCs, monitors, keyboards, mice, or lab devices.' },
+  { value: 'NETWORK_CONNECTIVITY', label: 'Network & Connectivity', route: 'ITSS', group: 'IT support', description: 'Wi-Fi, LAN, internet, or network access.' },
+  { value: 'SOFTWARE_ACCESS', label: 'Software & Access', route: 'ITSS', group: 'IT support', description: 'Software installation, logins, accounts, or permissions.' },
+  { value: 'PERIPHERALS_PRINTING', label: 'Printing & Peripherals', route: 'ITSS', group: 'IT support', description: 'Printers, scanners, technical projector, and related peripherals.' },
+  { value: 'OTHER_GENERAL', label: 'Other General Service', route: 'GSO', group: 'Facilities', description: 'A facilities concern not listed above; GSO can reroute it if needed.' },
+  { value: 'OTHERS', label: 'Others', route: 'GSO', group: 'Facilities', description: 'Type what the service is in the box below. GSO reads it and can reroute it if needed.' },
+]
+
+const serviceCategoryByValue = new Map(serviceCategoryOptions.map((option) => [option.value, option]))
 
 const catalogCategoryAliases: Record<string, string[]> = {
   OFFICE_SUPPLIES: ['office_supplies'],
@@ -146,11 +187,11 @@ type ItemPrefill = {
 
 function initialForm(type: RequestType, prefill: ItemPrefill = {}): FormValues {
   if (type === 'BORROWING') return { purpose: '', otherPurpose: '', neededDate: '', returnDate: '', useLocation: '', specificLocation: '', returnResponsibleName: '', returnResponsibleContact: '', remarks: '', items: [] }
-  if (type === 'FACILITY_USE') return { departmentOrganization: '', activity: '', purpose: '', activityType: 'CURRICULAR', otherActivityType: '', date: '', startTime: '', endTime: '', participantsMale: '', participantsFemale: '', venue: '', equipment: [], remarks: '' }
-  if (type === 'JOB_REQUEST') return { departmentOrganization: '', purpose: '', requiredDate: '', tasks: [{ quantity: 1, particulars: '', natureOfWork: '', remarks: '' }], remarks: '' }
+  if (type === 'FACILITY_USE') return { departmentOrganization: '', activity: '', purpose: '', activityType: 'CURRICULAR', otherActivityType: '', date: '', startTime: '', endTime: '', participants: '', venue: '', venueChoice: '', venueDetail: '', equipment: [], wantsItems: false }
+  if (type === 'JOB_REQUEST') return { departmentOrganization: '', serviceCategory: '', serviceRoute: 'GSO', location: '', purpose: '', requiredDate: '', remarks: '' }
   if (type === 'PURCHASE_REQUISITION') return { purpose: '', otherPurpose: '', requiredDate: today(), urgency: 'Standard', urgentReason: '', requesterCertification: false, items: [{ quantity: 1, category: prefill.category || '', catalogItemId: prefill.catalogItemId || '', itemNameId: '', itemName: prefill.name || '', description: prefill.description || '', plannedRecipientsJson: '[]' }], remarks: '' }
   if (type === 'ISSUANCE_REQUEST') return { purpose: '', neededDate: '', remarks: '', items: [{ quantity: 1, description: prefill.name || '' }] }
-  return { incidentType: 'LOST', keyArea: '', incidentDate: '', responsiblePerson: '', items: [{ quantity: 1, description: '', assetCode: '', remarks: '' }], remarks: '' }
+  return { incidentType: 'LOST', keyArea: '', incidentDate: '', responsiblePerson: '', items: [], remarks: '' }
 }
 
 function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
@@ -189,6 +230,26 @@ function RequestStepHeader({ step, status, titleId, title, description, children
       <p className="mt-1 text-sm leading-snug text-slate-600">{description}</p>
     </div>
   </div>
+}
+
+const formCardClass = 'rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5'
+const addButtonClass = 'shrink-0 rounded-xl border border-blue-200 bg-white px-3.5 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50'
+const removeButtonClass = 'h-12 shrink-0 rounded-xl border border-rose-100 bg-white px-4 text-xs font-extrabold text-rose-600 transition hover:bg-rose-50'
+
+// A titled group inside a request form. The optional action sits at the top right of the group.
+function FormGroup({ title, hint, action, children }: { title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-extrabold text-slate-800">{title}</h3>
+          {hint && <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{hint}</p>}
+        </div>
+        {action}
+      </div>
+      {children}
+    </div>
+  )
 }
 
 const inputClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
@@ -260,6 +321,14 @@ function RequestItemContent() {
   const [itemName, setItemName] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [facilityVenues, setFacilityVenues] = useState<FacilityVenue[] | null>(null)
+  const [facilityListError, setFacilityListError] = useState('')
+  // The items issued to the requester, for the Loss / Damage Report picker.
+  const [issuedBatches, setIssuedBatches] = useState<RequesterIssuanceApproval[] | null>(null)
+  const [issuedError, setIssuedError] = useState('')
+  // The group whose units are listed for picking (one at a time).
+  const [openGroupKey, setOpenGroupKey] = useState('')
+  const [lossUnitModes, setLossUnitModes] = useState<Record<string, 'known' | 'unknown'>>({})
 
   const verifiedEmployeeName = [identity?.firstName, identity?.middleName, identity?.lastName, identity?.suffix]
     .map((part) => part?.trim())
@@ -267,11 +336,41 @@ function RequestItemContent() {
     .join(' ') || identity?.accountName || ''
   const verifiedDepartment = identity?.matchedDepartment || identity?.department || ''
   const verifiedPosition = identity?.matchedPosition || identity?.position || ''
+  // The venue list comes from GSO, so it is loaded only for the facilities request form.
+  useEffect(() => {
+    if (type !== 'FACILITY_USE') return undefined
+    let active = true
+    listFacilityVenues()
+      .then((venues) => { if (active) setFacilityVenues(venues) })
+      .catch(() => { if (active) setFacilityListError('The venue list could not be loaded. Refresh the page to try again.') })
+    return () => { active = false }
+  }, [type])
+  useEffect(() => {
+    if (type !== 'LOSS_DAMAGE_REPORT') return undefined
+    let active = true
+    listMyIssuanceActivity()
+      .then((batches) => { if (active) setIssuedBatches(batches) })
+      .catch(() => { if (active) setIssuedError('Your issued items could not be loaded. Refresh the page to try again.') })
+    return () => { active = false }
+  }, [type])
+  // Items still with the requester: one choice per tagged unit, or one per stock line with the quantity still out.
+  // Consumables are left out because they are used up, not returned.
+  const heldItems = useMemo(() => (issuedBatches ?? []).flatMap((batch) => batch.items
+    .filter((item) => item.issueBehavior !== 'consumable' && (item.status ?? batch.status) === 'Issued')
+    .flatMap((item) => {
+      const outstanding = Number(item.quantity) - Number(item.returnedQuantity || 0)
+      if (outstanding <= 0) return []
+      const units = (item.tags ?? []).filter((tag) => tag.custodyStatus !== 'Available')
+      if (item.trackingMode === 'individual' && units.length > 0) {
+        return units.map((tag) => ({ key: `${item.issuanceId}:${tag.tagCode}`, issuanceId: item.issuanceId, tagCode: tag.tagCode, name: item.itemName, code: tag.tagCode, unit: item.unitOfMeasure, outstanding: 1 }))
+      }
+      return [{ key: item.issuanceId, issuanceId: item.issuanceId, tagCode: '', name: item.itemName, code: item.itemCode, unit: item.unitOfMeasure, outstanding }]
+    })), [issuedBatches])
   const requestDateLabel = useMemo(() => new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date()), [])
 
   useEffect(() => {
-    if (!type || !['BORROWING', 'PURCHASE_REQUISITION'].includes(type)) return
-    listCatalogAssets()
+    if (!type || !['BORROWING', 'PURCHASE_REQUISITION', 'FACILITY_USE'].includes(type)) return
+    listCatalogAssets({ includeUnstocked: type === 'FACILITY_USE' })
       .then(setCatalog)
       .catch((reason: unknown) => setCatalogError(reason instanceof Error ? reason.message : 'Unable to load the item catalog.'))
       .finally(() => setCatalogLoaded(true))
@@ -459,6 +558,102 @@ function RequestItemContent() {
     const rows = current[key]
     return { ...current, [key]: Array.isArray(rows) ? (rows as FormRow[]).filter((_row, rowIndex) => rowIndex !== index) : [] }
   })
+  // Units with the same name and unit form one group. Tagged units are chosen one by one; a stock line is one count.
+  const heldGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; name: string; unit: string; stock: boolean; units: typeof heldItems; total: number }>()
+    for (const held of heldItems) {
+      const stock = !held.tagCode
+      const key = stock ? `stock|${held.issuanceId}` : `units|${held.issuanceId}|${held.name}|${held.unit}`
+      const group = groups.get(key) ?? { key, name: held.name, unit: held.unit, stock, units: [], total: 0 }
+      group.units.push(held)
+      group.total += held.outstanding
+      groups.set(key, group)
+    }
+    return [...groups.values()]
+  }, [heldItems])
+  type HeldGroup = (typeof heldGroups)[number]
+
+  const selectedIn = (groupKey: string) => ((form.items ?? []) as FormRow[]).filter((row) => row.groupKey === groupKey)
+  const countIn = (groupKey: string) => selectedIn(groupKey).reduce((sum, row) => sum + Number(row.quantity), 0)
+  const selectedTotal = ((form.items ?? []) as FormRow[]).reduce((sum, row) => sum + Number(row.quantity || 0), 0)
+  const lossUnitMode = (groupKey: string) => lossUnitModes[groupKey] ?? 'unknown'
+  const heldRow = (held: (typeof heldItems)[number], groupKey: string, quantity: number): FormRow => ({
+    key: held.key, groupKey, issuanceId: held.issuanceId, tagCode: held.tagCode, quantity,
+    maxQuantity: held.outstanding, unit: held.unit, description: held.name, assetCode: held.code, remarks: '',
+  })
+  const setLossUnitMode = (group: HeldGroup, mode: 'known' | 'unknown') => {
+    setLossUnitModes((current) => ({ ...current, [group.key]: mode }))
+    setOpenGroupKey(mode === 'known' ? group.key : '')
+    setForm((current) => ({ ...current, items: ((current.items ?? []) as FormRow[]).filter((row) => row.groupKey !== group.key) }))
+  }
+  // Sets how many of a group are reported. Units are added in code order and dropped from the end.
+  const setGroupCount = (group: HeldGroup, wanted: number) => setForm((current) => {
+    const rows = Array.isArray(current.items) ? current.items as FormRow[] : []
+    const others = rows.filter((row) => row.groupKey !== group.key)
+    const mine = rows.filter((row) => row.groupKey === group.key)
+    const count = Math.max(0, Math.min(wanted, group.total))
+    if (group.stock) return { ...current, items: count > 0 ? [...others, heldRow(group.units[0], group.key, count)] : others }
+    if (current.incidentType === 'LOST' && lossUnitMode(group.key) === 'unknown') {
+      const unknownRow = { ...heldRow(group.units[0], group.key, count), key: `unknown:${group.key}`, tagCode: '', assetCode: '', maxQuantity: group.total, identityUnknown: 'true' }
+      return { ...current, items: count > 0 ? [...others, unknownRow] : others }
+    }
+    const chosen = new Set(mine.map((row) => row.key))
+    const added = group.units
+      .filter((held) => !chosen.has(held.key))
+      .slice(0, Math.max(0, count - mine.length))
+      .map((held) => heldRow(held, group.key, 1))
+    return { ...current, items: [...others, ...mine.slice(0, count), ...added] }
+  })
+  const toggleUnit = (group: HeldGroup, held: (typeof heldItems)[number]) => setForm((current) => {
+    const rows = Array.isArray(current.items) ? current.items as FormRow[] : []
+    return rows.some((row) => row.key === held.key)
+      ? { ...current, items: rows.filter((row) => row.key !== held.key) }
+      : { ...current, items: [...rows, heldRow(held, group.key, 1)] }
+  })
+
+  // The venue text sent to GSO is built from the choice; a "specify" venue is only sent once its detail is typed.
+  // Choices are option ids from the GSO venue list.
+  const venueOptions = facilityVenues ?? []
+  const setVenue = (choiceId: string, detail: string) => setForm((current) => ({ ...current, venueChoice: choiceId, venueDetail: detail, venue: facilityVenueText(venueOptions.find((option) => option.id === choiceId), detail) }))
+  // Everything in the Item Master except consumables can be borrowed for an event; units under repair cannot.
+  const facilityItems = useMemo(() => catalog.filter((asset) => asset.issueBehavior !== 'consumable' && !['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(asset.condition)), [catalog])
+  const facilityCategories = useMemo(() => [...new Set(facilityItems.map(categoryOf))].sort((a, b) => a.localeCompare(b)), [facilityItems])
+  const facilityNamesFor = (category: string) => [...new Set(facilityItems.filter((asset) => categoryOf(asset) === category).map((asset) => asset.name))].sort((a, b) => a.localeCompare(b))
+  // Units with the same description are one model. The option keeps the unit with the most stock, and counts all of them.
+  const facilityModelsFor = (category: string, name: string) => {
+    const units = new Map<string, CatalogAsset[]>()
+    for (const asset of facilityItems) {
+      if (categoryOf(asset) !== category || asset.name !== name) continue
+      const key = (asset.description || '').trim().toLowerCase()
+      units.set(key, [...(units.get(key) ?? []), asset])
+    }
+    return [...units.values()].map((group) => {
+      const unit = [...group].sort((left, right) => right.availableQuantity - left.availableQuantity || Number(left.id) - Number(right.id))[0]
+      return { id: unit.id, label: unit.description || unit.name, inStock: group.reduce((total, asset) => total + asset.availableQuantity, 0) }
+    }).sort((left, right) => left.label.localeCompare(right.label))
+  }
+  const setEquipmentRow = (index: number, changes: FormRow) => setForm((current) => ({
+    ...current,
+    equipment: ((current.equipment ?? []) as FormRow[]).map((row, rowIndex) => rowIndex === index ? { ...row, ...changes } : row),
+  }))
+  // The stock shown in the picker. A quantity above it is flagged before the request is sent.
+  const facilityStockFor = (row: FormRow) => {
+    const itemId = String(row.itemId || '')
+    return itemId ? facilityModelsFor(String(row.category || ''), String(row.itemName || '')).find((model) => model.id === itemId) ?? null : null
+  }
+  const facilityShortages = ((form.equipment ?? []) as FormRow[]).flatMap((row) => {
+    const model = facilityStockFor(row)
+    return model && Number(row.quantity) > model.inStock ? [`${model.label} (only ${model.inStock} in stock)`] : []
+  })
+  const selectedServiceCategory = serviceCategoryByValue.get(String(form.serviceCategory || ''))
+  const jobRequestIsComplete = Boolean(
+    selectedServiceCategory
+    && String(form.departmentOrganization || '').trim()
+    && String(form.location || '').trim()
+    && String(form.requiredDate || '') >= today()
+    && String(form.purpose || '').trim()
+    && (form.serviceCategory !== 'OTHERS' || String(form.serviceOther || '').trim()),
+  )
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -475,6 +670,34 @@ function RequestItemContent() {
     if (type === 'PURCHASE_REQUISITION' && !requestDetailsAreComplete) {
       setError('Complete every item assignment and request detail before continuing.')
       return
+    }
+    if (type === 'FACILITY_USE' && facilityShortages.length > 0) {
+      setError(`Not enough stock: ${facilityShortages.join(', ')}. Lower the quantity or remove the item.`)
+      return
+    }
+    if (type === 'JOB_REQUEST' && !jobRequestIsComplete) {
+      setError('Choose a service category and complete the location, target date, and request details.')
+      return
+    }
+    if (type === 'LOSS_DAMAGE_REPORT') {
+      const reported = (form.items ?? []) as FormRow[]
+      if (reported.length === 0) {
+        setError('Pick at least one item issued to you.')
+        return
+      }
+      const missingUnitTags = reported.some((row) => {
+        const group = heldGroups.find((heldGroup) => heldGroup.key === row.groupKey)
+        return form.incidentType === 'LOST' && group && !group.stock && row.identityUnknown !== 'true' && !row.tagCode
+      })
+      if (missingUnitTags) {
+        setError('Choose the exact asset tag, or select “I’m not sure which unit” for each lost item.')
+        return
+      }
+      const tooMany = reported.find((row) => Number(row.quantity) > Number(row.maxQuantity))
+      if (tooMany) {
+        setError(`${tooMany.description}: you only have ${tooMany.maxQuantity} ${tooMany.unit}.`)
+        return
+      }
     }
     setSaving(true)
     try {
@@ -504,9 +727,17 @@ function RequestItemContent() {
             returnResponsibleName: String(form.returnResponsibleName || verifiedEmployeeName || currentIdentity.accountName).trim(),
             returnResponsibleContact: String(form.returnResponsibleContact || currentIdentity.contactNumber || '').trim(),
           }
-          : form
+          : type === 'FACILITY_USE'
+            ? { ...form, equipment: ((form.equipment ?? []) as FormRow[]).map((row) => ({ itemId: String(row.itemId), quantity: Number(row.quantity) })) }
+            : type === 'LOSS_DAMAGE_REPORT'
+              ? { ...form, items: ((form.items ?? []) as FormRow[]).map((row) => ({ issuanceId: String(row.issuanceId), tagCode: String(row.tagCode || ''), quantity: Number(row.quantity), identityUnknown: row.identityUnknown === 'true', remarks: String(row.remarks || '') })) }
+              : type === 'JOB_REQUEST'
+                // The job form has no work items; leftover rows from an earlier form must not be sent.
+                ? { ...form, tasks: undefined }
+                : form
       const request = await submitRequest(type, requestData)
-      window.location.replace(`/requester/requests/${request.id}`)
+      // The details page shows a "Request submitted" alert for this flag.
+      window.location.replace(`/requester/requests/${request.id}?submitted=1`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Request submission failed. Please try again.')
       void refreshIdentity()
@@ -515,6 +746,8 @@ function RequestItemContent() {
     }
   }
 
+  const equipmentRows = (form.equipment ?? []) as FormRow[]
+  const chosenVenue = venueOptions.find((option) => option.id === String(form.venueChoice || ''))
   if (!type) {
     return <div><a href="/requester/request-center" className="text-sm font-extrabold text-blue-700 hover:underline">Back to Request Center</a></div>
   }
@@ -524,7 +757,7 @@ function RequestItemContent() {
       <div className="mx-auto max-w-4xl">
         <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
-          <div className="relative"><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {unifiedItemRequest ? 'Item request' : 'New school request'}</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">{unifiedItemRequest ? 'Request item for issuance' : REQUEST_TYPE_LABELS[type]}</h1><p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">{unifiedItemRequest || type === 'PURCHASE_REQUISITION' ? 'Request department items. GSO checks stock and decides whether to issue or purchase them.' : type === 'BORROWING' ? 'Borrow reusable items and confirm when you will return them.' : 'Complete the form below. GSO will review your request.'}</p></div>
+          <div className="relative"><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {unifiedItemRequest ? 'Item request' : 'New school request'}</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">{unifiedItemRequest ? 'Request item for issuance' : REQUEST_TYPE_LABELS[type]}</h1><p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">{unifiedItemRequest || type === 'PURCHASE_REQUISITION' ? 'Request department items. GSO checks stock and decides whether to issue or purchase them.' : type === 'BORROWING' ? 'Borrow reusable items and confirm when you will return them.' : type === 'JOB_REQUEST' ? 'Choose a category and tell us where the problem is.' : 'Complete the form below. GSO will review your request.'}</p></div>
         </section>
         <a href="/requester/request-center" className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 hover:underline">← Request Center</a>
         <form onSubmit={onSubmit} className="mt-4 space-y-3">
@@ -743,32 +976,112 @@ function RequestItemContent() {
             </section>}
           </>}
 
-          {type === 'FACILITY_USE' && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-            <h2 className="text-lg font-black tracking-tight">Permit to use school facilities</h2><p className="mt-1 text-xs text-slate-500">Facility approval is subject to venue availability and school approval.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <Field label="Department / year & section / organization"><input className={inputClass} value={form.departmentOrganization} onChange={(event) => setField('departmentOrganization', event.target.value)} required /></Field>
-              <Field label="Activity"><input className={inputClass} value={form.activity} onChange={(event) => setField('activity', event.target.value)} required /></Field>
-              <Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field>
-              <Field label="Nature of activity"><select className={inputClass} value={form.activityType} onChange={(event) => setField('activityType', event.target.value)}><option value="CURRICULAR">Curricular</option><option value="CO_CURRICULAR">Co-curricular</option><option value="OTHER">Others</option></select></Field>
-              {form.activityType === 'OTHER' && <Field label="Please specify"><input className={inputClass} value={form.otherActivityType} onChange={(event) => setField('otherActivityType', event.target.value)} required /></Field>}
-              <Field label="Date needed"><input className={inputClass} type="date" min={today()} value={form.date} onChange={(event) => setField('date', event.target.value)} required /></Field>
-              <Field label="Start time"><input className={inputClass} type="time" value={form.startTime} onChange={(event) => setField('startTime', event.target.value)} required /></Field>
-              <Field label="End time"><input className={inputClass} type="time" value={form.endTime} onChange={(event) => setField('endTime', event.target.value)} required /></Field>
-              <Field label="Venue"><input className={inputClass} value={form.venue} onChange={(event) => setField('venue', event.target.value)} placeholder="e.g. Magpili Hall" required /></Field>
-              <Field label="Male participants"><input className={inputClass} type="number" min="0" value={form.participantsMale} onChange={(event) => setField('participantsMale', event.target.value)} /></Field>
-              <Field label="Female participants"><input className={inputClass} type="number" min="0" value={form.participantsFemale} onChange={(event) => setField('participantsFemale', event.target.value)} /></Field>
-              <Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field>
-            </div>
-            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3">
-              <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-extrabold text-slate-800">Equipment / materials</h2><p className="mt-1 text-[0.68rem] text-slate-500">Optional; add rows for equipment requested with the venue.</p></div><button type="button" onClick={() => addRow('equipment', { name: '', quantity: 1, unit: 'pcs' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button></div>
-              <div className="mt-3 space-y-3">{(form.equipment ?? []).map((item: FormRow, index: number) => <div key={index} className="grid gap-3 sm:grid-cols-[1fr_8rem_8rem_auto]"><Field label="Equipment"><input className={inputClass} value={item.name} onChange={(event) => updateRow('equipment', index, 'name', event.target.value)} required /></Field><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('equipment', index, 'quantity', event.target.value)} required /></Field><Field label="Unit"><input className={inputClass} value={item.unit} onChange={(event) => updateRow('equipment', index, 'unit', event.target.value)} /></Field><button type="button" onClick={() => removeRow('equipment', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button></div>)}</div>
+          {type === 'FACILITY_USE' && <section className={formCardClass}>
+            <h2 className="text-lg font-black tracking-tight">Permit to use school facilities</h2>
+            <p className="mt-1 text-xs text-slate-500">Facility approval is subject to venue availability and school approval.</p>
+            {!facilityVenues && !facilityListError && <p className="mt-3 rounded-xl bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-500">Loading venues…</p>}
+            {facilityListError && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-rose-700">{facilityListError}</p>}
+            <div className="mt-5 space-y-4">
+              <FormGroup title="Activity">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Department / year & section / organization"><input className={inputClass} value={form.departmentOrganization} onChange={(event) => setField('departmentOrganization', event.target.value)} required /></Field>
+                  <Field label="Activity"><input className={inputClass} value={form.activity} onChange={(event) => setField('activity', event.target.value)} required /></Field>
+                  <Field label="Nature of activity"><select className={inputClass} value={form.activityType} onChange={(event) => setField('activityType', event.target.value)}><option value="CURRICULAR">Curricular</option><option value="CO_CURRICULAR">Co-curricular</option><option value="OTHER">Others</option></select></Field>
+                  <Field label="How many participants?"><input className={inputClass} type="number" min="1" step="1" inputMode="numeric" placeholder="An estimate is fine, e.g. 50" value={form.participants} onChange={(event) => setField('participants', event.target.value)} /></Field>
+                  {form.activityType === 'OTHER' && <div className="sm:col-span-2"><Field label="Please specify the nature of activity"><input className={inputClass} value={form.otherActivityType} onChange={(event) => setField('otherActivityType', event.target.value)} required /></Field></div>}
+                  <div className="sm:col-span-2"><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field></div>
+                </div>
+              </FormGroup>
+
+              <FormGroup title="Schedule and venue" hint="Pick a venue from the list. Choose a lab or Others to type the exact room.">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Field label="Date needed"><input className={inputClass} type="date" min={today()} value={form.date} onChange={(event) => setField('date', event.target.value)} required /></Field>
+                  <Field label="Start time"><input className={inputClass} type="time" value={form.startTime} onChange={(event) => setField('startTime', event.target.value)} required /></Field>
+                  <Field label="End time"><input className={inputClass} type="time" value={form.endTime} onChange={(event) => setField('endTime', event.target.value)} required /></Field>
+                  <div className={chosenVenue?.requiresDetail ? 'sm:col-span-2' : 'sm:col-span-3'}><Field label="Venue"><select className={inputClass} value={String(form.venueChoice || '')} onChange={(event) => setVenue(event.target.value, String(form.venueDetail || ''))} required><option value="">Select venue</option>{venueOptions.map((option) => <option key={option.id} value={option.id}>{option.requiresDetail ? `${option.label} (specify)` : option.label}</option>)}</select></Field></div>
+                  {chosenVenue?.requiresDetail && <Field label={chosenVenue.detailLabel ?? 'Details'}><input className={inputClass} value={String(form.venueDetail || '')} onChange={(event) => setVenue(chosenVenue.id, event.target.value)} maxLength={150} required /></Field>}
+                </div>
+              </FormGroup>
+
+              <FormGroup title="Items needed" hint="Optional. Tick the box only if this activity needs equipment or materials." action={form.wantsItems === true ? <button type="button" onClick={() => addRow('equipment', { category: '', itemName: '', itemId: '', quantity: 1 })} className={addButtonClass}>+ Add item</button> : undefined}>
+                <label className="mb-4 flex items-start gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm font-bold text-slate-800">
+                  <input type="checkbox" checked={form.wantsItems === true} onChange={(event) => setForm((current) => ({ ...current, wantsItems: event.target.checked, equipment: event.target.checked ? current.equipment : [] }))} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600" />
+                  <span>This activity needs items from the Item Master<span className="mt-0.5 block text-xs font-medium text-slate-500">Leave this unticked if you need no equipment or materials.</span></span>
+                </label>
+                {form.wantsItems === true && (
+                  <>
+                    <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold leading-relaxed text-amber-900">Borrowed items must be returned after the event. Return them to GSO as soon as the activity ends.</p>
+                    {catalogError && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{catalogError}</p>}
+                    {equipmentRows.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">No items added yet.</p> : <div className="space-y-3">{equipmentRows.map((item, index) => {
+                      const category = String(item.category || '')
+                      const itemName = String(item.itemName || '')
+                      const itemId = String(item.itemId || '')
+                      const stock = facilityStockFor(item)
+                      const short = Boolean(stock && Number(item.quantity) > stock.inStock)
+                      return <div key={index} className={`rounded-xl border bg-white p-3 sm:p-4 ${short ? 'border-rose-300' : 'border-slate-200'}`}>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Field label="Category"><select className={inputClass} value={category} onChange={(event) => setEquipmentRow(index, { category: event.target.value, itemName: '', itemId: '' })} required><option value="">Select category</option>{facilityCategories.map((name) => <option key={name} value={name}>{name}</option>)}</select></Field>
+                          <Field label="Item name"><select className={inputClass} value={itemName} disabled={!category} onChange={(event) => setEquipmentRow(index, { itemName: event.target.value, itemId: '' })} required><option value="">Select item name</option>{facilityNamesFor(category).map((name) => <option key={name} value={name}>{name}</option>)}</select></Field>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-end gap-3">
+                          <div className="min-w-0 flex-1"><Field label="Item description"><select className={inputClass} value={itemId} disabled={!itemName} onChange={(event) => setEquipmentRow(index, { itemId: event.target.value })} required><option value="">Select description</option>{facilityModelsFor(category, itemName).map((model) => <option key={model.id} value={model.id} disabled={model.inStock === 0 || equipmentRows.some((other, otherIndex) => otherIndex !== index && String(other.itemId) === model.id)}>{`${model.label} · ${model.inStock > 0 ? `${model.inStock} in stock` : 'out of stock'}`}</option>)}</select></Field></div>
+                          <div className="w-36"><Field label="Quantity"><input className={`${inputClass} ${short ? 'border-rose-400 ring-2 ring-rose-100' : ''}`} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('equipment', index, 'quantity', event.target.value)} aria-invalid={short} required /></Field></div>
+                          <button type="button" onClick={() => removeRow('equipment', index)} className={removeButtonClass}>Remove</button>
+                        </div>
+                        {short && stock && <p role="alert" className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[0.68rem] font-bold text-rose-700">{stock.inStock > 0 ? `Only ${stock.inStock} in stock. Lower the quantity.` : 'Out of stock. Choose another item.'}</p>}
+                      </div>
+                    })}</div>}
+                  </>
+                )}
+              </FormGroup>
             </div>
           </section>}
 
-          {type === 'JOB_REQUEST' && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-            <h2 className="text-lg font-black tracking-tight">Job request</h2><p className="mt-1 text-xs text-slate-500">Describe the work requested and when it is needed.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Area / department"><input className={inputClass} value={form.departmentOrganization} onChange={(event) => setField('departmentOrganization', event.target.value)} required /></Field><Field label="Date required"><input className={inputClass} type="date" min={today()} value={form.requiredDate} onChange={(event) => setField('requiredDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
-            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Particulars / nature of work</h2><button type="button" onClick={() => addRow('tasks', { quantity: 1, particulars: '', natureOfWork: '', remarks: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700">+ Add task</button></div><div className="mt-3 space-y-4">{(form.tasks ?? []).map((task: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[8rem_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={task.quantity} onChange={(event) => updateRow('tasks', index, 'quantity', event.target.value)} required /></Field><Field label="Particulars"><input className={inputClass} value={task.particulars} onChange={(event) => updateRow('tasks', index, 'particulars', event.target.value)} required /></Field>{(form.tasks?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('tasks', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button>}</div><Field label="Description / nature of work"><textarea className={`${textareaClass} mt-3`} value={task.natureOfWork} onChange={(event) => updateRow('tasks', index, 'natureOfWork', event.target.value)} required /></Field><Field label="Task remarks"><input className={`${inputClass} mt-3`} value={task.remarks} onChange={(event) => updateRow('tasks', index, 'remarks', event.target.value)} /></Field></div>)}</div></div>
+          {type === 'JOB_REQUEST' && <section className={formCardClass}>
+            <h2 className="text-lg font-black tracking-tight">Job / Service Request</h2>
+            <div className="mt-5 space-y-4">
+              <FormGroup title="Service routing">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Service category">
+                    <select
+                      className={inputClass}
+                      value={String(form.serviceCategory || '')}
+                      onChange={(event) => {
+                        const option = serviceCategoryByValue.get(event.target.value)
+                        setForm((current) => ({ ...current, serviceCategory: event.target.value, serviceRoute: option?.route || 'GSO' }))
+                      }}
+                      required
+                    >
+                      <option value="">Choose a category</option>
+                      <optgroup label="Facilities service">
+                        {serviceCategoryOptions.filter((option) => option.group === 'Facilities').map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </optgroup>
+                      <optgroup label="Computer Laboratory / ITSS Support">
+                        {serviceCategoryOptions.filter((option) => option.group === 'IT support').map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </optgroup>
+                    </select>
+                  </Field>
+                  <Field label="Target date">
+                    <input className={inputClass} type="date" min={today()} value={String(form.requiredDate || '')} onChange={(event) => setField('requiredDate', event.target.value)} required />
+                  </Field>
+                </div>
+                {form.serviceCategory === 'OTHERS' && (
+                  <Field label="Describe the service">
+                    <input className={inputClass} value={String(form.serviceOther || '')} onChange={(event) => setField('serviceOther', event.target.value)} required maxLength={200} placeholder="e.g. Replace the school bell in Building B" />
+                  </Field>
+                )}
+                {selectedServiceCategory?.urgent && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold leading-relaxed text-amber-900"><span className="font-extrabold">Urgent:</span> for an immediate danger, follow the campus emergency procedure first.</p>}
+              </FormGroup>
+
+              <FormGroup title="Request details">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Department / office"><input className={inputClass} value={String(form.departmentOrganization || '')} onChange={(event) => setField('departmentOrganization', event.target.value)} required placeholder="e.g. College of Education" /></Field>
+                  <Field label="Location"><input className={inputClass} value={String(form.location || '')} onChange={(event) => setField('location', event.target.value)} required placeholder="e.g. Main Building, Room 204" /></Field>
+                  <div className="sm:col-span-2"><Field label="What needs attention?"><textarea className={textareaClass} value={String(form.purpose || '')} onChange={(event) => setField('purpose', event.target.value)} required maxLength={2000} placeholder="e.g. Three lights near the entrance flicker." /></Field></div>
+                </div>
+              </FormGroup>
+
+            </div>
           </section>}
 
           {type === 'PURCHASE_REQUISITION' && <>
@@ -884,10 +1197,10 @@ function RequestItemContent() {
                 <Field label="Request date"><input className={inputClass} value={requestDateLabel} readOnly aria-readonly="true" /></Field>
                 <Field label="Date needed"><input className={inputClass} type="date" min={today()} value={String(form.requiredDate || '')} onChange={(event) => setField('requiredDate', event.target.value)} required /></Field>
                 <Field label="Urgency"><select className={inputClass} value={requestUrgency} onChange={(event) => setField('urgency', event.target.value)} required><option value="Standard">Standard</option><option value="Urgent">Urgent</option></select></Field>
-                {requestUrgency === 'Urgent' && <div className="sm:col-span-2"><Field label="Why is this urgent?"><input className={inputClass} value={requestUrgentReason} onChange={(event) => setField('urgentReason', event.target.value)} maxLength={500} required placeholder="When is it needed, and why?" /></Field><p className="mt-1.5 text-[0.65rem] font-medium text-amber-700">Urgent requests still follow the item's approval rules.</p></div>}
+                {requestUrgency === 'Urgent' && <div className="sm:col-span-2"><Field label="Why is this urgent?"><input className={inputClass} value={String(form.urgentReason || '')} onChange={(event) => setField('urgentReason', event.target.value)} maxLength={500} required placeholder="When is it needed, and why?" /></Field><p className="mt-1.5 text-[0.65rem] font-medium text-amber-700">Urgent requests still follow the item's approval rules.</p></div>}
                 <div className="sm:col-span-2">
                   <Field label="Purpose"><select className={inputClass} value={requestPurpose} onChange={(event) => { setField('purpose', event.target.value); if (event.target.value !== 'Others') setField('otherPurpose', '') }} required><option value="">Select purpose</option>{purchasePurposeOptions.map(([value, label]) => <option key={value} value={label}>{label}</option>)}</select></Field>
-                  {requestPurpose === 'Others' && <div className="mt-3"><Field label="Specify the purpose"><input className={inputClass} value={requestOtherPurpose} onChange={(event) => setField('otherPurpose', event.target.value)} required maxLength={1900} placeholder="Describe the other purpose" /></Field></div>}
+                  {requestPurpose === 'Others' && <div className="mt-3"><Field label="Specify the purpose"><input className={inputClass} value={String(form.otherPurpose || '')} onChange={(event) => setField('otherPurpose', event.target.value)} required maxLength={1900} placeholder="Describe the other purpose" /></Field></div>}
                 </div>
                 <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-3.5">
                   <input type="checkbox" checked={Boolean(form.requesterCertification)} onChange={(event) => setField('requesterCertification', event.target.checked)} required className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600" />
@@ -920,23 +1233,124 @@ function RequestItemContent() {
             </section>}
           </>}
 
-          {type === 'ISSUANCE_REQUEST' && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+          {type === 'ISSUANCE_REQUEST' && <section className={formCardClass}>
             <h2 className="text-lg font-black tracking-tight">Item issuance request</h2>
             <p className="mt-1 text-xs leading-relaxed text-slate-500">For items that are not in the borrowing catalog, or that you need to keep long term. GSO checks stock; once issued, it shows in My Issued Items.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} placeholder="Where and why you need it" required /></Field><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
-            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Requested items</h2><button type="button" onClick={() => addRow('items', { quantity: 1, description: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button></div><div className="mt-3 space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[8rem_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field><Field label={`Item ${index + 1} description / specifications`}><textarea className={textareaClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>{(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>}</div></div>)}</div></div>
+            <div className="mt-5 space-y-4">
+              <FormGroup title="Request details">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Needed date"><input className={inputClass} type="date" min={today()} value={form.neededDate} onChange={(event) => setField('neededDate', event.target.value)} required /></Field>
+                  <div className="sm:col-span-2"><Field label="Purpose"><textarea className={textareaClass} value={form.purpose} onChange={(event) => setField('purpose', event.target.value)} placeholder="Where and why you need it" required /></Field></div>
+                  <div className="sm:col-span-2"><Field label="Remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} /></Field></div>
+                </div>
+              </FormGroup>
+
+              <FormGroup title="Requested items" action={<button type="button" onClick={() => addRow('items', { quantity: 1, description: '' })} className={addButtonClass}>+ Add item</button>}>
+                <div className="space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <span className="text-xs font-extrabold uppercase tracking-wide text-slate-500">Item {index + 1}</span>
+                    {(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className={removeButtonClass}>Remove</button>}
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-[8rem_1fr]">
+                    <Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field>
+                    <Field label="Description / specifications"><textarea className={textareaClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>
+                  </div>
+                </div>)}</div>
+              </FormGroup>
+            </div>
           </section>}
 
-          {type === 'LOSS_DAMAGE_REPORT' && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-            <h2 className="text-lg font-black tracking-tight">Losses and damages report</h2><p className="mt-1 text-xs text-slate-500">This submits an incident for review. It does not automatically assign fault or a charge.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2"><Field label="Incident type"><select className={inputClass} value={form.incidentType} onChange={(event) => setField('incidentType', event.target.value)}><option value="LOST">Lost</option><option value="DAMAGED">Damaged</option></select></Field><Field label="Key area / location"><input className={inputClass} value={form.keyArea} onChange={(event) => setField('keyArea', event.target.value)} required /></Field><Field label="Date of incident"><input className={inputClass} type="date" max={today()} value={form.incidentDate} onChange={(event) => setField('incidentDate', event.target.value)} required /></Field><Field label="Reported / responsible person"><input className={inputClass} value={form.responsiblePerson} onChange={(event) => setField('responsiblePerson', event.target.value)} required /></Field></div>
-            <div className="mt-3 rounded-xl border-2 border-slate-300 bg-slate-50/80 p-3"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-extrabold text-slate-800">Affected property</h2><button type="button" onClick={() => addRow('items', { quantity: 1, description: '', assetCode: '', remarks: '' })} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700">+ Add item</button></div><div className="mt-3 space-y-3">{(form.items ?? []).map((item: FormRow, index: number) => <div key={index} className="rounded-xl border border-slate-200 bg-white p-3"><div className="grid gap-3 sm:grid-cols-[7rem_1fr_1fr_auto]"><Field label="Quantity"><input className={inputClass} type="number" min="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field><Field label="Item / description"><input className={inputClass} value={item.description} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required /></Field><Field label="Asset/control number"><input className={inputClass} value={item.assetCode} onChange={(event) => updateRow('items', index, 'assetCode', event.target.value)} /></Field>{(form.items?.length ?? 0) > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600">Remove</button>}</div><Field label="Item remarks"><input className={`${inputClass} mt-3`} value={item.remarks} onChange={(event) => updateRow('items', index, 'remarks', event.target.value)} /></Field></div>)}</div></div>
-            <Field label="Incident details / remarks"><textarea className={`${textareaClass} mt-5`} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} required /></Field>
+          {type === 'LOSS_DAMAGE_REPORT' && <section className={formCardClass}>
+            <h2 className="text-lg font-black tracking-tight">Losses and damages report</h2>
+            <p className="mt-1 text-xs text-slate-500">This submits an incident for review. It does not automatically assign fault or a charge.</p>
+            <div className="mt-5 space-y-4">
+              <FormGroup title="Incident">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Incident type"><select className={inputClass} value={form.incidentType} onChange={(event) => {
+                    const nextType = event.target.value
+                    setField('incidentType', nextType)
+                    if (nextType === 'DAMAGED') {
+                      setForm((current) => ({ ...current, items: ((current.items ?? []) as FormRow[]).filter((row) => row.identityUnknown !== 'true') }))
+                      setLossUnitModes({})
+                    } else {
+                      setLossUnitModes(Object.fromEntries(heldGroups
+                        .filter((group) => !group.stock && selectedIn(group.key).some((row) => Boolean(row.tagCode)))
+                        .map((group) => [group.key, 'known' as const])))
+                    }
+                  }}><option value="LOST">Lost</option><option value="DAMAGED">Damaged</option></select></Field>
+                  <Field label="Date of incident"><input className={inputClass} type="date" max={today()} value={form.incidentDate} onChange={(event) => setField('incidentDate', event.target.value)} required /></Field>
+                  <Field label="Key area / location"><input className={inputClass} value={form.keyArea} onChange={(event) => setField('keyArea', event.target.value)} required /></Field>
+                  <Field label="Reported / responsible person"><input className={inputClass} value={form.responsiblePerson} onChange={(event) => setField('responsiblePerson', event.target.value)} required /></Field>
+                </div>
+              </FormGroup>
+
+              <FormGroup title="Affected property" hint="Choose the item and how many were affected. If you do not know the asset tag of a lost unit, do not guess.">
+                {issuedError && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{issuedError}</p>}
+                {issuedBatches === null && !issuedError
+                  ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">Loading your issued items…</p>
+                  : heldGroups.length === 0
+                    ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">No items are issued to you right now.</p>
+                    : <div className="grid gap-3 sm:grid-cols-2">{heldGroups.map((group) => {
+                      const count = countIn(group.key)
+                      const open = openGroupKey === group.key
+                      const lost = form.incidentType === 'LOST'
+                      const unknownMode = lost && !group.stock && lossUnitMode(group.key) === 'unknown'
+                      const knownMode = lost && !group.stock && !unknownMode
+                      return <div key={group.key} className={`rounded-xl border-2 bg-white p-3 transition ${count > 0 ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-extrabold text-slate-900">{group.name}</p>
+                            <p className="text-xs text-slate-500">{group.total} {group.unit} issued to you</p>
+                          </div>
+                          {knownMode
+                            ? <span className="shrink-0 text-xs font-bold text-slate-600">{count} selected</span>
+                            : <label className="flex shrink-0 items-center gap-2 text-xs font-bold text-slate-600">
+                              {lost ? 'How many were lost?' : 'How many affected?'}
+                              <input type="number" min={0} max={group.total} value={count} onChange={(event) => setGroupCount(group, Number(event.target.value) || 0)} className="h-9 w-20 rounded-lg border border-slate-300 bg-white px-2 text-sm font-bold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
+                            </label>}
+                        </div>
+                        {lost && !group.stock && <fieldset className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                          <legend className="px-1 text-[0.68rem] font-extrabold text-slate-700">Can you identify the exact unit?</legend>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
+                            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700"><input type="radio" name={`loss-unit-${group.key}`} checked={knownMode} onChange={() => setLossUnitMode(group, 'known')} className="accent-blue-600" />I know the asset tag</label>
+                            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700"><input type="radio" name={`loss-unit-${group.key}`} checked={unknownMode} onChange={() => setLossUnitMode(group, 'unknown')} className="accent-blue-600" />I’m not sure which unit</label>
+                          </div>
+                          {unknownMode && <p className="mt-2 text-[0.68rem] leading-relaxed text-slate-500">GSO will identify the exact unit during review. You do not need to guess.</p>}
+                        </fieldset>}
+                        {!group.stock && !lost && <button type="button" onClick={() => setOpenGroupKey(open ? '' : group.key)} aria-expanded={open} className="mt-2 text-xs font-extrabold text-blue-700 hover:text-blue-900">{open ? 'Hide units' : 'Choose asset tags'}</button>}
+                        {(knownMode || (open && !group.stock && !lost)) && <div className="mt-2">
+                          {knownMode && <p className="mb-2 text-[0.68rem] font-semibold text-slate-600">Select the exact lost unit(s) by asset tag.</p>}
+                          <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-lg bg-slate-50 p-2 sm:grid-cols-3">
+                          {group.units.map((held) => {
+                            const checked = selectedIn(group.key).some((row) => row.key === held.key)
+                            return <label key={held.key} className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[0.7rem] font-bold transition ${checked ? 'bg-blue-100 text-blue-900' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleUnit(group, held)} className="h-3.5 w-3.5 shrink-0 accent-blue-600" />
+                              <span className="truncate" title={held.code}>{held.code}</span>
+                            </label>
+                          })}
+                          </div>
+                        </div>}
+                      </div>
+                    })}</div>}
+
+                {selectedTotal > 0 && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-extrabold uppercase tracking-wide text-slate-500">In this report · {selectedTotal} selected</p>
+                  <ul className="mt-2 space-y-1.5">
+                    {heldGroups.filter((group) => countIn(group.key) > 0).map((group) => <li key={group.key} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="min-w-0 truncate font-bold text-slate-800">{group.name} <span className="font-semibold text-slate-500">× {countIn(group.key)}</span></span>
+                      <button type="button" onClick={() => setGroupCount(group, 0)} className="shrink-0 text-xs font-extrabold text-rose-600 hover:text-rose-800">Remove</button>
+                    </li>)}
+                  </ul>
+                </div>}
+              </FormGroup>
+
+              <Field label="Incident details / remarks"><textarea className={textareaClass} value={form.remarks} onChange={(event) => setField('remarks', event.target.value)} required /></Field>
+            </div>
           </section>}
 
           {type !== 'BORROWING' && error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p>}
           {type === 'BORROWING' && <div className="flex justify-end"><a href="/requester/request-center" className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-xs font-extrabold text-slate-600 hover:bg-slate-50">Cancel</a></div>}
-          {type !== 'BORROWING' && <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><a href="/requester/request-center" className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-xs font-extrabold text-slate-600 hover:bg-slate-50">Cancel</a><button disabled={saving || identityLoading || identity?.status !== 'Verified' || (type === 'PURCHASE_REQUISITION' && !requestDetailsAreComplete)} type="submit" className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{saving ? 'Submitting…' : identity?.status !== 'Verified' ? 'Verification required' : type === 'PURCHASE_REQUISITION' ? 'Submit to GSO Head' : 'Submit request'}</button></div>}
+          {type !== 'BORROWING' && <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><a href="/requester/request-center" className="inline-flex h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 text-xs font-extrabold text-slate-600 hover:bg-slate-50">Cancel</a><button disabled={saving || identityLoading || identity?.status !== 'Verified' || (type === 'PURCHASE_REQUISITION' && !requestDetailsAreComplete) || (type === 'FACILITY_USE' && !facilityVenues)} type="submit" className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-xs font-extrabold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{saving ? 'Submitting…' : identity?.status !== 'Verified' ? 'Verification required' : type === 'PURCHASE_REQUISITION' ? 'Submit to GSO Head' : 'Submit request'}</button></div>}
         </form>
       </div>
     </div>

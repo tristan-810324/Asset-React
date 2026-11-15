@@ -2,11 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import RequesterLayout from './requesterlayout'
 import {
   listMyIssuanceActivity,
-  listMyRequests,
-  requestAssetReturn,
-  REQUEST_TYPE_LABELS,
   type RequesterIssuanceApproval,
-  type ServiceRequest,
 } from './requesterApi'
 
 type ItemFilter = 'All items' | 'Track each item separately' | 'Consumables' | 'Reusable stock'
@@ -39,6 +35,7 @@ type IssuedGroup = { item: IssuedItem; quantity: number; codes: string[]; tags: 
 function groupIssuedItems(batch: RequesterIssuanceApproval): IssuedGroup[] {
   const groups = new Map<string, IssuedGroup>()
   batch.items.forEach((item) => {
+    if (item.lossDamageCleared) return
     const key = item.trackingMode === 'individual'
       ? [item.itemName, item.recipientEmployeeCode, item.recipientLocation, item.recipientPurpose, itemStatus(batch, item)]
         .map((value) => String(value || '').trim().toLowerCase()).join('|')
@@ -90,41 +87,48 @@ function UiIcon({ name, className = 'h-5 w-5' }: { name: UiIconName; className?:
 
 export default function RequesterIssuedItems() {
   const [batches, setBatches] = useState<RequesterIssuanceApproval[]>([])
-  const [requests, setRequests] = useState<ServiceRequest[]>([])
   const [filter, setFilter] = useState<ItemFilter>('All items')
   const [search, setSearch] = useState('')
   const [dateFilter, setDateFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [returningRequest, setReturningRequest] = useState('')
-  const [returnNotice, setReturnNotice] = useState('')
-  const [returnError, setReturnError] = useState('')
-  // Which records the page lists: both sections by default, or one of them on its own.
-  const [recordView, setRecordView] = useState<'all' | 'issuances' | 'borrowings'>('all')
 
   useEffect(() => {
     let active = true
-    Promise.all([listMyIssuanceActivity(), listMyRequests()])
-      .then(([issuanceRows, requestRows]) => {
-        if (!active) return
-        setBatches(issuanceRows)
-        setRequests(requestRows)
-      })
-      .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : 'Could not load your issuance records.')
-      })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
+    const refresh = () => {
+      listMyIssuanceActivity()
+        .then((issuanceRows) => {
+          if (!active) return
+          setBatches(issuanceRows)
+          setError('')
+        })
+        .catch((reason: unknown) => {
+          if (active) setError(reason instanceof Error ? reason.message : 'Could not load your issuance records.')
+        })
+        .finally(() => { if (active) setLoading(false) })
+    }
+    const refreshWhenFocused = () => refresh()
+    refresh()
+    window.addEventListener('focus', refreshWhenFocused)
+    const interval = window.setInterval(refresh, 30_000)
+    return () => {
+      active = false
+      window.removeEventListener('focus', refreshWhenFocused)
+      window.clearInterval(interval)
+    }
   }, [])
 
-  const issuanceItems = useMemo(() => batches.flatMap((batch) => batch.items.map((item) => ({ batch, item }))), [batches])
+  const issuanceItems = useMemo(() => batches.flatMap((batch) => batch.items
+    .filter((item) => !item.lossDamageCleared)
+    .map((item) => ({ batch, item }))), [batches])
   const visibleBatches = useMemo(() => {
     const query = search.trim().toLowerCase()
     return batches
       .filter((batch) => !dateFilter || new Date(batch.decidedAt || batch.requestedAt).toLocaleDateString('en-CA') === dateFilter)
       .map((batch) => ({
         ...batch,
-        items: batch.items.filter((item) => (filter === 'All items' || itemCategory(item) === filter)
+        items: batch.items.filter((item) => !item.lossDamageCleared
+          && (filter === 'All items' || itemCategory(item) === filter)
           && (!query || [item.itemName, item.itemCode, item.recipientEmployeeName, item.recipientEmployeeCode, item.recipientLocation].join(' ').toLowerCase().includes(query))),
       }))
       .filter((batch) => batch.items.length > 0)
@@ -137,25 +141,9 @@ export default function RequesterIssuedItems() {
     if (batch.status !== 'Issued' || item.trackingMode !== 'quantity' || item.issueBehavior !== 'returnable') return count
     return count + Math.max(Number(item.quantity) - Number(item.returnedQuantity || 0), 0)
   }, 0)
-  const requestBorrowings = useMemo(() => requests.filter((request) => request.requestType === 'BORROWING' && request.assets.length > 0), [requests])
-  const totalRecords = issuanceItems.length + requestBorrowings.reduce((count, request) => count + request.assets.length, 0)
+  const totalRecords = issuanceItems.length
 
-  async function submitReturnRequest(request: ServiceRequest) {
-    setReturningRequest(request.id)
-    setReturnError('')
-    setReturnNotice('')
-    try {
-      const updated = await requestAssetReturn(request.id)
-      setRequests((current) => current.map((entry) => entry.id === updated.id ? updated : entry))
-      setReturnNotice('Return request sent to GSO for ' + request.referenceNo + '.')
-    } catch (reason) {
-      setReturnError(reason instanceof Error ? reason.message : 'The return request was not sent. Try again.')
-    } finally {
-      setReturningRequest('')
-    }
-  }
-
-  return <RequesterLayout title="My Issued Items" subtitle="View items issued to your department, staff recipient assignments, supplies, and borrowings.">
+  return <RequesterLayout title="My Issued Items" subtitle="View items issued to your department, staff recipient assignments, supplies, and reusable stock.">
     <div className="space-y-6">
       <section className="relative isolate overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
@@ -178,15 +166,13 @@ export default function RequesterIssuedItems() {
       </section>
 
       {error && <p role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{error}</p>}
-      {returnError && <p role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-700">{returnError}</p>}
-      {returnNotice && <p role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">{returnNotice}</p>}
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Issued items summary" aria-busy={loading}>
         {[
           { label: 'Assigned items', value: activePerUnitCount, detail: 'Individually tracked equipment assigned across your department', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'asset' as const },
           { label: 'Consumables issued', value: distributedConsumableCount, detail: 'Units distributed for your department', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'supplies' as const },
           { label: 'Reusable stock to return', value: reusableOutstandingCount, detail: 'Outstanding quantity from GSO', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'return' as const },
-          { label: 'Records', value: totalRecords, detail: 'Issuance and borrowing line items', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'records' as const },
+          { label: 'Records', value: totalRecords, detail: 'Issuance line items', tone: 'border-blue-100 bg-blue-50 text-blue-700', icon: 'records' as const },
         ].map((metric) => <article key={metric.label} className="rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-50/60 via-white to-white p-5 transition hover:-translate-y-0.5 hover:shadow-md shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
           <div className="flex items-start justify-between gap-3">
             <div><p className="text-xs font-bold text-slate-500">{metric.label}</p><p className="mt-2 text-3xl font-black tracking-tight text-slate-900">{loading ? '—' : metric.value.toLocaleString('en-PH')}</p></div>
@@ -196,13 +182,7 @@ export default function RequesterIssuedItems() {
         </article>)}
       </section>
 
-      <div role="group" aria-label="Choose which records to show" className="inline-flex max-w-full flex-wrap gap-1 rounded-2xl bg-slate-100 p-1">
-        {([['all', 'All records'], ['issuances', 'Issued items'], ['borrowings', 'Borrowings']] as const).map(([key, label]) => (
-          <button key={key} type="button" aria-pressed={recordView === key} onClick={() => setRecordView(key)} className={`rounded-xl border px-3.5 py-2 text-xs font-extrabold transition ${recordView === key ? 'border-blue-100 bg-white text-blue-700 shadow-sm' : 'border-transparent text-slate-600 hover:text-blue-700'}`}>{label}</button>
-        ))}
-      </div>
-
-      {(recordView === 'all' || recordView === 'issuances') && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+      <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-col gap-4 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <span className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">GSO issuance</span>
@@ -282,41 +262,7 @@ export default function RequesterIssuedItems() {
               </div>}
               {batch.decisionNote && <p className="mx-4 mb-4 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-xs leading-relaxed text-slate-600 sm:mx-5 sm:mb-5">GSO note: <span className="font-semibold text-slate-800">{batch.decisionNote}</span></p>}
             </article>)}</div>}
-      </section>}
-
-      {(recordView === 'all' || recordView === 'borrowings') && requestBorrowings.length > 0 && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-          <div><span className="text-[0.62rem] font-extrabold uppercase tracking-[0.14em] text-emerald-700">Request Center</span><h2 className="mt-1 text-lg font-black tracking-tight text-slate-900">Borrowing request records</h2><p className="mt-1 text-xs text-slate-500">Requests, item quantities, and return dates.</p></div>
-          <a href="/requester/my-requests" className="inline-flex items-center gap-1 text-xs font-extrabold text-blue-700 hover:underline">My requests <UiIcon name="arrow" className="h-3.5 w-3.5" /></a>
-        </div>
-        <div className="inventory-list-scrollbar mt-4 max-h-120 space-y-3 overflow-y-auto pr-1">{requestBorrowings.map((request) => {
-          const hasOutstandingItems = request.assets.some((asset) => !asset.returnedAt)
-          const canRequestReturn = request.status === 'Issued' && hasOutstandingItems
-          return <article key={request.id} className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 transition hover:border-blue-200 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-extrabold text-slate-900">{request.title}</p>
-                <p className="mt-1 text-[0.68rem] font-semibold text-slate-500">{request.referenceNo}<span className="px-1.5 text-slate-300">·</span>{REQUEST_TYPE_LABELS[request.requestType]}</p>
-              </div>
-              <span className={'rounded-full px-3 py-1.5 text-[0.62rem] font-extrabold ' + statusTone(request.status)}>{request.status}</span>
-            </div>
-            <ul className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-100 bg-white">{request.assets.map((asset) => <li key={asset.id} className="flex flex-wrap items-start justify-between gap-3 px-3.5 py-3">
-              <div><p className="text-xs font-bold text-slate-800">{asset.itemName}</p><p className="mt-1 text-[0.68rem] font-semibold text-slate-500">{asset.itemCode}<span className="px-1.5 text-slate-300">·</span>{asset.quantity} {asset.unitOfMeasure}</p></div>
-              <span className="text-[0.68rem] font-semibold text-slate-500">{asset.returnedAt ? 'Returned ' + formatDate(asset.returnedAt) : asset.dueDate ? 'Due ' + formatDate(asset.dueDate) : asset.issuedAt ? 'Issued ' + formatDate(asset.issuedAt) : 'See request details'}</span>
-            </li>)}</ul>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <a href={'/requester/requests/' + request.id} className="text-xs font-extrabold text-blue-700 hover:underline">View request details</a>
-              {canRequestReturn
-                ? <button type="button" disabled={returningRequest === request.id} onClick={() => void submitReturnRequest(request)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">
-                    <UiIcon name="return" className="h-4 w-4" />{returningRequest === request.id ? 'Sending request...' : 'Request return inspection'}
-                  </button>
-                : request.status === 'Return Requested'
-                  ? <span className="text-xs font-semibold text-amber-800">Return request sent to GSO. Wait for the inspection.</span>
-                  : null}
-            </div>
-          </article>
-        })}</div>
-      </section>}
+      </section>
     </div>
   </RequesterLayout>
 }

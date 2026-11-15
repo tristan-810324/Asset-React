@@ -14,7 +14,41 @@ export type RequestAsset = {
   dueDate: string | null
   issuedAt: string | null
   returnedAt: string | null
+  // Facilities and equipment requests: what came back, and how a missing quantity was settled.
+  returnedQuantity?: number
+  // How many of the returned units are damaged; conditionIn holds the damage type when this is above 0.
+  damagedQuantity?: number
+  lostQuantity?: number
+  returnedByUserId?: string | null
+  settlementStatus?: FacilitySettlement | 'Pending' | null
+  settlementNote?: string | null
+  settledAt?: string | null
+  settledBy?: string | null
 }
+
+export type FacilitySettlement = 'Replaced' | 'Paid' | 'Waived'
+export type FacilityDamageResolution = 'WAIVED' | 'PAYMENT_REQUIRED'
+export type FacilityDamageSettlement = {
+  id: string
+  requestId: string
+  resolution: FacilityDamageResolution
+  reason: string
+  amountCentavos: number | null
+  currency: string
+  status: 'NO_CHARGE' | 'PENDING_LINK' | 'AWAITING_PAYMENT' | 'PAID'
+  decidedAt: string
+  assessedBy: string | null
+  linkId: string | null
+  checkoutUrl: string | null
+  linkReference: string | null
+  linkCreatedAt: string | null
+  linkCreatedBy: string | null
+  paymentId: string | null
+  paidAt: string | null
+  updatedAt: string
+  facilityAssetIds: string[] | null
+}
+export type FacilityReturnLine = { assetId: string; returned: number; damaged: number; condition: string }
 
 export type RequestHistory = {
   id: string
@@ -23,6 +57,41 @@ export type RequestHistory = {
   note: string
   changedBy: string | null
   changedAt: string
+}
+
+/**
+ * The operational metadata attached to Job / Service Requests.  Keeping this
+ * optional lets older requests continue to render normally while the service
+ * workboard is introduced.
+ */
+export type ServiceRouteTeam = 'GSO' | 'ITSS'
+
+export type ServiceWorkflowTask = {
+  id: string
+  label: string
+  quantity?: number
+  particulars?: string
+  natureOfWork?: string
+  remarks?: string
+  status?: string
+  completed?: boolean
+  completedAt?: string | null
+  note?: string | null
+}
+
+export type ServiceWorkflow = {
+  routeTeam?: ServiceRouteTeam
+  serviceCategory?: string
+  priority?: 'Urgent' | 'High' | 'Standard' | string
+  targetDate?: string | null
+  deadlineLabel?: string | null
+  assignedStaffName?: string | null
+  claimedAt?: string | null
+  startedAt?: string | null
+  completedAt?: string | null
+  completionNote?: string | null
+  autoCloseAt?: string | null
+  tasks?: ServiceWorkflowTask[]
 }
 
 export type PurchaseRequisitionAllocation = {
@@ -120,9 +189,24 @@ export type ServiceRequest = {
   requesterId: string
   requesterName: string
   requesterEmail: string
+  // First and last name from the requester's identity (employee record first); the account name can be a username.
+  requesterFullName?: string | null
+  slipPrintedAt?: string | null
+  slipPrintedBy?: string | null
   assets: RequestAsset[]
+  facilityDamageSettlement?: FacilityDamageSettlement | null
   history: RequestHistory[]
   labelsAllPrinted?: boolean
+  /** Job / Service Request lifecycle fields supplied by the service workflow API. */
+  serviceWorkflow?: ServiceWorkflow
+  routeTeam?: ServiceRouteTeam
+  serviceCategory?: string
+  priority?: string
+  targetDate?: string | null
+  deadlineLabel?: string | null
+  assignedStaffName?: string | null
+  completionNote?: string | null
+  autoCloseAt?: string | null
   returnedItems?: Array<{ id: string; itemName: string; itemCode: string; tagCode: string | null; quantity: number; unitOfMeasure: string; employeeName: string; condition: string; status: string; returnedAt: string }>
   purchaseLines?: PurchaseRequisitionLine[]
 }
@@ -211,12 +295,14 @@ export type RequesterIssuanceApproval = {
     condition: string
     quantity: number
     returnedQuantity?: number
+    lossDamageCleared?: boolean
     returnedAt?: string | null
     returnedByName?: string | null
     returnCondition?: string | null
     unitOfMeasure: string
     notes: string
-    tags?: Array<{ tagCode: string; unitNumber: number }>
+    // custodyStatus is Available once a unit is back with GSO.
+    tags?: Array<{ tagCode: string; unitNumber: number; custodyStatus?: string }>
   }>
 }
 
@@ -273,15 +359,15 @@ export async function listRequesterPositions() {
 
 export const REQUEST_TYPE_LABELS: Record<RequestType, string> = {
   BORROWING: 'Borrow an Asset',
-  FACILITY_USE: 'Facility Use Permit',
+  FACILITY_USE: 'Facilities and equipment request',
   JOB_REQUEST: 'Job / Service Request',
   PURCHASE_REQUISITION: 'Purchase Requisition',
   LOSS_DAMAGE_REPORT: 'Loss / Damage Report',
   ISSUANCE_REQUEST: 'Item Issuance Request',
 }
 
-export function listCatalogAssets() {
-  return apiRequest<{ items: CatalogAsset[] }>('/requests/assets').then((data) => data.items)
+export function listCatalogAssets({ includeUnstocked = false }: { includeUnstocked?: boolean } = {}) {
+  return apiRequest<{ items: CatalogAsset[] }>(`/requests/assets${includeUnstocked ? '?includeUnstocked=1' : ''}`).then((data) => data.items)
 }
 
 export function listPurchaseItemNames() {
@@ -360,6 +446,22 @@ export function requestAssetReturn(id: string) {
   return apiRequest<{ request: ServiceRequest }>(`/requests/mine/${encodeURIComponent(id)}/return`, { method: 'POST' }).then((data) => data.request)
 }
 
+/** Confirm that a completed Job / Service Request is resolved. */
+export function confirmMyServiceRequest(id: string, note = '') {
+  return apiRequest<{ request: ServiceRequest }>(`/requests/mine/${encodeURIComponent(id)}/confirm-service`, {
+    method: 'POST',
+    body: JSON.stringify(note.trim() ? { note: note.trim() } : {}),
+  }).then((data) => data.request)
+}
+
+/** Reopen a completed Job / Service Request when the issue remains unresolved. */
+export function reopenMyServiceRequest(id: string, message: string) {
+  return apiRequest<{ request: ServiceRequest }>(`/requests/mine/${encodeURIComponent(id)}/reopen-service`, {
+    method: 'POST',
+    body: JSON.stringify({ message: message.trim() }),
+  }).then((data) => data.request)
+}
+
 export function getMyRequesterIdentity() {
   return apiRequest<{ identity: RequesterIdentity }>('/requester-identity/me').then((data) => data.identity)
 }
@@ -407,10 +509,67 @@ export function listGsoRequests(filters: GsoRequestFilters = {}) {
 
 export function updateGsoRequestStatus(
   id: string,
-  payload: { status: string; note?: string; dueDate?: string; conditionOut?: string; conditionIn?: string; conditionsIn?: Record<string, string> },
+  payload: {
+    status: string
+    note?: string
+    dueDate?: string
+    conditionOut?: string
+    conditionIn?: string
+    conditionsIn?: Record<string, string>
+    returns?: FacilityReturnLine[]
+    // A facility release or return opened by a typed slip number needs a reason and is flagged in the audit log.
+    entryMethod?: 'scan' | 'typed'
+    typedReason?: string
+  },
 ) {
   return apiRequest<{ request: ServiceRequest }>(`/requests/${encodeURIComponent(id)}/status`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   }).then((data) => data.request)
+}
+
+// Facility slips (50 × 30 mm). The first print is recorded; a reprint needs a reason.
+export function recordFacilitySlipPrints(requestIds: string[]) {
+  return apiRequest<{ printed: Array<{ id: string; referenceNo: string }> }>('/requests/facility-slips/print', {
+    method: 'POST',
+    body: JSON.stringify({ requestIds }),
+  }).then((data) => data.printed)
+}
+
+export function reprintFacilitySlip(id: string, payload: { reason: string; details?: string }) {
+  return apiRequest<{ request: ServiceRequest }>(`/requests/${encodeURIComponent(id)}/slip/reprint`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }).then((data) => data.request)
+}
+
+export function settleFacilityItem(id: string, assetId: string, payload: { status: FacilitySettlement; note?: string }) {
+  return apiRequest<{ request: ServiceRequest }>(`/requests/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}/settlement`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }).then((data) => data.request)
+}
+
+export function saveFacilityDamageDecision(id: string, payload: { resolution: FacilityDamageResolution; reason: string; amount?: string }) {
+  return apiRequest<{ request: ServiceRequest; linkError?: string }>(`/requests/${encodeURIComponent(id)}/damage-settlement`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function createFacilityDamagePaymentLink(id: string) {
+  return apiRequest<{ request: ServiceRequest; linkError?: string }>(`/requests/${encodeURIComponent(id)}/damage-settlement/payment-link`, {
+    method: 'POST',
+  })
+}
+
+export function cancelFacilityDamagePaymentLink(id: string, reason: string) {
+  return apiRequest<{ request: ServiceRequest; linkError?: string }>(`/requests/${encodeURIComponent(id)}/damage-settlement/cancel-link`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function getMyFacilityDamageCase(id: string) {
+  return apiRequest<{ requestStatus: string; settlement: FacilityDamageSettlement | null }>(`/requests/mine/${encodeURIComponent(id)}/facility-damage`)
 }

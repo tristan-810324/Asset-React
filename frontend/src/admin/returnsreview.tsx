@@ -128,10 +128,21 @@ export default function ReturnsReview() {
         <AdminPageHeader pageName="Returns review" subtitle="Approvals and lost-item waivers" onOpenMenu={() => setMobileMenuOpen(true)} onSignOut={handleSignOut} />
 
         <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-9">
-          {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">{error}</p>}
+          <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
+            <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+            <div className="relative">
+              <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> IT Admin workspace
+              </span>
+              <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Returns review</h1>
+              <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">Approve write-offs and settle lost items. Check each request before you decide.</p>
+            </div>
+          </section>
+
+          {error &&<p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">{error}</p>}
           {message && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{message}</p>}
 
-          <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="approvals-title">
+          <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-6" aria-labelledby="approvals-title">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 id="approvals-title" className="text-sm font-black text-slate-900">Waiting for your approval</h2>
@@ -218,7 +229,7 @@ export default function ReturnsReview() {
             </ul>
           </section>
 
-          <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="lost-review-title">
+          <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-6" aria-labelledby="lost-review-title">
             <h2 id="lost-review-title" className="text-sm font-black text-slate-900">Lost items awaiting settlement ({accountabilities.length})</h2>
             <p className="mt-1 text-xs text-slate-500">Waive one only when the school decides the employee does not have to pay or replace it.</p>
             <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100">

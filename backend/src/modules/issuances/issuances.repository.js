@@ -616,7 +616,17 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     }
 
     if (purchaseRequisitionId) {
-      const issuedSummary = issuanceItems.map((item) => `${item.quantity} ${item.unitOfMeasure} ${item.itemName} to ${item.recipientEmployeeName}`).join('; ');
+      // One part per item and recipient. A part per unit made 50 mice exceed the 2000-character history note limit.
+      const perItemAndRecipient = new Map();
+      for (const item of issuanceItems) {
+        const key = `${item.itemName}|${item.recipientEmployeeName}`;
+        const existing = perItemAndRecipient.get(key) || { quantity: 0, unitOfMeasure: item.unitOfMeasure, itemName: item.itemName, recipientEmployeeName: item.recipientEmployeeName };
+        existing.quantity += Number(item.quantity);
+        perItemAndRecipient.set(key, existing);
+      }
+      // shortcut: the history note keeps the first 1200 characters of the list, the full list stays in the issuance records; upgrade if history must list every recipient.
+      const fullSummary = [...perItemAndRecipient.values()].map((part) => `${part.quantity} ${part.unitOfMeasure} ${part.itemName} to ${part.recipientEmployeeName}`).join('; ');
+      const issuedSummary = fullSummary.length > 1200 ? `${fullSummary.slice(0, 1200)}…` : fullSummary;
       const actionNote = isPerUnitPickup
         ? `GSO Staff recorded ${issuedSummary}; barcode labels are mapped to the listed staff recipients and ready to print.`
         : initialStatus === 'Pending'
@@ -930,6 +940,14 @@ async function listMyIssuanceActivity(userId) {
                 'condition', issue.item_condition,
                 'quantity', issue.quantity,
                 'returnedQuantity', issue.returned_quantity,
+                'lossDamageCleared', issue.returned_quantity >= issue.quantity
+                  AND EXISTS (
+                    SELECT 1 FROM employee_issuance_returns AS loss_record
+                     WHERE loss_record.issuance_id = issue.id
+                       AND loss_record.status IN ('Lost', 'Returned')
+                       AND loss_record.decision_note = 'Recorded when PayMongo confirmed a Loss & Damage payment.'
+                       AND loss_record.decided_at IS NOT NULL
+                  ),
                 'returnedAt', (
                   SELECT MAX(COALESCE(ret.decided_at, ret.requested_at)) FROM employee_issuance_returns AS ret
                    WHERE ret.issuance_id = issue.id AND ret.status NOT IN ('Voided', 'Lost')
@@ -949,7 +967,9 @@ async function listMyIssuanceActivity(userId) {
                 'tags', COALESCE((
                   SELECT json_agg(json_build_object(
                     'tagCode', unit_tag.tag_code,
-                    'unitNumber', unit_tag.unit_number
+                    'unitNumber', unit_tag.unit_number,
+                    -- Available means the unit is back with GSO; the Loss / Damage Report lists only units still out.
+                    'custodyStatus', unit_tag.custody_status
                   ) ORDER BY unit_tag.unit_number)
                     FROM asset_unit_tags AS unit_tag
                    WHERE unit_tag.issuance_id = issue.id

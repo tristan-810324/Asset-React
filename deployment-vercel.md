@@ -64,7 +64,7 @@ $dump = "$env:TEMP\dyci-local.dump"
 
 $env:MIGRATION_DATABASE_URL = Read-Host "I-paste ang DIRECT connection string"
 & "$pg\pg_restore.exe" --no-owner --no-privileges --dbname=$env:MIGRATION_DATABASE_URL $dump
-npm run db:migrate -- --baseline=010  # kasama na sa local mo ang lahat ng 37 archived migrations
+npm run db:migrate -- --baseline=007  # kasama na sa local mo ang buong schema (migrations 001 hanggang 007)
 
 $env:DATABASE_URL = $env:MIGRATION_DATABASE_URL
 node scripts/create-admin.js        # bagong IT Admin

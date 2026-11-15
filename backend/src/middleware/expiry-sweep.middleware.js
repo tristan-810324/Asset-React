@@ -1,6 +1,8 @@
 const { waitUntil } = require('@vercel/functions');
 const issuancesService = require('../modules/issuances/issuances.service');
 const returnsService = require('../modules/issuances/returns.service');
+const facilityFlowService = require('../modules/requests/facility-flow.service');
+const serviceWorkOrdersService = require('../modules/requests/service-work-orders.service');
 
 const sweepIntervalMs = 60 * 1000;
 let lastSweepAt = 0;
@@ -15,6 +17,12 @@ module.exports = async function expirySweepMiddleware(req, res, next) {
     // Reminder emails can be slow, so they finish after the response instead of delaying it.
     waitUntil(returnsService.sendOverdueReminders().catch(() => {
       console.error('Could not send the overdue borrowing reminders.');
+    }));
+    waitUntil(facilityFlowService.sendFacilityOverdueReminders().catch(() => {
+      console.error('Could not send the overdue facility reminders.');
+    }));
+    waitUntil(serviceWorkOrdersService.runServiceWorkOrderAutomation().catch(() => {
+      console.error('Could not run the service job reminders and automatic closing.');
     }));
     await Promise.all([
       issuancesService.expirePendingIssuances().catch(() => {

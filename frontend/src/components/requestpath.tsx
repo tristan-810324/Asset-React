@@ -5,6 +5,7 @@ type Progress = { steps: readonly string[]; current: number; ended?: string }
 
 const borrowingSteps = ['Requested', 'Approved', 'Borrowed', 'Returned'] as const
 const standardSteps = ['Requested', 'Approved', 'Completed'] as const
+const facilitySteps = ['Requested', 'Approved', 'Released', 'Returned', 'Completed'] as const
 const workSteps = ['Requested', 'Approved', 'In Progress', 'Completed'] as const
 const issuanceSteps = ['Pending', 'Issued', 'Returned'] as const
 
@@ -17,6 +18,7 @@ const stepLookup = (table: Record<string, number | undefined>) => (status: strin
 // Older "Ready for Pickup" borrowings count as approved.
 const borrowingStepFor = stepLookup({ Approved: 1, 'Ready for Pickup': 1, Issued: 2, 'Return Requested': 2, Returned: 3, 'For Repair': 3, Closed: 3 })
 const standardStepFor = stepLookup({ Approved: 1, Completed: 2, Closed: 2 })
+const facilityStepFor = stepLookup({ Approved: 1, Issued: 2, 'For Repair': 3, Returned: 3, Completed: 4, Closed: 4 })
 const workStepFor = stepLookup({ Approved: 1, 'In Progress': 2, Completed: 3, Closed: 3 })
 const issuanceStepFor = stepLookup({ 'Pending acknowledgment': 0, Issued: 1, Overdue: 1, 'Partially returned': 1, Returned: 2 })
 
@@ -26,8 +28,12 @@ function progressOf(steps: readonly string[], stepFor: (status: string) => numbe
 }
 
 // Which path a request type uses. Purchase requisitions have per-line routes, so they have no single path yet.
-function progressFor(requestType: string, status: string): Progress | null {
+// A facility request with items is released and returned; one without items is approved, then completed.
+function progressFor(requestType: string, status: string, hasItems = false): Progress | null {
   if (requestType === 'BORROWING') return progressOf(borrowingSteps, borrowingStepFor, status, requestEndings)
+  if (requestType === 'FACILITY_USE' && (hasItems || ['Issued', 'For Repair', 'Returned'].includes(status))) {
+    return progressOf(facilitySteps, facilityStepFor, status, requestEndings)
+  }
   if (requestType === 'FACILITY_USE' || requestType === 'ISSUANCE_REQUEST') return progressOf(standardSteps, standardStepFor, status, requestEndings)
   if (requestType === 'JOB_REQUEST' || requestType === 'LOSS_DAMAGE_REPORT') return progressOf(workSteps, workStepFor, status, requestEndings)
   return null
@@ -65,14 +71,14 @@ export function ProgressPath({ steps, current, ended, compact = false }: Progres
 }
 
 // The path for any request type that has one; renders nothing for the rest.
-export function RequestProgressPath({ requestType, status, compact }: { requestType: string; status: string; compact?: boolean }) {
-  const progress = progressFor(requestType, status)
+export function RequestProgressPath({ requestType, status, compact, hasItems }: { requestType: string; status: string; compact?: boolean; hasItems?: boolean }) {
+  const progress = progressFor(requestType, status, hasItems)
   return progress ? <ProgressPath {...progress} compact={compact} /> : null
 }
 
 // The progress card at the top of a request's details.
-export function RequestProgressSection({ requestType, status }: { requestType: string; status: string }) {
-  const progress = progressFor(requestType, status)
+export function RequestProgressSection({ requestType, status, hasItems }: { requestType: string; status: string; hasItems?: boolean }) {
+  const progress = progressFor(requestType, status, hasItems)
   if (!progress) return null
   return (
     <section className="mt-5 rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">

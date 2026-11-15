@@ -878,9 +878,6 @@ export default function ReturnItems() {
           <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
             + Issuances Records
           </a>
-          <a href="/gso/borrowing-returns" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-            + Borrowing Returns
-          </a>
         </nav>
       </section>
 

@@ -3,7 +3,7 @@ import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
 import { type RequestType } from './requesterApi'
 
-type IconName = 'arrow' | 'building' | 'cart' | 'clipboard' | 'package' | 'truck' | 'warning' | 'wrench'
+type IconName = 'arrow' | 'building' | 'cart' | 'clipboard' | 'package' | 'warning' | 'wrench'
 
 const iconPaths: Record<IconName, ReactNode> = {
   arrow: <path d="M5 12h14M13 6l6 6-6 6" />,
@@ -11,7 +11,6 @@ const iconPaths: Record<IconName, ReactNode> = {
   cart: <><circle cx="9" cy="20" r="1.5" /><circle cx="18" cy="20" r="1.5" /><path d="M2 3h3l2.6 12.2a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.5L21.5 8H6" /></>,
   clipboard: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4.25V3.5A1.5 1.5 0 0 1 10.5 2h3A1.5 1.5 0 0 1 15 3.5v.75M8.5 10h7M8.5 14h7M8.5 18h4" /></>,
   package: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 8 9 5 9-5M3 8v9l9 5 9-5V8M12 13v9" /></>,
-  truck: <><path d="M3 6h11v10H3zM14 10h4l3 3v3h-7" /><circle cx="7" cy="18" r="2" /><circle cx="17" cy="18" r="2" /></>,
   warning: <><path d="M12 3 2 21h20L12 3z" /><path d="M12 10v5M12 18h.01" /></>,
   wrench: <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z" />,
 }
@@ -20,8 +19,8 @@ function Icon({ name, className = 'h-5 w-5' }: { name: IconName; className?: str
   return <svg aria-hidden="true" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{iconPaths[name]}</svg>
 }
 
-const services: Array<{ type: RequestType; title: string; detail: string; icon: IconName }> = [
-  { type: 'FACILITY_USE', title: 'Facility Use Permit', detail: 'Reserve a campus venue and list needed equipment.', icon: 'building' },
+const services: Array<{ type: RequestType; title: string; detail: string; icon: IconName; action?: string }> = [
+  { type: 'FACILITY_USE', title: 'Facilities and equipment request', detail: 'Reserve a campus venue and borrow the equipment you need. Return borrowed items after the event.', icon: 'building' },
   { type: 'JOB_REQUEST', title: 'Job / Service Request', detail: 'Describe the work, location, and target date.', icon: 'wrench' },
   { type: 'LOSS_DAMAGE_REPORT', title: 'Loss / Damage Report', detail: 'Report lost or damaged school property.', icon: 'warning' },
 ]
@@ -130,8 +129,8 @@ function RequestCenterContent() {
       <section className="mt-6" aria-labelledby="inventory-heading">
         <p className={eyebrowClass}>Equipment & supplies</p>
         <h2 id="inventory-heading" className="mt-1 text-lg font-black tracking-tight text-slate-900">Inventory</h2>
-        <div className="mt-4 grid gap-4 lg:grid-cols-3">
-          <article className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-50/60 via-white to-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 lg:col-span-2">
+        <div className="mt-4">
+          <article className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-50/60 via-white to-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:gap-4 sm:px-6 sm:py-5">
               <span className={cardIconClass}><Icon name="clipboard" className="h-5 w-5" /></span>
               <div className="min-w-0">
@@ -147,35 +146,21 @@ function RequestCenterContent() {
               </a>
             </div>
           </article>
-
-          <a href={newRequestHref('BORROWING')} onClick={(event) => openConfirm(event, { title: 'Borrow equipment', detail: 'Use it, then return it by the date you set. Items you keep go under Request an item.', href: newRequestHref('BORROWING'), icon: 'package' })} className={cardClass}>
-            <span className={cardIconClass}><Icon name="package" /></span>
-            <span className="mt-3 text-base font-black tracking-tight text-slate-900">Borrow equipment</span>
-            <span className="mt-1.5 flex-1 text-xs font-medium leading-relaxed text-slate-500">Use it, then return it by the date you set. Items you keep go under Request an item.</span>
-            <StartLabel>Browse inventory</StartLabel>
-          </a>
         </div>
       </section>
 
       <section className="mt-6" aria-labelledby="services-heading">
         <p className={eyebrowClass}>School services</p>
         <h2 id="services-heading" className="mt-1 text-lg font-black tracking-tight text-slate-900">Other requests</h2>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
           {services.map((card) => (
-            <a key={card.type} href={newRequestHref(card.type)} onClick={(event) => openConfirm(event, { title: card.title, detail: card.detail, href: newRequestHref(card.type), icon: card.icon })} className={cardClass}>
+            <a key={card.type} href={newRequestHref(card.type)} onClick={(event) => openConfirm(event, { title: card.title, detail: card.detail, href: newRequestHref(card.type), icon: card.icon })} className={`${cardClass} last:col-span-2 xl:last:col-span-1`}>
               <span className={cardIconClass}><Icon name={card.icon} /></span>
               <span className="mt-2 text-sm font-black leading-tight tracking-tight text-slate-900 sm:mt-3 sm:text-base">{card.title}</span>
               <span className="mt-1.5 hidden flex-1 text-xs font-medium leading-relaxed text-slate-500 lg:block">{card.detail}</span>
-              <StartLabel />
+              <StartLabel>{card.action}</StartLabel>
             </a>
           ))}
-
-          <article className="flex min-h-48 flex-col rounded-2xl border-2 border-dashed border-slate-300 bg-linear-to-br from-blue-50/60 via-white to-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-            <span className="grid h-11 w-11 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700 shadow-sm shadow-blue-900/5"><Icon name="truck" /></span>
-            <span className="mt-2 text-sm font-black leading-tight tracking-tight text-slate-700 sm:mt-3 sm:text-base">Vehicle / Other Services</span>
-            <span className="mt-1.5 hidden flex-1 text-xs font-medium leading-relaxed text-slate-500 lg:block">Official forms and approvals still required.</span>
-            <span className="mt-3 inline-flex w-fit rounded-full bg-slate-200 px-2.5 py-1 text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-600">Not available</span>
-          </article>
         </div>
       </section>
       <p className="mt-5 text-[0.68rem] leading-relaxed text-slate-500">GSO reviews every request. Track updates in <a href="/requester/my-requests" className="font-extrabold text-blue-700 hover:underline">My Requests</a>.</p>

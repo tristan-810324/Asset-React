@@ -14,6 +14,8 @@ const requestsRoutes = require('./modules/requests/requests.routes');
 const requesterIdentityRoutes = require('./modules/requester-identity/requester-identity.routes');
 const notificationsRoutes = require('./modules/notifications/notifications.routes');
 const signaturesRoutes = require('./modules/signatures/signatures.routes');
+const facilityOptionsRoutes = require('./modules/facilities/facilities.routes');
+const lossDamageRoutes = require('./modules/loss-damage/loss-damage.routes');
 const errorMiddleware = require('./middleware/error.middleware');
 const expirySweepMiddleware = require('./middleware/expiry-sweep.middleware');
 
@@ -33,6 +35,8 @@ app.use(cors({
     return callback(null, false);
   },
 }));
+// PayMongo sends a signed raw JSON body. Its route must read the raw bytes before express.json() parses them.
+app.use('/api/v1/loss-damage/webhooks', lossDamageRoutes.webhookRouter);
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/', (req, res) => {
@@ -65,6 +69,8 @@ app.use('/api/v1/requests', requestsRoutes);
 app.use('/api/v1/requester-identity', requesterIdentityRoutes);
 app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/signatures', signaturesRoutes);
+app.use('/api/v1/facility-options', facilityOptionsRoutes);
+app.use('/api/v1/loss-damage', lossDamageRoutes.router);
 app.use(errorMiddleware);
 
 module.exports = app;

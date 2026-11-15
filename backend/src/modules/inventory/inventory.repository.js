@@ -221,9 +221,9 @@ function currentBorrowersColumn(includeRequesterInventory) {
                END AS state,
                asset.quantity,
                to_char(COALESCE(asset.issued_at, request.updated_at) AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS issued_at,
-               request.form_data->>'neededDate' AS use_at,
+               COALESCE(request.form_data->>'neededDate', request.form_data->>'date') AS use_at,
                COALESCE(to_char(asset.due_date, 'YYYY-MM-DD'), request.form_data->>'returnDate') AS expected_return_at,
-               request.form_data->>'useLocation' AS use_location,
+               COALESCE(request.form_data->>'useLocation', request.form_data->>'venue') AS use_location,
                request.form_data->>'purpose' AS purpose,
                request.status IN ('Issued', 'Return Requested')
                  AND COALESCE(asset.due_date < (NOW() AT TIME ZONE 'Asia/Manila')::DATE, FALSE) AS is_overdue

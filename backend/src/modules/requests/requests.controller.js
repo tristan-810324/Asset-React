@@ -1,11 +1,12 @@
 const requestsService = require('./requests.service');
+const facilityFlowService = require('./facility-flow.service');
 
 function asyncHandler(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
-const listAssets = asyncHandler(async (_req, res) => {
-  const items = await requestsService.listAssets();
+const listAssets = asyncHandler(async (req, res) => {
+  const items = await requestsService.listAssets({ includeUnstocked: req.query.includeUnstocked === '1' });
   res.json({ success: true, data: { items } });
 });
 
@@ -129,7 +130,61 @@ const updateStatus = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { request } });
 });
 
+const recordFacilitySlipPrints = asyncHandler(async (req, res) => {
+  const printed = await facilityFlowService.recordSlipPrints(req.body, req.user);
+  res.json({ success: true, data: { printed } });
+});
+
+const reprintFacilitySlip = asyncHandler(async (req, res) => {
+  const request = await facilityFlowService.reprintSlip(req.params.id, req.body, req.user);
+  res.json({ success: true, data: { request } });
+});
+
+const confirmMyService = asyncHandler(async (req, res) => {
+  const request = await requestsService.confirmServiceMine(req.params.id, req.body, req.user);
+  res.json({ success: true, data: { request } });
+});
+
+const reopenMyService = asyncHandler(async (req, res) => {
+  const request = await requestsService.reopenServiceMine(req.params.id, req.body, req.user);
+  res.json({ success: true, data: { request } });
+});
+
+const settleFacilityItem = asyncHandler(async (req, res) => {
+  const request = await facilityFlowService.settleFacilityItem(req.params.id, req.params.assetId, req.body, req.user);
+  res.json({ success: true, data: { request } });
+});
+
+const saveFacilityDamageDecision = asyncHandler(async (req, res) => {
+  const result = await facilityFlowService.saveFacilityDamageDecision(req.params.id, req.body, req.user);
+  res.json({ success: true, data: result });
+});
+
+const createFacilityDamagePaymentLink = asyncHandler(async (req, res) => {
+  const result = await facilityFlowService.createFacilityDamagePaymentLink(req.params.id, req.user);
+  res.json({ success: true, data: result });
+});
+
+const cancelFacilityDamagePaymentLink = asyncHandler(async (req, res) => {
+  const result = await facilityFlowService.cancelFacilityDamagePaymentLink(req.params.id, req.body, req.user);
+  res.json({ success: true, data: result });
+});
+
+const getMyFacilityDamage = asyncHandler(async (req, res) => {
+  const result = await facilityFlowService.getMyFacilityDamage(req.params.id, req.user);
+  res.json({ success: true, data: result });
+});
+
 module.exports = {
+  confirmMyService,
+  reopenMyService,
+  recordFacilitySlipPrints,
+  reprintFacilitySlip,
+  settleFacilityItem,
+  saveFacilityDamageDecision,
+  createFacilityDamagePaymentLink,
+  cancelFacilityDamagePaymentLink,
+  getMyFacilityDamage,
   listAssets,
   listPurchaseItemNames,
   listRequesterDepartmentStaff,

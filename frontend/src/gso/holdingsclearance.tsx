@@ -87,7 +87,7 @@ export default function HoldingsClearance() {
                 <td className="px-3 py-2.5">
                   {entry.source === 'GSO issuance'
                     ? <a href="/gso/return-items" className="text-[0.62rem] font-extrabold text-blue-700 hover:underline">Return Items</a>
-                    : <a href="/gso/borrowing-requests" className="text-[0.62rem] font-extrabold text-blue-700 hover:underline">Borrowing Requests</a>}
+                    : <span className="text-[0.62rem] font-extrabold text-slate-500">Borrowing requests</span>}
                 </td>
               </tr>
             ))}

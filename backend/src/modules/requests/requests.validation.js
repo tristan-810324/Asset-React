@@ -1,3 +1,5 @@
+const { SERVICE_CATEGORIES, routeForCategory, priorityForService } = require('./service-work-order.constants');
+
 const REQUEST_TYPES = new Set([
   'BORROWING',
   'FACILITY_USE',
@@ -64,6 +66,11 @@ function integer(value, label, { optional = false, minimum = 0, maximum = 100000
   return number;
 }
 
+function requireItems(value) {
+  if (!Array.isArray(value) || value.length === 0) invalid('Pick at least one item issued to you.');
+  return value;
+}
+
 function rows(value, label, mapper, { min = 1, max = 30 } = {}) {
   if (!Array.isArray(value) || value.length < min || value.length > max) {
     invalid(`${label}: maglagay ng ${min}${max > min ? ` hanggang ${max}` : ''} row.`);
@@ -117,11 +124,23 @@ function validateCreateRequest(input) {
 
   if (requestType === 'FACILITY_USE') {
     const activityType = text(data.activityType, 'activity type', 30).toUpperCase();
-    if (!['CURRICULAR', 'CO_CURRICULAR', 'OTHER'].includes(activityType)) invalid('Pumili ng valid na activity type.');
+    if (!['CURRICULAR', 'CO_CURRICULAR', 'OTHER'].includes(activityType)) invalid('Choose a valid nature of activity.');
     const startTime = text(data.startTime, 'start time', 5);
     const endTime = text(data.endTime, 'end time', 5);
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(endTime) || endTime <= startTime) {
-      invalid('Tiyaking valid at mas huli sa start time ang end time.');
+      invalid('Enter a valid time. The end time must be after the start time.');
+    }
+    // Equipment is picked from the Item Master. The server fills in each record's name, code, description and unit.
+    const equipment = rows(data.equipment || [], 'Equipment list', (row) => {
+      const rawId = String(row.itemId ?? '');
+      if (!/^\d{1,20}$/.test(rawId)) invalid('Choose an item from the list.');
+      return { itemId: rawId, quantity: integer(row.quantity, 'equipment quantity', { minimum: 1 }) };
+    }, { min: 0, max: 30 });
+    if (new Set(equipment.map((row) => row.itemId)).size !== equipment.length) invalid('Each item can only be listed once.');
+    // One number for everyone taking part (male and female counts were dropped on 2026-11-15); an estimate is fine.
+    const participants = data.participants === undefined || data.participants === null || data.participants === '' ? null : Number(data.participants);
+    if (participants !== null && (!Number.isInteger(participants) || participants < 1 || participants > 100000)) {
+      invalid('Enter the number of participants as a whole number of at least 1.');
     }
     return {
       requestType,
@@ -134,32 +153,38 @@ function validateCreateRequest(input) {
         date: date(data.date, 'facility date', { notPast: true }),
         startTime,
         endTime,
-        participantsMale: integer(data.participantsMale, 'male participants', { optional: true }),
-        participantsFemale: integer(data.participantsFemale, 'female participants', { optional: true }),
+        participants,
         venue: text(data.venue, 'venue', 200),
-        equipment: rows(data.equipment || [], 'Equipment list', (row) => ({
-          name: text(row.name, 'equipment name', 200),
-          quantity: integer(row.quantity, 'equipment quantity', { minimum: 1 }),
-          unit: text(row.unit, 'equipment unit', 40, { optional: true }) || 'pcs',
-        }), { min: 0, max: 30 }),
-        remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
+        equipment,
       },
     };
   }
 
   if (requestType === 'JOB_REQUEST') {
+    // The category decides the receiving team and the starting priority. The client's values are never trusted.
+    const serviceCategory = text(data.serviceCategory, 'service category', 60);
+    if (!SERVICE_CATEGORIES.has(serviceCategory)) invalid('Pumili ng valid na service category.');
+    const requiredDate = date(data.requiredDate, 'target date', { notPast: true });
+    // "Others" needs the requester to say what the service is. The text is ignored for every other category.
+    const serviceOther = serviceCategory === 'OTHERS' ? text(data.serviceOther, 'description of the service', 200) : '';
     return {
       requestType,
       formData: {
         departmentOrganization: text(data.departmentOrganization, 'department/area', 200),
+        location: text(data.location, 'location / room', 200),
+        serviceCategory,
+        serviceOther,
+        serviceRoute: routeForCategory(serviceCategory),
+        servicePriority: priorityForService({ category: serviceCategory, targetDate: requiredDate }),
         purpose: text(data.purpose, 'purpose', 2000),
-        requiredDate: date(data.requiredDate, 'required date', { notPast: true }),
-        tasks: rows(data.tasks, 'Job particulars', (row) => ({
+        requiredDate,
+        // Work items are optional now: the requester form no longer asks for them, and staff track the job itself.
+        tasks: rows(data.tasks ?? [], 'Job particulars', (row) => ({
           quantity: integer(row.quantity, 'task quantity', { minimum: 1 }),
           particulars: text(row.particulars, 'particulars', 300),
           natureOfWork: text(row.natureOfWork, 'description/nature of work', 1000),
           remarks: text(row.remarks, 'task remarks', 500, { optional: true }),
-        }), { max: 30 }),
+        }), { min: 0, max: 30 }),
         remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
       },
     };
@@ -287,12 +312,23 @@ function validateCreateRequest(input) {
       keyArea: text(data.keyArea, 'key area/location', 200),
       incidentDate: date(data.incidentDate, 'incident date', { notFuture: true }),
       responsiblePerson: text(data.responsiblePerson, 'reported/responsible person', 200),
-      items: rows(data.items, 'Incident items', (row) => ({
-        quantity: integer(row.quantity, 'item quantity', { minimum: 1 }),
-        description: text(row.description, 'item/description', 500),
-        assetCode: text(row.assetCode, 'asset/control number', 100, { optional: true }),
-        remarks: text(row.remarks, 'item remarks', 500, { optional: true }),
-      }), { max: 30 }),
+      // Items come from the requester's issued list. The server checks each one and copies its name and code
+      // (reportedIssuedRows in requests.repository.js), so an item that was not issued to them cannot be reported.
+      items: rows(requireItems(data.items), 'Incident items', (row) => {
+        const issuanceId = String(row.issuanceId ?? '');
+        if (!/^\d{1,20}$/.test(issuanceId)) invalid('Pick the items issued to you from the list.');
+        if (row.identityUnknown !== undefined && typeof row.identityUnknown !== 'boolean') invalid('Choose whether you know the exact unit.');
+        const identityUnknown = row.identityUnknown === true;
+        const tagCode = text(row.tagCode, 'unit barcode', 100, { optional: true });
+        if (identityUnknown && (incidentType !== 'LOST' || tagCode)) invalid('Only a lost item without a selected asset tag can be marked as unidentified.');
+        return {
+          issuanceId,
+          tagCode,
+          quantity: integer(row.quantity, 'item quantity', { minimum: 1 }),
+          identityUnknown,
+          remarks: text(row.remarks, 'item remarks', 500, { optional: true }),
+        };
+      }, { max: 30 }),
       remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
     },
   };

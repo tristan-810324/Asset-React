@@ -7,6 +7,8 @@ const { STAFF_ROUTES } = require('./requisition-routing');
 const notificationsRepository = require('../notifications/notifications.repository');
 const auditRepository = require('../audit/audit.repository');
 const signaturesService = require('../signatures/signatures.service');
+const facilityFlow = require('./facility-flow.service');
+const serviceWorkOrders = require('./service-work-orders.service');
 const { invalid, text, validateCreateRequest, validateRequestFilters, validateRequestId } = require('./requests.validation');
 
 const mailTransport = env.smtp
@@ -278,7 +280,12 @@ const transitions = {
     Submitted: ['Under Review', 'Needs Information', 'Approved', 'Rejected'],
     'Under Review': ['Needs Information', 'Approved', 'Rejected'],
     'Needs Information': ['Under Review', 'Approved', 'Rejected'],
-    Approved: ['Completed', 'Closed'],
+    // With items: Approved → Issued (released) → Returned or For Repair → Completed. Without items: Approved → Completed.
+    // facility-flow.service.js checks which of these a request may take.
+    Approved: ['Issued', 'Completed', 'Closed'],
+    Issued: ['Returned', 'For Repair'],
+    'For Repair': ['Returned'],
+    Returned: ['Completed'],
     Completed: ['Closed'],
   },
   JOB_REQUEST: {
@@ -310,8 +317,8 @@ const transitions = {
 const conditions = new Set(['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']);
 const repairConditions = new Set(['Needs Repair', 'Under Maintenance', 'Unserviceable']);
 
-async function listAssets() {
-  return requestsRepository.listAssets();
+async function listAssets(options) {
+  return requestsRepository.listAssets(options);
 }
 
 async function listPurchaseItemNames() {
@@ -420,13 +427,27 @@ async function createRequest(input, user) {
   }
   const request = await requestsRepository.createRequest({ ...validated, userId: user.id });
   const typeLabel = requestTypeLabels[request.requestType] || 'Request';
-  await notifyStaff(request, {
-    key: `staff-new:${request.id}`,
-    title: `New ${typeLabel.toLowerCase()}`,
-    message: `${request.formData?.requesterName || request.requesterName || 'A requester'} submitted a ${typeLabel.toLowerCase()}. Review it to move it forward.`,
-  });
+  if (request.requestType === 'JOB_REQUEST') {
+    // A job goes to the team that owns its category (GSO or ITSS), not to every GSO Staff account.
+    await sideEffect('Service team notification', () => serviceWorkOrders.notifyNewWorkOrder(request));
+  } else {
+    await notifyStaff(request, {
+      key: `staff-new:${request.id}`,
+      title: `New ${typeLabel.toLowerCase()}`,
+      message: `${request.formData?.requesterName || request.requesterName || 'A requester'} submitted a ${typeLabel.toLowerCase()}. Review it to move it forward.`,
+    });
+  }
+  // The requester's own confirmation, so the bell shows that the request went through.
+  await sideEffect('Requester notification', () => notificationsRepository.createUserNotification({
+    userId: request.requesterId,
+    type: 'REQUEST',
+    title: 'Request submitted',
+    message: `${request.referenceNo}: GSO received your ${typeLabel.toLowerCase()} and will review it.`,
+    href: `/requester/requests/${request.id}`,
+    dedupeKey: `requester-submitted:${request.id}`,
+  }));
   await auditRequest(request, user, { action: 'created', reason: `${typeLabel} submitted by ${request.formData?.requesterName || request.requesterName || user.name}.` });
-  return request;
+  return serviceWorkOrders.enrichRequest(request);
 }
 
 async function listRequesterDepartmentStaff(user) {
@@ -437,7 +458,7 @@ async function listRequesterDepartmentStaff(user) {
 }
 
 async function listMine(user) {
-  return requestsRepository.listMine(user.id);
+  return serviceWorkOrders.enrichRequests(await requestsRepository.listMine(user.id));
 }
 
 async function listMyActivity(user) {
@@ -447,7 +468,7 @@ async function listMyActivity(user) {
 async function getMine(idValue, user) {
   const request = await requestsRepository.getMineById(validateRequestId(idValue), user.id);
   if (!request) invalid('Hindi makita ang request.', 404);
-  return request;
+  return serviceWorkOrders.enrichRequest(request);
 }
 
 async function cancelMine(idValue, user) {
@@ -470,11 +491,15 @@ async function cancelMine(idValue, user) {
   });
   // Nobody needs to act on it any more.
   await resolveNotices(`staff-new:${id}:`, `staff-reply:${id}:`, `head-approval:${id}:`);
-  await notifyStaff(request, {
-    key: `staff-cancelled:${id}`,
-    title: 'Request cancelled by requester',
-    message: `${request.requesterName || 'The requester'} cancelled this request. No further action is needed.`,
-  });
+  if (request.requestType === 'JOB_REQUEST') {
+    await sideEffect('Service team notification', () => serviceWorkOrders.notifyCancelled(request));
+  } else {
+    await notifyStaff(request, {
+      key: `staff-cancelled:${id}`,
+      title: 'Request cancelled by requester',
+      message: `${request.requesterName || 'The requester'} cancelled this request. No further action is needed.`,
+    });
+  }
   await auditRequest(request, user, { action: 'cancelled', reason: 'Request cancelled by the requester.', oldValues: { status: current.status } });
   return request;
 }
@@ -486,13 +511,30 @@ async function respondMine(idValue, input, user) {
   if (current.status !== 'Needs Information') invalid('Maaaring magbigay ng dagdag na impormasyon kapag Needs Information ang status.', 409);
   const message = text(input?.message, 'response', 2000);
   const request = await requestsRepository.respondToRequest({ id, userId: user.id, message });
-  await notifyStaff(request, {
-    key: `staff-reply:${id}:${Date.now()}`,
-    title: 'Requester replied',
-    message: `${request.requesterName || 'The requester'} sent the information GSO asked for. Review the request again.`,
-  });
+  if (request.requestType === 'JOB_REQUEST') {
+    await sideEffect('Service team notification', () => serviceWorkOrders.notifyRequesterReply(request));
+  } else {
+    await notifyStaff(request, {
+      key: `staff-reply:${id}:${Date.now()}`,
+      title: 'Requester replied',
+      message: `${request.requesterName || 'The requester'} sent the information GSO asked for. Review the request again.`,
+    });
+  }
   await auditRequest(request, user, { action: 'updated', reason: 'Requester replied to a request for more information.', oldValues: { status: current.status } });
-  return request;
+  return serviceWorkOrders.enrichRequest(request);
+}
+
+// The requester confirms or reopens a completed job. The work-order service checks ownership and status.
+async function confirmServiceMine(idValue, input, user) {
+  const id = validateRequestId(idValue);
+  await serviceWorkOrders.confirmService(id, input, user);
+  return getMine(id, user);
+}
+
+async function reopenServiceMine(idValue, input, user) {
+  const id = validateRequestId(idValue);
+  await serviceWorkOrders.reopenService(id, input, user);
+  return getMine(id, user);
 }
 
 async function requestReturn(idValue, user) {
@@ -881,7 +923,7 @@ async function getForGso(idValue) {
   if (request.requestType === 'PURCHASE_REQUISITION' && !purchaseRequestReadyForStaffIssuance(request)) {
     invalid('Hindi pa kumpleto ang stock ng buong request. Walang item na puwedeng i-issue.', 409);
   }
-  return request;
+  return serviceWorkOrders.enrichRequest(request);
 }
 
 async function updateStatus(idValue, input, user) {
@@ -891,6 +933,9 @@ async function updateStatus(idValue, input, user) {
   const note = text(input.note, 'review note', 2000, { optional: true });
   const current = await requestsRepository.getById(null, id);
   if (!current) invalid('Request not found.', 404);
+  if (current.requestType === 'JOB_REQUEST') invalid('Job / service requests are handled from the Service Workboard.', 409);
+  // Loss / damage reports move through the Loss & Damage Cases page, where a payment must be confirmed first.
+  if (current.requestType === 'LOSS_DAMAGE_REPORT') invalid('Loss / damage reports are decided on the Loss & Damage Cases page.', 409);
   if (current.requestType === 'PURCHASE_REQUISITION') {
     if (current.status !== 'Approved' || status !== 'Completed') invalid('Approved purchase requisitions lang ang maaaring markahang Completed pagkatapos ng issuance.', 403);
     if (!note) invalid('Ilagay ang issuance batch reference pagkatapos maitala ang issuance.');
@@ -903,7 +948,8 @@ async function updateStatus(idValue, input, user) {
   const activatesBorrowing = current.requestType === 'BORROWING' && status === 'Approved';
   const effectiveStatus = activatesBorrowing ? 'Issued' : status;
   let dueDate;
-  if (effectiveStatus === 'Issued') {
+  // A facility release is due at the end of the event, so only a borrowing asks for a due date.
+  if (effectiveStatus === 'Issued' && current.requestType === 'BORROWING') {
     dueDate = text(input.dueDate || current.formData.returnDate, 'due date', 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) invalid('Invalid due date.');
     const [year, month, day] = dueDate.split('-').map(Number);
@@ -939,6 +985,15 @@ async function updateStatus(idValue, input, user) {
     conditionIn = null;
   }
 
+  const facilityReturns = current.requestType === 'FACILITY_USE' ? facilityFlow.prepareStatusChange(current, status, input) : null;
+  // A facility release or return opened by a typed slip number instead of a scan needs a reason and is flagged
+  // in the audit log (MANUAL_ENTRY, shown as "Typed code" to GSO Staff and the GSO Head), like Return Items.
+  const slipStep = current.requestType === 'FACILITY_USE' && ['Approved', 'Issued'].includes(current.status)
+    && ['Issued', 'Returned', 'For Repair'].includes(status);
+  const typedSlip = slipStep && input.entryMethod === 'typed';
+  const typedReason = typedSlip ? text(input.typedReason, 'reason for typing the slip number', 300, { optional: true }) : '';
+  if (typedSlip && !typedReason) invalid('Explain why the slip number was typed instead of scanned.');
+
   const updated = await requestsRepository.setStatus({
     id,
     expectedStatus: current.status,
@@ -949,19 +1004,22 @@ async function updateStatus(idValue, input, user) {
     conditionOut,
     conditionIn,
     conditionsIn,
+    facilityReturns,
   });
   // A borrowing return names the items and their recorded condition; everything else gets the standard notice.
   const returnedItems = current.requestType === 'BORROWING' && conditionsIn ? describeBorrowingReturn(current, conditionsIn) : '';
   if (returnedItems) await notifyBorrowingReturn(updated, status, returnedItems, note);
   else await notifyRequesterStatus(updated, effectiveStatus, note);
+  if (current.requestType === 'FACILITY_USE') await facilityFlow.afterStatusChange(updated, effectiveStatus, facilityReturns);
   await resolveNotices(`staff-return:${id}:`, `staff-new:${id}:`, `staff-reply:${id}:`);
   await auditRequest(updated, user, {
     action: statusAuditAction[effectiveStatus] || 'updated',
     reason: returnedItems
       ? `Borrowing ${status === 'For Repair' ? 'returned for repair' : 'returned'}: ${returnedItems}.${note ? ` Note: ${note}` : ''}`
-      : `${requestTypeLabels[current.requestType] || 'Request'} moved from ${current.status} to ${effectiveStatus}.${note ? ` Note: ${note}` : ''}`,
+      : `${requestTypeLabels[current.requestType] || 'Request'} moved from ${current.status} to ${effectiveStatus}.${note ? ` Note: ${note}` : ''}${typedSlip ? ` Slip number typed, not scanned. Reason: ${typedReason}` : ''}`,
     oldValues: { status: current.status },
-    newValues: { dueDate: dueDate || null, conditionOut, conditionIn, conditionsIn },
+    newValues: { dueDate: dueDate || null, conditionOut, conditionIn, conditionsIn, ...(typedSlip ? { entryMethod: 'typed', typedReason } : {}) },
+    flag: typedSlip ? 'MANUAL_ENTRY' : undefined,
   });
   return updated;
 }
@@ -976,6 +1034,8 @@ module.exports = {
   getMine,
   cancelMine,
   respondMine,
+  confirmServiceMine,
+  reopenServiceMine,
   requestReturn,
   listAll,
   listPurchaseRequisitions,

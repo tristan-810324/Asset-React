@@ -1,6 +1,8 @@
 const pool = require('../../config/db');
 const { getAvailableQuantity, refreshInventoryStatus } = require('../inventory/inventory.stock');
 const { staffRouteOptions, nextRequisitionStatus, nameMatch } = require('./requisition-routing');
+const { hasUnsettledItems, recordFacilityReturn } = require('./facility-flow.repository');
+const serviceWorkOrdersRepository = require('./service-work-orders.repository');
 
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
@@ -27,6 +29,16 @@ const REQUEST_SELECT = `
          requester.id AS "requesterId",
          requester.name AS "requesterName",
          requester.email AS "requesterEmail",
+         -- First and last name: the linked employee record first, then the name on the identity form.
+         (SELECT NULLIF(trim(concat_ws(' ',
+                   COALESCE(NULLIF(trim(employee.first_name), ''), NULLIF(trim(profile.first_name), '')),
+                   COALESCE(NULLIF(trim(employee.last_name), ''), NULLIF(trim(profile.last_name), '')))), '')
+            FROM requester_identity_profiles AS profile
+            LEFT JOIN employees AS employee ON lower(employee.employee_code) = lower(profile.employee_code)
+           WHERE profile.user_id = request.requested_by_user_id
+           LIMIT 1) AS "requesterFullName",
+         request.slip_printed_at AS "slipPrintedAt",
+         (SELECT printer.name FROM users AS printer WHERE printer.id = request.slip_printed_by_user_id) AS "slipPrintedBy",
          COALESCE((
            SELECT json_agg(json_build_object(
              'id', asset.id,
@@ -39,12 +51,45 @@ const REQUEST_SELECT = `
              'conditionIn', asset.condition_in,
              'dueDate', to_char(asset.due_date, 'YYYY-MM-DD'),
              'issuedAt', asset.issued_at,
-             'returnedAt', asset.returned_at
+             'returnedAt', asset.returned_at,
+             'returnedQuantity', asset.returned_quantity,
+             'damagedQuantity', asset.damaged_quantity,
+             'lostQuantity', asset.lost_quantity,
+             'returnedByUserId', asset.returned_by_user_id::TEXT,
+             'settlementStatus', asset.settlement_status,
+             'settlementNote', asset.settlement_note,
+             'settledAt', asset.settled_at,
+             'settledBy', (SELECT settler.name FROM users AS settler WHERE settler.id = asset.settled_by_user_id)
            ) ORDER BY asset.id)
              FROM service_request_assets AS asset
              JOIN item_catalog AS item ON item.id = asset.item_id
             WHERE asset.request_id = request.id
          ), '[]'::json) AS assets,
+         (
+           SELECT json_build_object(
+             'id', settlement.id::TEXT,
+             'requestId', settlement.request_id::TEXT,
+             'resolution', settlement.resolution,
+             'reason', settlement.reason,
+             'amountCentavos', settlement.amount_centavos,
+             'currency', settlement.currency,
+             'status', settlement.status,
+             'decidedAt', settlement.assessed_at,
+             'assessedBy', (SELECT assessor.name FROM users AS assessor WHERE assessor.id = settlement.assessed_by_user_id),
+             'linkId', settlement.paymongo_link_id,
+             'checkoutUrl', settlement.paymongo_checkout_url,
+             'linkReference', settlement.paymongo_reference_number,
+             'linkCreatedAt', settlement.link_created_at,
+             'linkCreatedBy', (SELECT creator.name FROM users AS creator WHERE creator.id = settlement.link_created_by_user_id),
+             'paymentId', settlement.paymongo_payment_id,
+             'paidAt', settlement.paid_at,
+             'updatedAt', settlement.updated_at,
+             'facilityAssetIds', settlement.facility_asset_ids
+           )
+             FROM loss_damage_settlements AS settlement
+            WHERE settlement.request_id = request.id
+              AND settlement.facility_asset_ids IS NOT NULL
+         ) AS "facilityDamageSettlement",
          COALESCE((
            SELECT json_agg(json_build_object(
              'id', event.id,
@@ -170,7 +215,7 @@ const REQUEST_SELECT = `
     FROM service_requests AS request
     JOIN users AS requester ON requester.id = request.requested_by_user_id`;
 
-async function listAssets() {
+async function listAssets({ includeUnstocked = false } = {}) {
   const result = await pool.query(
     `SELECT item.id,
             item.item_code AS "itemCode",
@@ -199,12 +244,13 @@ async function listAssets() {
           WHERE asset.item_id = item.id
             AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')
        ) AS borrower_usage ON TRUE
-      WHERE item.quantity > 0
+      WHERE (item.quantity > 0 OR $1::BOOLEAN)
         AND item.condition NOT IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
       ORDER BY lower(COALESCE(NULLIF(item.item_name, ''), item.description)), item.id`,
+    [includeUnstocked],
   );
-  // The requester catalog lists every usable item, out of stock included; only reusable quantity
-  // stock can be borrowed (createRequest enforces that), the rest is requested for issuance.
+  // Items out of stock stay in the list. Items never stocked (quantity 0) are left out unless the caller asks for them,
+  // as the facilities request does.
   return result.rows;
 }
 
@@ -1133,6 +1179,17 @@ async function createRequest({ requestType, formData, userId }) {
       }
     }
 
+    if (requestType === 'FACILITY_USE' && formData.equipment.length) {
+      if (await hasUnsettledItems(client, userId)) {
+        throw Object.assign(new Error('You have missing items that are not settled yet. Settle them with GSO before you request equipment again.'), { status: 409 });
+      }
+      // Each equipment row becomes an Item Master record. Its name, code, description and unit come from the record, not the form.
+      formData = { ...formData, equipment: await facilityEquipmentRows(client, formData.equipment) };
+    }
+    if (requestType === 'LOSS_DAMAGE_REPORT') {
+      // Each row must be an item still out with this requester. The server copies the name and code from the issuance.
+      formData = { ...formData, items: await reportedIssuedRows(client, userId, formData.items) };
+    }
     const sequence = await client.query("SELECT nextval('service_request_reference_seq')::TEXT AS value");
     const referenceNo = `REQ-${new Date().getFullYear()}-${String(sequence.rows[0].value).padStart(5, '0')}`;
     const title = requestTitle(requestType, formData);
@@ -1174,6 +1231,8 @@ async function createRequest({ requestType, formData, userId }) {
         ? 'Purchase requisition submitted by EmployeeHead for GSO Staff stock check.'
         : 'Request submitted.', userId],
     );
+    // The work order is created in this same transaction, so a job can never exist without its route.
+    if (requestType === 'JOB_REQUEST') await serviceWorkOrdersRepository.createForJobRequest(client, { requestId, formData });
     const request = await getById(client, requestId);
     await client.query('COMMIT');
     return request;
@@ -1185,12 +1244,164 @@ async function createRequest({ requestType, formData, userId }) {
   }
 }
 
-async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate, conditionOut, conditionIn, conditionsIn = null }) {
+// A Loss / Damage Report can name only items issued to the requester and still out with them. The name and code come
+// from the issuance record, so the requester cannot type a different item. Same rules as My Issued Items.
+async function reportedIssuedRows(client, userId, rows) {
+  const picked = new Set();
+  const reported = [];
+  for (const row of rows) {
+    const found = await client.query(
+      `SELECT issue.id, issue.quantity, COALESCE(issue.returned_quantity, 0) AS returned_quantity, issue.status,
+              issue.unit_of_measure, inventory.item_code, inventory.description AS name, inventory.issue_behavior, inventory.tracking_mode
+         FROM requester_identity_profiles AS profile
+         JOIN employees AS employee ON lower(trim(employee.employee_code)) = lower(trim(profile.employee_code))
+         JOIN employee_issuance_batches AS batch ON batch.employee_id = employee.id
+         JOIN employee_issuances AS issue ON issue.batch_id = batch.id
+         JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+        WHERE profile.user_id = $1 AND profile.verification_status = 'Verified'
+          AND batch.requester_user_id = $1 AND issue.id = $2`,
+      [userId, row.issuanceId],
+    );
+    const issue = found.rows[0];
+    if (!issue || issue.status !== 'Issued') throw httpError(409, 'One of the items is not issued to you. Refresh the list and pick again.');
+    if (issue.issue_behavior === 'consumable') throw httpError(409, `${issue.name} is used up, so it cannot be reported as lost or damaged.`);
+    let assetCode = issue.item_code;
+    let candidateUnits = [];
+    if (row.identityUnknown) {
+      if (row.tagCode || issue.tracking_mode !== 'individual') {
+        throw httpError(400, 'Only a barcode-tracked lost unit without a selected asset tag can be marked as unidentified.');
+      }
+      const tags = await client.query(
+        `SELECT tag_code FROM asset_unit_tags
+          WHERE issuance_id = $1 AND custody_status = 'Issued' AND lifecycle_status = 'Active'
+          ORDER BY tag_code`,
+        [issue.id],
+      );
+      if (tags.rowCount < Number(row.quantity)) {
+        throw httpError(409, `There are not enough unidentified active units of ${issue.name} on this issuance. Refresh the list and try again.`);
+      }
+      candidateUnits = tags.rows.map((tag) => ({ tagCode: tag.tag_code }));
+    }
+    if (row.tagCode) {
+      if (Number(row.quantity) !== 1) throw httpError(400, 'Report each unit with its barcode one at a time.');
+      const unit = await client.query(
+        `SELECT tag_code FROM asset_unit_tags
+          WHERE issuance_id = $1 AND tag_code = $2 AND custody_status <> 'Available'`,
+        [issue.id, row.tagCode],
+      );
+      if (unit.rowCount !== 1) throw httpError(409, 'That unit is not issued to you. Refresh the list and pick again.');
+      assetCode = unit.rows[0].tag_code;
+    } else {
+      const outstanding = Number(issue.quantity) - Number(issue.returned_quantity);
+      if (Number(row.quantity) > outstanding) throw httpError(409, `You only have ${outstanding} ${issue.unit_of_measure} of ${issue.name} with you.`);
+      if (!row.identityUnknown && issue.tracking_mode !== 'quantity') {
+        throw httpError(400, `Choose an asset tag for each ${issue.name} unit, or mark the lost unit as unidentified.`);
+      }
+    }
+    const key = row.tagCode ? `unit:${assetCode}` : `issuance:${issue.id}`;
+    if (picked.has(key)) throw httpError(400, 'Each item can only be reported once.');
+    picked.add(key);
+    reported.push({
+      quantity: Number(row.quantity),
+      description: issue.name,
+      assetCode,
+      identityUnknown: row.identityUnknown === true,
+      ...(candidateUnits.length ? { candidateUnits } : {}),
+      remarks: row.remarks || '',
+      issuanceId: String(issue.id),
+      unitOfMeasure: issue.unit_of_measure,
+    });
+  }
+  return reported;
+}
+
+const FACILITY_UNAVAILABLE_CONDITIONS = ['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'];
+
+// Turns the form's rows into Item Master rows and checks the stock when the request is sent.
+// An individually tracked model has one record per unit, so asking for 3 takes 3 serviceable records of that model
+// (same name, description, and category), starting with the record the requester picked.
+async function facilityEquipmentRows(client, requested) {
+  const chosen = await client.query(
+    `SELECT id, item_code, category_id, COALESCE(NULLIF(item_name, ''), description) AS name,
+            COALESCE(description, '') AS description, COALESCE(unit_of_measure, 'pcs') AS unit,
+            condition, issue_behavior, tracking_mode
+       FROM item_catalog
+      WHERE id = ANY($1::BIGINT[])`,
+    [requested.map((row) => row.itemId)],
+  );
+  const recordById = new Map(chosen.rows.map((record) => [String(record.id), record]));
+  const taken = new Map();
+  const rows = [];
+  for (const row of requested) {
+    const record = recordById.get(String(row.itemId));
+    if (!record) throw httpError(400, 'One of the items is no longer in the Item Master. Refresh the page and pick it again.');
+    if (record.issue_behavior === 'consumable' || FACILITY_UNAVAILABLE_CONDITIONS.includes(record.condition)) {
+      throw httpError(409, `${record.name} cannot be borrowed right now.`);
+    }
+    const units = record.tracking_mode === 'individual'
+      ? (await client.query(
+        `SELECT id, item_code
+           FROM item_catalog
+          WHERE tracking_mode = 'individual' AND issue_behavior <> 'consumable'
+            AND COALESCE(NULLIF(item_name, ''), description) = $1 AND COALESCE(description, '') = $2
+            AND category_id IS NOT DISTINCT FROM $3 AND COALESCE(condition, '') <> ALL($4::TEXT[])
+          ORDER BY (id = $5) DESC, id`,
+        [record.name, record.description, record.category_id, FACILITY_UNAVAILABLE_CONDITIONS, record.id],
+      )).rows
+      : [{ id: record.id, item_code: record.item_code }];
+    let remaining = Number(row.quantity);
+    let available = 0;
+    for (const unit of units) {
+      const free = Math.max((await availableForBorrowing(client, unit)) - (taken.get(String(unit.id)) || 0), 0);
+      available += free;
+      const take = Math.min(free, remaining);
+      if (take > 0) {
+        taken.set(String(unit.id), (taken.get(String(unit.id)) || 0) + take);
+        rows.push({ name: record.name, description: record.description, quantity: take, unit: record.unit, itemCode: unit.item_code, itemId: String(unit.id) });
+        remaining -= take;
+      }
+      if (remaining === 0) break;
+    }
+    if (remaining > 0) throw httpError(409, `Not enough stock of ${record.name}. Available: ${available}.`);
+  }
+  return rows;
+}
+
+// Equipment of a facility request is reserved when GSO approves it, so other requests cannot take the same stock.
+// Completing the request gives it back, because stock only counts requests that are still Approved or later.
+async function reserveFacilityEquipment(client, requestId, facility) {
+  const rows = (facility.equipment || []).filter((row) => row.itemId);
+  if (!rows.length) return;
+  const records = await client.query(
+    `SELECT id, COALESCE(NULLIF(item_name, ''), description) AS name, COALESCE(unit_of_measure, 'pcs') AS unit, condition, issue_behavior
+       FROM item_catalog
+      WHERE id = ANY($1::BIGINT[])
+      ORDER BY id
+      FOR UPDATE`,
+    [rows.map((row) => row.itemId)],
+  );
+  const recordById = new Map(records.rows.map((record) => [String(record.id), record]));
+  for (const row of rows) {
+    const record = recordById.get(String(row.itemId));
+    if (!record) throw httpError(400, 'One of the items is no longer in the Item Master.');
+    if (record.issue_behavior === 'consumable' || FACILITY_UNAVAILABLE_CONDITIONS.includes(record.condition)) {
+      throw httpError(409, `${record.name} cannot be borrowed right now.`);
+    }
+    const available = await availableForBorrowing(client, record);
+    if (Number(row.quantity) > available) throw httpError(409, `Not enough stock of ${record.name}. Available: ${available}.`);
+    await client.query(
+      'INSERT INTO service_request_assets (request_id, item_id, quantity, unit_of_measure) VALUES ($1, $2, $3, $4)',
+      [requestId, record.id, Number(row.quantity), record.unit],
+    );
+  }
+}
+
+async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate, conditionOut, conditionIn, conditionsIn = null, facilityReturns = null }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const currentResult = await client.query(
-      'SELECT id, request_type, status, form_data FROM service_requests WHERE id = $1 FOR UPDATE',
+      'SELECT id, reference_no, request_type, status, form_data FROM service_requests WHERE id = $1 FOR UPDATE',
       [id],
     );
     const current = currentResult.rows[0];
@@ -1226,7 +1437,7 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
            FROM service_requests
           WHERE id <> $1
             AND request_type = 'FACILITY_USE'
-            AND status = 'Approved'
+            AND status IN ('Approved', 'Issued', 'For Repair', 'Returned')
             AND lower(form_data->>'venue') = lower($2)
             AND form_data->>'date' = $3
             AND form_data->>'startTime' < $5
@@ -1237,6 +1448,7 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
       if (conflict.rowCount) {
         throw Object.assign(new Error(`May naka-approve nang request para sa venue at oras na ito (${conflict.rows[0].reference_no}).`), { status: 409 });
       }
+      await reserveFacilityEquipment(client, id, facility);
     }
 
     // Approving a borrowing starts it in this same transaction: the item is released, with no pickup step.
@@ -1250,6 +1462,16 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
         WHERE id = $1`,
       [id, finalStatus],
     );
+    // A facility release starts the loan: the event date is the due date the Item Master shows.
+    if (current.request_type === 'FACILITY_USE' && finalStatus === 'Issued') {
+      await client.query(
+        'UPDATE service_request_assets SET issued_at = NOW(), due_date = $2::DATE WHERE request_id = $1',
+        [id, current.form_data.date || null],
+      );
+    }
+    if (current.request_type === 'FACILITY_USE' && facilityReturns) {
+      await recordFacilityReturn(client, { requestId: id, referenceNo: current.reference_no, lines: facilityReturns, userId: changedBy });
+    }
     if (current.request_type === 'BORROWING' && finalStatus === 'Issued') {
       const effectiveDueDate = dueDate || current.form_data.returnDate;
       await client.query(
@@ -1276,7 +1498,7 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
         [id, conditionIn || (status === 'For Repair' ? 'Needs Repair' : 'Good')],
       );
     }
-    if (current.request_type === 'BORROWING') {
+    if (['BORROWING', 'FACILITY_USE'].includes(current.request_type)) {
       const linkedItems = await client.query('SELECT DISTINCT item_id FROM service_request_assets WHERE request_id = $1', [id]);
       for (const item of linkedItems.rows) await refreshInventoryStatus(client, item.item_id);
     }

@@ -29,6 +29,16 @@ function conditionTone(condition: string) {
   return 'bg-slate-100 text-slate-600'
 }
 
+function unserviceableUnitCount(item: InventoryItemRecord) {
+  return item.assetTags.filter((tag) => tag.condition === 'Unserviceable').length
+}
+
+function currentConditionForList(item: InventoryItemRecord) {
+  return item.assetTags.length > 0 && item.assetTags.every((tag) => tag.condition === 'Unserviceable')
+    ? 'Unserviceable'
+    : item.condition
+}
+
 function custodianLabel(item: InventoryItemRecord) {
   if (item.assignedTo?.trim()) return item.assignedTo
   if (item.condition === 'Needs Repair') return 'For Repair'
@@ -174,6 +184,24 @@ function InventoryItemDetails({ item, onClose }: { item: InventoryItemRecord; on
             ['Status', item.status],
           ].map(([label, value]) => <article key={label} className="rounded-2xl border border-slate-200 bg-white p-3.5"><p className="text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</p><p className="mt-1.5 wrap-break-word text-xs font-bold text-slate-800">{value}</p></article>)}
         </section>
+        {item.assetTags.length > 0 && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
+          <div className="mb-4 border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-black text-slate-900">Tracked units and current condition</h3>
+            <p className="mt-1 text-xs text-slate-500">Each barcode shows its own condition, location, and lifecycle status.</p>
+          </div>
+          <ul className="max-h-64 space-y-2 overflow-y-auto">
+            {item.assetTags.map((tag) => <li key={tag.tagCode} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+              <div className="min-w-0">
+                <p className="text-xs font-extrabold text-slate-900">{tag.tagCode} <span className="font-semibold text-slate-500">· Unit {tag.unitNumber}</span></p>
+                <p className="mt-1 text-[0.68rem] text-slate-600">{tag.location || 'Location not recorded'}{tag.serialNumber ? ` · Serial ${tag.serialNumber}` : ''}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className={`rounded-full px-2.5 py-1 text-[0.6rem] font-extrabold ${conditionTone(tag.condition)}`}>{tag.condition}</span>
+                <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[0.6rem] font-extrabold text-slate-700">{tag.lifecycleStatus === 'Disposed' ? 'Disposed' : tag.custodyStatus}</span>
+              </div>
+            </li>)}
+          </ul>
+        </section>}
         <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
           <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-black text-slate-900">Condition and activity history</h3><p className="mt-1 text-xs text-slate-500">Recorded changes for this inventory item.</p></div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[0.65rem] font-extrabold text-slate-600">{history.length} record{history.length === 1 ? '' : 's'}</span></div>
           {history.length ? <ol className="mt-4 space-y-3">{history.map((change, index) => <li key={`${change.changedAt}-${index}`} className="flex gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3"><span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-500" /><div className="min-w-0"><p className="text-xs font-extrabold text-slate-800">{changeSummary(change)}</p><p className="mt-1 text-[0.68rem] font-medium text-slate-600">{change.reason || 'No additional details.'}</p><p className="mt-1 text-[0.62rem] font-semibold text-slate-400">{formatTimestamp(change.changedAt)} · {change.changedBy || 'User not recorded'}</p></div></li>)}</ol> : <p className="mt-4 rounded-xl bg-slate-50 px-4 py-6 text-center text-xs font-semibold text-slate-500">No condition or activity changes have been recorded.</p>}
@@ -224,6 +252,7 @@ export default function GsoHeadItemMaster() {
       const matchesCategory = category === 'all' || item.category === category
       const matchesName = itemName === 'all' || item.itemName === itemName
       const matchesConditionStatus = conditionStatus === 'all' || item.condition === conditionStatus || item.status === conditionStatus
+        || (conditionStatus === 'Unserviceable' && unserviceableUnitCount(item) > 0)
       const matchesTracking = trackingMode === 'all'
         || (trackingMode === 'individual' && item.trackingMode === 'individual')
         || (trackingMode === 'quantity' && item.trackingMode === 'quantity')
@@ -263,7 +292,7 @@ export default function GsoHeadItemMaster() {
                   <td className="max-w-90 px-5 py-4"><button type="button" onClick={() => setSelectedItem(item)} className="block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"><span className="flex items-center gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-full border-2 border-yellow-400 bg-[#102f78] text-[0.65rem] font-black text-white">{item.itemName.trim().split(/\s+/).slice(0, 2).map((word) => word[0]).join('').toUpperCase() || 'IT'}</span><span className="min-w-0"><span className="block line-clamp-2 text-xs font-extrabold leading-relaxed text-slate-900">{item.description || item.itemName}</span><span className="mt-1 block truncate text-xs font-bold text-blue-700">{item.itemName}</span><span className="mt-1 block text-[0.65rem] font-semibold text-slate-400">{item.itemCode}</span><span className="mt-1 flex flex-wrap gap-1"><span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[0.58rem] font-bold text-slate-500">{item.category}</span><span className="rounded-md bg-blue-50 px-1.5 py-0.5 text-[0.58rem] font-bold text-blue-700">{trackingLabel(item)}</span></span></span></span></button></td>
                   <td className="whitespace-nowrap px-4 py-4 text-xs font-semibold text-slate-700">{formatDate(item.dateAcquired)}<span className="mt-1 block text-[0.65rem] font-medium text-slate-400">{item.timeAcquired || 'Time not recorded'}</span></td>
                   <td className="whitespace-nowrap px-4 py-4"><span className="block text-xs font-bold text-slate-700">Unit {formatMoney(item.unitCost)}</span><span className="mt-1 block text-[0.65rem] text-slate-500">Acquired {formatMoney(item.acquisitionCost)}</span></td>
-                  <td className="px-4 py-4"><span className="block whitespace-nowrap text-xs font-extrabold text-slate-700">{item.availableQuantity} available / {item.quantity} total {item.unitOfMeasure}</span><span className={`mt-1.5 inline-flex rounded-full px-2 py-1 text-[0.6rem] font-extrabold ${conditionTone(item.condition)}`}>{item.condition}</span></td>
+                  <td className="px-4 py-4"><span className="block whitespace-nowrap text-xs font-extrabold text-slate-700">{item.availableQuantity} available / {item.quantity} total {item.unitOfMeasure}</span><span className={`mt-1.5 inline-flex rounded-full px-2 py-1 text-[0.6rem] font-extrabold ${conditionTone(currentConditionForList(item))}`}>{currentConditionForList(item)}</span>{unserviceableUnitCount(item) > 0 && <span className="mt-1.5 block text-[0.6rem] font-extrabold text-rose-700">{unserviceableUnitCount(item)} tracked unit{unserviceableUnitCount(item) === 1 ? '' : 's'} marked Unserviceable</span>}</td>
                   <td className="px-4 py-4 text-xs font-semibold text-slate-600">{custodianLabel(item)}</td>
                   <td className="px-4 py-4"><span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${statusTone(item.status)}`}>{item.status}</span></td>
                 </tr>)}

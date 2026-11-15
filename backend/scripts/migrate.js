@@ -1,17 +1,17 @@
 // Applies database/migrations in order and records each file in schema_migrations.
 //
-//   $env:MIGRATION_DATABASE_URL = "<Neon direct connection string>"
+//   $env:MIGRATION_DATABASE_URL = "<direct PostgreSQL or Neon connection string>"
 //   npm run db:migrate
 //
-// A database that already has tables but no ledger, such as a restored copy of the local
-// database, is refused. Say which migration it already includes, then run the rest:
+// A new, empty database gets every file. A database that already has tables but no ledger, such as a
+// restored copy of the local database, is refused. Say which migration it already includes, then run the rest:
 //
-//   npm run db:migrate -- --baseline=010
+//   npm run db:migrate -- --baseline=007
 //
-// A ledger written before the migrations were consolidated lists the files now kept in
-// database/migrations_archive. Such a database is finished with the archived files it is
-// missing. Only current migrations 001 through 010 represent that archived history;
-// later current migrations must still be applied normally.
+// Files 001 to 007 are the consolidated schema. A database migrated with the 29 pre-consolidation files
+// (kept in database/migrations_archive/pre-consolidation-2026-11-15) already has that schema, so the runner
+// records 001 to 007 as already included. A database with only part of that history is refused, and nothing
+// is changed. Later migrations (008 and up) are applied in order.
 //
 // This script never reads backend/.env, so it cannot touch the local database by accident.
 const fs = require('node:fs');
@@ -19,14 +19,16 @@ const path = require('node:path');
 const { Client } = require('pg');
 
 const migrationsDir = path.resolve(__dirname, '../database/migrations');
-const archiveDir = path.resolve(__dirname, '../database/migrations_archive');
-const ARCHIVED_CONSOLIDATED_VERSION = 10;
+const retiredDir = path.resolve(__dirname, '../database/migrations_archive/pre-consolidation-2026-11-15');
+// The last consolidated file. Files up to this number describe the schema of the retired history.
+const CONSOLIDATED_VERSION = 7;
 
 function migrationVersion(fileName) {
   return Number(fileName.match(/^(\d+)_/)[1]);
 }
 
-function listMigrations(directory) {
+function listSqlFiles(directory) {
+  if (!fs.existsSync(directory)) return [];
   return fs.readdirSync(directory)
     .filter((fileName) => /^\d+_.+\.sql$/.test(fileName))
     .sort((left, right) => migrationVersion(left) - migrationVersion(right));
@@ -36,7 +38,7 @@ function readBaselineVersion() {
   const argument = process.argv.slice(2).find((value) => value.startsWith('--baseline='));
   if (!argument) return null;
   const value = argument.slice('--baseline='.length);
-  if (!/^\d+$/.test(value)) throw new Error('--baseline needs a migration number, such as --baseline=010.');
+  if (!/^\d+$/.test(value)) throw new Error('--baseline needs a migration number, such as --baseline=007.');
   return Number(value);
 }
 
@@ -63,7 +65,8 @@ async function applyFile(client, directory, fileName) {
 async function migrate() {
   const baselineVersion = readBaselineVersion();
   const target = readTarget();
-  const files = listMigrations(migrationsDir);
+  const files = listSqlFiles(migrationsDir);
+  const retiredFiles = listSqlFiles(retiredDir);
 
   if (baselineVersion !== null && !files.some((fileName) => migrationVersion(fileName) === baselineVersion)) {
     throw new Error(`No migration has the number ${baselineVersion}.`);
@@ -113,17 +116,31 @@ async function migrate() {
     const { rows } = await client.query('SELECT file_name FROM schema_migrations');
     const applied = new Set(rows.map((row) => row.file_name));
 
-    if (applied.size > 0 && !files.some((fileName) => applied.has(fileName))) {
-      // The full archive builds the schema represented by consolidated migrations
-      // 001 through 010. Newer current migrations are intentionally left pending.
-      const archived = listMigrations(archiveDir).filter((fileName) => !applied.has(fileName));
-      for (const fileName of archived) {
-        await applyFile(client, archiveDir, fileName);
+    // Every name in the ledger must be a file this runner knows, so an unknown history is never replayed.
+    const known = new Set([...files, ...retiredFiles]);
+    const unknown = [...applied].filter((fileName) => !known.has(fileName));
+    if (unknown.length) {
+      throw new Error(`This ledger has migrations this runner does not know: ${unknown.join(', ')}. Nothing was changed.`);
+    }
+
+    const retiredApplied = retiredFiles.filter((fileName) => applied.has(fileName));
+    if (retiredApplied.length && retiredApplied.length !== retiredFiles.length) {
+      throw new Error(
+        'This database has only part of the pre-consolidation migration history. Apply the missing files from '
+        + 'migrations_archive/pre-consolidation-2026-11-15 in order, then run this again. Nothing was changed.',
+      );
+    }
+    if (retiredFiles.length && retiredApplied.length === retiredFiles.length) {
+      // The complete old history already built the schema of files 001 to 007.
+      const consolidated = files.filter((fileName) => migrationVersion(fileName) <= CONSOLIDATED_VERSION && !applied.has(fileName));
+      if (consolidated.length) {
+        await client.query(
+          'INSERT INTO schema_migrations (file_name, baselined) SELECT unnest($1::TEXT[]), TRUE ON CONFLICT (file_name) DO NOTHING',
+          [consolidated],
+        );
+        consolidated.forEach((fileName) => applied.add(fileName));
+        console.log(`Recorded ${consolidated.length} consolidated migrations as already included for the complete old history.`);
       }
-      const consolidated = files.filter((fileName) => migrationVersion(fileName) <= ARCHIVED_CONSOLIDATED_VERSION);
-      await client.query('INSERT INTO schema_migrations (file_name, baselined) SELECT unnest($1::TEXT[]), TRUE', [consolidated]);
-      consolidated.forEach((fileName) => applied.add(fileName));
-      console.log(`Applied ${archived.length} archived migrations and recorded ${consolidated.length} consolidated migrations as already included.`);
     }
 
     const pending = files.filter((fileName) => !applied.has(fileName));
