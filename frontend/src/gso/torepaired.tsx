@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
+import { formatDateTime } from '../requesters/requesterrequestutils'
+import { listFacilityFinanceReport, resolveFacilityRepair, type FacilityFinanceRow } from '../requesters/requesterApi'
 import { listEmployees } from './employeesApi'
-import { completeTaggedAssetRepair, listEmployeeIssuances, markReturnRepaired, requestReturnApproval } from './issuancesApi'
+import { completeTaggedAssetRepair, listEmployeeIssuances, markReturnRepaired, resolveTaggedRepair } from './issuancesApi'
 import { listInventoryItems, updateInventoryItem, type InventoryItemRecord } from './inventoryApi'
 
 type RepairQueueItem = {
@@ -27,6 +29,8 @@ type RepairQueueItem = {
 const completedRepairStatuses = ['Repaired / Complete', 'Written Off']
 const writeOffRequestedStatus = 'Write-off requested'
 const writeOffRequestedTone = 'bg-rose-50 text-rose-700'
+
+const TAGGED_WRITE_OFF_REASONS = ['Beyond repair', 'Missing parts', 'Water or fire damage', 'Broken or cracked', 'Electrical fault', 'Other']
 
 const repairCompletionReason = 'Repair completed from the To Be Repaired module; item condition updated to Good.'
 
@@ -78,22 +82,31 @@ function reportDateParts(value: string) {
   return `${year}-${month}-${day}`
 }
 
-function escapeReportHTML(value: string) {
-  return value.replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character] || character)
+
+// Units of a facility row that still wait for the GSO check.
+const openUnits = (row: FacilityFinanceRow) => row.damagedQuantity - row.repairedQuantity - row.unserviceableQuantity
+
+// A plain-language reason the counts cannot be saved yet, or null when they can (an empty entry is handled by the caller).
+// Why a unit is unserviceable. A reason is required before the write-off is saved.
+const UNSERVICEABLE_REASONS = ['Beyond repair', 'Missing parts', 'Water or fire damage', 'Broken or cracked', 'Electrical fault', 'Other']
+
+function repairCheckProblem(open: number, entry: { repaired: string; unserviceable: string }): string | null {
+  const counts = [entry.repaired, entry.unserviceable].map((value) => (value.trim() === '' ? 0 : Number(value)))
+  if (counts.some((count) => !Number.isInteger(count) || count < 0)) return 'Use whole numbers only, like 0, 1, or 2.'
+  const total = counts[0] + counts[1]
+  if (total > open) return `You entered ${total} in total, but only ${open} ${open === 1 ? 'unit is' : 'units are'} still waiting for a check.`
+  return null
 }
 
-export default function ToRepaired() {
+// GSO sees the units GSO checks; IT Admin's page (owner "ITSS") sees the units sent to ITSS.
+export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedded?: boolean; owner?: 'GSO' | 'ITSS' } = {}) {
+  const isItssView = owner === 'ITSS'
   const [activeRepairSection, setActiveRepairSection] = useState<'queue' | 'history'>('queue')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedReportDate, setSelectedReportDate] = useState('')
   const [repairItems, setRepairItems] = useState<RepairQueueItem[]>([])
-  const [repairHistoryItems, setRepairHistoryItems] = useState<RepairQueueItem[]>([])
+  // Completed repairs are no longer shown here; the History page will read them.
+  const [, setRepairHistoryItems] = useState<RepairQueueItem[]>([])
   const [inventoryItems, setInventoryItems] = useState<InventoryItemRecord[]>([])
   const [isLoadingRepairs, setIsLoadingRepairs] = useState(true)
   const [repairLoadError, setRepairLoadError] = useState('')
@@ -102,9 +115,115 @@ export default function ToRepaired() {
   const [isCompletingRepair, setIsCompletingRepair] = useState(false)
   const [writeOffNote, setWriteOffNote] = useState('')
   const [completionChoice, setCompletionChoice] = useState<'repaired' | 'writeOff'>('repaired')
+  const [tagWriteOffReason, setTagWriteOffReason] = useState('')
+  const [tagWriteOffDecision, setTagWriteOffDecision] = useState<'waive' | 'charge' | ''>('')
+  // Same as the facility check: a waiver needs the GSO staff who checked the item and why.
+  const [tagWaiverNote, setTagWaiverNote] = useState('')
   const [repairActionError, setRepairActionError] = useState('')
   const [repairActionMessage, setRepairActionMessage] = useState('')
-  const [exportMessage, setExportMessage] = useState('')
+
+  // Facility items returned as Needs Repair that still wait for the GSO check. They leave the facility page at return.
+  const [facilityRepairs, setFacilityRepairs] = useState<FacilityFinanceRow[]>([])
+  const [repairingAssetId, setRepairingAssetId] = useState('')
+  // Which group the page shows: all, facility items, or tagged units.
+  const [repairSource, setRepairSource] = useState<'all' | 'facility' | 'tagged'>('all')
+  const [facilityRepairError, setFacilityRepairError] = useState('')
+  // The reason for each unserviceable count, and the row waiting for the write-off confirmation.
+  const [unserviceableReasons, setUnserviceableReasons] = useState<Record<string, string>>({})
+  const [unserviceableOther, setUnserviceableOther] = useState<Record<string, string>>({})
+  const [confirmingAssetId, setConfirmingAssetId] = useState('')
+  // Whether the write-off is waived (no charge) or the requester is charged. Chosen on the confirmation.
+  const [writeOffDecision, setWriteOffDecision] = useState<Record<string, 'waive' | 'charge'>>({})
+  // A waiver needs the GSO staff who checked the items and why; saved with the write-off reason.
+  const [waiverNotes, setWaiverNotes] = useState<Record<string, string>>({})
+  const loadFacilityRepairs = useCallback(() => listFacilityFinanceReport()
+    .then((rows) => setFacilityRepairs(rows.filter((row) => row.condition === 'Needs Repair' && row.damagedQuantity > 0 && row.requestStatus === 'For Repair' && openUnits(row) > 0 && (row.repairOwner === 'ITSS') === isItssView)))
+    .catch(() => setFacilityRepairs([])), [isItssView])
+  useEffect(() => { void loadFacilityRepairs() }, [loadFacilityRepairs])
+
+  // Per-row inputs: how many of the units still open were repaired, and how many are unserviceable.
+  const [repairInputs, setRepairInputs] = useState<Record<string, { repaired: string; unserviceable: string }>>({})
+  // The facility row whose repair check is open in the pop-up.
+  const [checkingAssetId, setCheckingAssetId] = useState('')
+  const checkingRow = facilityRepairs.find((row) => row.assetId === checkingAssetId)
+  const openFacilityCheck = (row: FacilityFinanceRow) => {
+    setFacilityRepairError('')
+    setConfirmingAssetId('')
+    setCheckingAssetId(row.assetId)
+  }
+
+  const unserviceableReasonText = (assetId: string) => {
+    const reason = unserviceableReasons[assetId] || ''
+    if (reason === 'Other') return (unserviceableOther[assetId] || '').trim()
+    return reason
+  }
+
+  // Estimated value of the write-off: unit cost from the Item Master × units. Shown only, not saved yet.
+  const estimatedWriteOff = (row: FacilityFinanceRow, count: number) => {
+    const unit = Number(inventoryItems.find((item) => item.itemCode === row.itemCode)?.unitCost)
+    if (!(unit > 0)) return 'No unit cost in the Item Master, so no estimate yet.'
+    const money = (value: number) => value.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })
+    return `Estimated value: ${money(unit * count)} (${count} × ${money(unit)} unit cost)`
+  }
+
+  // Unserviceable needs a reason and a confirmation first; everything else saves straight away.
+  function askSaveFacilityRepair(row: FacilityFinanceRow, unserviceable: number) {
+    if (unserviceable > 0 && confirmingAssetId !== row.assetId) {
+      setConfirmingAssetId(row.assetId)
+      return
+    }
+    void saveFacilityRepair(row)
+  }
+
+  async function saveFacilityRepair(row: FacilityFinanceRow) {
+    const entry = repairInputs[row.assetId] ?? { repaired: '', unserviceable: '' }
+    const problem = repairCheckProblem(openUnits(row), entry)
+    if (problem) {
+      setFacilityRepairError(problem)
+      return
+    }
+    const repaired = Number(entry.repaired || 0)
+    const unserviceable = Number(entry.unserviceable || 0)
+    if (repaired + unserviceable === 0) {
+      setFacilityRepairError('Enter how many were repaired, or how many are unserviceable.')
+      return
+    }
+    const reason = unserviceableReasonText(row.assetId)
+    if (unserviceable > 0 && !reason) {
+      setFacilityRepairError('Choose why the unserviceable units cannot be fixed.')
+      return
+    }
+    const waiverNote = (waiverNotes[row.assetId] || '').trim()
+    if (unserviceable > 0 && writeOffDecision[row.assetId] === 'waive' && !waiverNote) {
+      setFacilityRepairError('Write who checked the items at GSO, and why.')
+      return
+    }
+    setRepairingAssetId(row.assetId)
+    setFacilityRepairError('')
+    try {
+      const unitCost = Number(inventoryItems.find((item) => item.itemCode === row.itemCode)?.unitCost)
+      await resolveFacilityRepair(row.assetId, {
+        repaired,
+        unserviceable,
+        writeOffReason: unserviceable > 0 ? (waiverNote ? `${reason}. Checked by: ${waiverNote}` : reason) : undefined,
+        writeOffDecision: unserviceable > 0 ? (writeOffDecision[row.assetId] === 'charge' ? 'CHARGED' : 'WAIVED') : undefined,
+        writeOffEstimatedValue: unserviceable > 0 && unitCost > 0 ? Math.round(unitCost * unserviceable * 100) / 100 : null,
+      })
+      setConfirmingAssetId('')
+      setCheckingAssetId('')
+      await loadFacilityRepairs()
+      setRepairInputs((current) => {
+        const next = { ...current }
+        delete next[row.assetId]
+        return next
+      })
+      setRepairActionMessage(`${row.itemName}: ${repaired} repaired, ${unserviceable} unserviceable recorded.`)
+    } catch (reason) {
+      setFacilityRepairError(reason instanceof Error ? reason.message : 'The repair check was not saved. Try again.')
+    } finally {
+      setRepairingAssetId('')
+    }
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -149,6 +268,8 @@ export default function ToRepaired() {
               || (entry.event === 'Returned' && completionTimestamp > 0 && reportTimestamp > 0 && completionTimestamp >= reportTimestamp)
 
             if (!isRepairCondition(condition) && !isRepairCompleted) return []
+            // A unit sent to ITSS stays off GSO's list, and GSO's units stay off the ITSS page.
+            if ((entry.repairOwner === 'ITSS') !== isItssView) return []
             const isPendingApproval = entry.event === 'Return Pending Approval'
             const isWriteOffRequested = entry.approvalAction === 'Written Off' && !isRepairCompleted
             const priority = priorityFromReturnNote(entry.note, condition)
@@ -216,9 +337,12 @@ export default function ToRepaired() {
 
     void loadRepairItems()
     return () => { isMounted = false }
-  }, [])
+  }, [isItssView])
 
+  // Tagged units still waiting for a repair check show in the check table above, not in the list below.
+  const taggedChecks = repairItems.filter((item) => item.returnId && item.repairStatus === 'Pending Repair')
   const filteredRepairs = repairItems.filter((item) => {
+    if (item.returnId && item.repairStatus === 'Pending Repair') return false
     const matchesSearch = item.asset.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.reportedBy.toLowerCase().includes(searchQuery.toLowerCase())
@@ -227,53 +351,55 @@ export default function ToRepaired() {
 
     return matchesSearch && matchesDate
   })
-  const filteredRepairHistory = repairHistoryItems.filter((item) => {
-    const matchesSearch = item.asset.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.reportedBy.toLowerCase().includes(searchQuery.toLowerCase())
-    const itemDate = reportDateParts(item.dateReported)
-    const matchesDate = !selectedReportDate || itemDate === selectedReportDate
-
-    return matchesSearch && matchesDate
-  })
-
-  const reportFilterDescription = [
-    selectedReportDate ? `Date: ${selectedReportDate}` : '',
-    searchQuery.trim() ? `Search: ${searchQuery.trim()}` : '',
-  ].filter(Boolean).join(' · ') || 'All dates and records'
-  const reportFilterFilename = [
-    selectedReportDate ? `Date_${selectedReportDate}` : '',
-  ].filter(Boolean).join('_')
 
   const beginRepairCompletion = (item: RepairQueueItem) => {
     setSelectedRepairItem(null)
     setRepairActionError('')
     setRepairActionMessage('')
     setWriteOffNote('')
+    setTagWaiverNote('')
     setCompletionChoice('repaired')
     setRepairCompletionItem(item)
   }
 
-  // A write-off only goes to IT Admin as a request; the item stays in the queue until they approve it.
-  const handleRequestWriteOff = async () => {
+  // GSO decides a write-off directly: reason, waive or charge, and the estimate. Written Off leaves the stock.
+  const handleGsoWriteOff = async () => {
     if (!repairCompletionItem?.returnId || isCompletingRepair) return
-    if (!writeOffNote.trim()) {
-      setRepairActionError('Write why the item cannot be repaired.')
+    const reason = tagWriteOffReason === 'Other' ? writeOffNote.trim() : tagWriteOffReason
+    const waiverNote = tagWaiverNote.trim()
+    if (!reason || !tagWriteOffDecision) {
+      setRepairActionError('Choose the reason and whether to waive or charge.')
       return
     }
-    const { returnId, asset, tagCode } = repairCompletionItem
+    if (tagWriteOffDecision === 'waive' && !waiverNote) {
+      setRepairActionError('Write who checked the items at GSO, and why.')
+      return
+    }
+    const { returnId, asset, tagCode, itemCode } = repairCompletionItem
+    const unitCost = Number(inventoryItems.find((item) => item.itemCode.toLowerCase() === itemCode.toLowerCase())?.unitCost)
     setIsCompletingRepair(true)
     setRepairActionError('')
     try {
-      await requestReturnApproval(returnId, 'Written Off', writeOffNote.trim())
-      setRepairItems((currentItems) => currentItems.map((item) => (item.returnId === returnId
-        ? { ...item, repairStatus: writeOffRequestedStatus, repairStatusTone: writeOffRequestedTone, declinedNote: null }
-        : item)))
-      setRepairActionMessage(`Write-off request for ${asset}${tagCode ? ` (${tagCode})` : ''} sent to IT Admin. It stays in this queue until they decide.`)
+      await resolveTaggedRepair(returnId, {
+        outcome: 'Written Off',
+        writeOffReason: tagWriteOffDecision === 'waive' ? `${reason}. Checked by: ${waiverNote}` : reason,
+        writeOffDecision: tagWriteOffDecision === 'charge' ? 'CHARGED' : 'WAIVED',
+        writeOffEstimatedValue: unitCost > 0 ? Math.round(unitCost * 100) / 100 : null,
+      })
+      const isSameRepair = (item: RepairQueueItem) => item.returnId === returnId
+      setRepairItems((currentItems) => currentItems.filter((item) => !isSameRepair(item)))
+      setRepairHistoryItems((currentItems) => [
+        { ...repairCompletionItem, repairStatus: 'Written Off', repairStatusTone: 'bg-slate-100 text-slate-600', dateCompleted: formatRepairCompletionDate(new Date().toISOString()) },
+        ...currentItems.filter((item) => !isSameRepair(item)),
+      ])
+      setRepairActionMessage(`${asset}${tagCode ? ` (${tagCode})` : ''} written off. ${tagWriteOffDecision === 'charge' ? 'The requester is notified to pay at the Finance office.' : 'No charge.'}`)
       setRepairCompletionItem(null)
       setWriteOffNote('')
+      setTagWriteOffReason('')
+      setTagWriteOffDecision('')
+      setTagWaiverNote('')
     } catch (error) {
-      setRepairActionError(error instanceof Error ? error.message : 'Unable to send the write-off request. Please try again.')
+      setRepairActionError(error instanceof Error ? error.message : 'Unable to write off this unit. Please try again.')
     } finally {
       setIsCompletingRepair(false)
     }
@@ -347,223 +473,8 @@ export default function ToRepaired() {
     }
   }
 
-  const handleGenerateCSV = () => {
-    setExportMessage('')
-    if (filteredRepairs.length === 0) {
-      setExportMessage('There is no data to export to CSV.')
-      return
-    }
-
-    const headers = Object.keys(filteredRepairs[0]).join(',')
-    const rows = filteredRepairs.map((item) =>
-      Object.values(item).map((value) => `"${value}"`).join(','),
-    )
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers, ...rows].join('\n')
-    const link = document.createElement('a')
-    link.setAttribute('href', encodeURI(csvContent))
-    link.setAttribute('download', `Items_To_Be_Repaired_Report_${reportFilterFilename ? `${reportFilterFilename}_` : ''}${new Date().toISOString().slice(0, 10)}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  const handleGenerateExcel = () => {
-    setExportMessage('')
-    if (filteredRepairs.length === 0) {
-      setExportMessage('There is no data to export to Excel.')
-      return
-    }
-
-    const highPriorityCount = filteredRepairs.filter((item) => item.priority === 'High').length
-    const mediumPriorityCount = filteredRepairs.filter((item) => item.priority === 'Medium').length
-    const awaitingApprovalCount = filteredRepairs.filter((item) => item.repairStatus === 'Awaiting Return Approval').length
-    const generatedAt = new Intl.DateTimeFormat('en-PH', {
-      dateStyle: 'long',
-      timeStyle: 'short',
-      timeZone: 'Asia/Manila',
-    }).format(new Date())
-
-    const reportRows = filteredRepairs.map((item, index) => {
-      const rowBackground = index % 2 === 0 ? '#ffffff' : '#f1f5f9'
-      const priorityStyle = item.priority === 'High'
-        ? 'background:#fff1f2;color:#be123c;'
-        : 'background:#fffbeb;color:#b45309;'
-      const statusStyle = item.repairStatus === 'Awaiting Return Approval'
-        ? 'background:#f1f5f9;color:#475569;'
-        : 'background:#fffbeb;color:#b45309;'
-
-      return `<tr style="background:${rowBackground};">
-        <td style="width:220px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
-          <strong style="color:#0f172a;">${escapeReportHTML(item.asset)}</strong><br>
-          <span style="font-size:10pt;color:#475569;">${escapeReportHTML(item.code)}</span><br>
-          <span style="font-size:9pt;color:#64748b;">${escapeReportHTML(item.category)}</span>
-        </td>
-        <td style="width:210px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.reportedBy)}</td>
-        <td style="width:145px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.dateReported)}</td>
-        <td style="width:390px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;white-space:normal;">${escapeReportHTML(item.issue || '—').replace(/\r?\n/g, '<br>')}</td>
-        <td style="width:125px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
-          <span style="${priorityStyle}font-weight:bold;padding:4px 7px;">${escapeReportHTML(item.priority)}</span>
-        </td>
-        <td style="width:180px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
-          <span style="${statusStyle}font-weight:bold;padding:4px 7px;">${escapeReportHTML(item.repairStatus)}</span>
-        </td>
-      </tr>`
-    }).join('')
-
-    const workbookHTML = `<!DOCTYPE html>
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-        <head>
-          <meta charset="utf-8">
-          <meta name="ProgId" content="Excel.Sheet">
-          <title>Items To Be Repaired Report</title>
-          <style>
-            body { font-family: Calibri, Arial, sans-serif; color: #1e293b; }
-            table { border-collapse: collapse; }
-            .report-table { table-layout: fixed; width: 1270px; }
-            .report-table th { padding: 10px; background: #09244a; color: #ffffff; border: 1px solid #09244a; text-align: left; }
-            .summary td { padding: 10px 14px; border: 1px solid #dbe3ef; }
-            .report-table td { mso-number-format: "\\@"; }
-          </style>
-        </head>
-        <body>
-          <table style="width:1270px;margin-bottom:14px;border-collapse:collapse;">
-            <tr><td colspan="6" style="padding:18px 20px;background:#09244a;color:#ffffff;">
-              <div style="font-size:10pt;font-weight:bold;letter-spacing:1px;color:#bfdbfe;">ASSET MAINTENANCE</div>
-              <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">Items To Be Repaired Report</h1>
-              <div style="font-size:10pt;color:#dbeafe;">Generated ${escapeReportHTML(generatedAt)} · Filters: ${escapeReportHTML(reportFilterDescription)}</div>
-            </td></tr>
-          </table>
-          <table class="summary" style="width:1270px;margin-bottom:16px;border-collapse:collapse;">
-            <tr>
-              <td style="width:25%;background:#f8fafc;"><div style="font-size:9pt;color:#64748b;">TOTAL RECORDS</div><strong style="font-size:16pt;color:#09244a;">${filteredRepairs.length}</strong></td>
-              <td style="width:25%;background:#fff1f2;"><div style="font-size:9pt;color:#be123c;">HIGH PRIORITY</div><strong style="font-size:16pt;color:#be123c;">${highPriorityCount}</strong></td>
-              <td style="width:25%;background:#fffbeb;"><div style="font-size:9pt;color:#b45309;">MEDIUM PRIORITY</div><strong style="font-size:16pt;color:#b45309;">${mediumPriorityCount}</strong></td>
-              <td style="width:25%;background:#f1f5f9;"><div style="font-size:9pt;color:#475569;">AWAITING APPROVAL</div><strong style="font-size:16pt;color:#475569;">${awaitingApprovalCount}</strong></td>
-            </tr>
-          </table>
-          <table class="report-table">
-            <colgroup>
-              <col style="width:220px;"><col style="width:210px;"><col style="width:145px;">
-              <col style="width:390px;"><col style="width:125px;"><col style="width:180px;">
-            </colgroup>
-            <thead><tr>
-              <th>Asset / Item</th><th>Reported By</th><th>Date Reported</th>
-              <th>Issue / Damage Description</th><th>Priority</th><th>Repair Status</th>
-            </tr></thead>
-            <tbody>${reportRows}</tbody>
-          </table>
-        </body>
-      </html>`
-
-    const workbookBlob = new Blob(['\uFEFF', workbookHTML], { type: 'application/vnd.ms-excel;charset=utf-8' })
-    const workbookUrl = URL.createObjectURL(workbookBlob)
-    const link = document.createElement('a')
-    link.href = workbookUrl
-    link.download = `Items_To_Be_Repaired_Styled_Report_${new Date().toISOString().slice(0, 10)}.xls`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.setTimeout(() => URL.revokeObjectURL(workbookUrl), 0)
-  }
-
-  const handleGenerateWord = () => {
-    setExportMessage('')
-    if (filteredRepairs.length === 0) {
-      setExportMessage('There is no data to export to Word.')
-      return
-    }
-
-    const highPriorityCount = filteredRepairs.filter((item) => item.priority === 'High').length
-    const mediumPriorityCount = filteredRepairs.filter((item) => item.priority === 'Medium').length
-    const awaitingApprovalCount = filteredRepairs.filter((item) => item.repairStatus === 'Awaiting Return Approval').length
-    const generatedAt = new Intl.DateTimeFormat('en-PH', {
-      dateStyle: 'long',
-      timeStyle: 'short',
-      timeZone: 'Asia/Manila',
-    }).format(new Date())
-    const reportRows = filteredRepairs.map((item, index) => {
-      const priorityColor = item.priority === 'High' ? '#be123c' : '#b45309'
-      const statusColor = item.repairStatus === 'Awaiting Return Approval' ? '#475569' : '#b45309'
-
-      return `<tr style="background:${index % 2 === 0 ? '#ffffff' : '#f8fafc'};page-break-inside:avoid;">
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
-          <strong style="color:#0f172a;">${escapeReportHTML(item.asset)}</strong><br>
-          <span style="font-size:9pt;color:#475569;">Code: ${escapeReportHTML(item.code)}</span><br>
-          <span style="font-size:9pt;color:#64748b;">${escapeReportHTML(item.category)}</span>
-        </td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.reportedBy)}</td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;white-space:nowrap;">${escapeReportHTML(item.dateReported)}</td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">${escapeReportHTML(item.issue || '—').replace(/\r?\n/g, '<br>')}</td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;white-space:nowrap;">
-          <span style="font-weight:bold;color:${priorityColor};">${escapeReportHTML(item.priority)}</span>
-        </td>
-        <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
-          <span style="font-weight:bold;color:${statusColor};">${escapeReportHTML(item.repairStatus)}</span>
-        </td>
-      </tr>`
-    }).join('')
-    const sourceHTML = `<!DOCTYPE html>
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-        <head>
-          <meta charset="utf-8">
-          <title>Items To Be Repaired Report</title>
-          <style>
-            @page Section1 { size: 11in 8.5in; mso-page-orientation: landscape; margin: 0.45in; }
-            div.Section1 { page: Section1; }
-            body { font-family: Arial, sans-serif; color: #1e293b; font-size: 10pt; }
-            table { border-collapse: collapse; width: 100%; }
-            thead { display: table-header-group; }
-            tr { page-break-inside: avoid; }
-          </style>
-        </head>
-        <body>
-          <div class="Section1">
-            <table style="margin-bottom:18px;border-collapse:collapse;">
-              <tr><td style="padding:18px 20px;background:#09244a;color:#ffffff;">
-                <div style="font-size:9pt;font-weight:bold;letter-spacing:1.2px;color:#bfdbfe;">ASSET MAINTENANCE</div>
-                <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">Items To Be Repaired Report</h1>
-                <div style="font-size:9pt;color:#dbeafe;">Generated ${escapeReportHTML(generatedAt)} · Filters: ${escapeReportHTML(reportFilterDescription)}</div>
-              </td></tr>
-            </table>
-            <table style="margin-bottom:16px;border-collapse:separate;border-spacing:8px 0;">
-              <tr>
-                <td style="width:25%;padding:10px 12px;border:1px solid #dbe3ef;background:#f8fafc;"><div style="font-size:8pt;color:#64748b;text-transform:uppercase;">Records in this report</div><strong style="font-size:16pt;color:#09244a;">${filteredRepairs.length}</strong></td>
-                <td style="width:25%;padding:10px 12px;border:1px solid #fecdd3;background:#fff1f2;"><div style="font-size:8pt;color:#be123c;text-transform:uppercase;">High priority</div><strong style="font-size:16pt;color:#be123c;">${highPriorityCount}</strong></td>
-                <td style="width:25%;padding:10px 12px;border:1px solid #fde68a;background:#fffbeb;"><div style="font-size:8pt;color:#b45309;text-transform:uppercase;">Medium priority</div><strong style="font-size:16pt;color:#b45309;">${mediumPriorityCount}</strong></td>
-                <td style="width:25%;padding:10px 12px;border:1px solid #dbe3ef;background:#f1f5f9;"><div style="font-size:8pt;color:#475569;text-transform:uppercase;">Awaiting return approval</div><strong style="font-size:16pt;color:#475569;">${awaitingApprovalCount}</strong></td>
-              </tr>
-            </table>
-            <table style="width:100%;border-collapse:collapse;font-size:9pt;">
-              <thead><tr style="background:#09244a;color:#ffffff;">
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Asset / Item</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Reported By</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Date Reported</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Issue / Damage Description</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Priority</th>
-                <th style="padding:9px;border:1px solid #09244a;text-align:left;">Repair Status</th>
-              </tr></thead>
-              <tbody>${reportRows}</tbody>
-            </table>
-            <p style="margin-top:14px;font-size:8pt;color:#64748b;">This report contains the repair records matching the search, date, and month filters selected in the To Be Repaired page.</p>
-          </div>
-        </body>
-      </html>`
-    const fileDownload = document.createElement('a')
-    fileDownload.href = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML)
-    fileDownload.download = `Items_To_Be_Repaired_Report_${new Date().toISOString().slice(0, 10)}.doc`
-    document.body.appendChild(fileDownload)
-    fileDownload.click()
-    document.body.removeChild(fileDownload)
-  }
-
-  const exportHandlers = {
-    csv: handleGenerateCSV,
-    excel: handleGenerateExcel,
-    word: handleGenerateWord,
-  }
-
-  return (
-    <GsoPageFrame activePage="Repair & Maintenance" searchPlaceholder="Search asset, code, or reporter...">
+  const page = (
+    <>
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
         <div className="relative">
@@ -584,14 +495,6 @@ export default function ToRepaired() {
               className={`rounded-xl px-4 py-2 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${activeRepairSection === 'queue' ? 'bg-white text-[#09244a]' : 'border border-white/10 bg-white/8 text-white hover:bg-white/15'}`}
             >
               Items To Be Repaired ({isLoadingRepairs ? '…' : repairItems.length})
-            </button>
-            <button
-              type="button"
-              aria-pressed={activeRepairSection === 'history'}
-              onClick={() => setActiveRepairSection('history')}
-              className={`rounded-xl px-4 py-2 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${activeRepairSection === 'history' ? 'bg-white text-[#09244a]' : 'border border-white/10 bg-white/8 text-white hover:bg-white/15'}`}
-            >
-              Complete Repair History ({isLoadingRepairs ? '…' : repairHistoryItems.length})
             </button>
           </div>
         </div>
@@ -649,13 +552,21 @@ export default function ToRepaired() {
       )}
 
       {activeRepairSection === 'queue' && (
-      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+      <div className="mt-6 space-y-5">
+        <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Items To Be Repaired</h2>
             <p className="mt-1 text-xs font-medium text-slate-500">
               Defective equipment flagged for repair. Select a row to review its details.
             </p>
+            <div role="group" aria-label="Show" className="mt-4 inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+              {([
+                ['all', 'All'],
+                ['facility', 'Facility'],
+                ['tagged', 'Tagged'],
+              ] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={repairSource === value} onClick={() => setRepairSource(value)} className={`h-9 rounded-lg px-4 text-xs font-extrabold transition ${repairSource === value ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-900'}`}>{label}</button>)}
+            </div>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <label className="block w-40">
@@ -677,36 +588,100 @@ export default function ToRepaired() {
                 Clear date
               </button>
             )}
-            <button
-              type="button"
-              onClick={exportHandlers.excel}
-              className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#138548] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#0f7440] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2"
-            >
-              <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6M8 13h2M8 17h2M14 13h2M14 17h2" />
-              </svg>
-              Generate CSV
-            </button>
-            <button
-              type="button"
-              onClick={exportHandlers.word}
-              className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#2d5aa3] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#264e8e] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2"
-            >
-              <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6M8 13h8M8 17h8" />
-              </svg>
-              Generate Word
-            </button>
             <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700">
-              {filteredRepairs.length} item(s) in queue
+              {filteredRepairs.length + taggedChecks.length + facilityRepairs.length} to check
             </span>
-            {exportMessage && <p role="alert" className="basis-full rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-bold text-amber-800">{exportMessage}</p>}
           </div>
         </div>
+        </section>
 
-        <div className="max-h-[65vh] overflow-auto overscroll-contain border-t border-slate-100">
+        {repairSource !== 'tagged' && facilityRepairs.length > 0 && <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+          <div className="flex items-center justify-between gap-3 bg-amber-50/60 px-5 py-3 sm:px-6">
+            <p className="text-xs font-extrabold text-amber-900">Facility items to check</p>
+            <span className="text-[0.62rem] font-extrabold text-amber-800">{facilityRepairs.length} to check</span>
+          </div>
+          {facilityRepairError && <p role="alert" className="px-5 pt-3 text-xs font-bold text-rose-700 sm:px-6">{facilityRepairError}</p>}
+          <div className="overflow-auto">
+            <table className="min-w-220 w-full text-left">
+              <thead className="bg-slate-50 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-5 py-3 sm:px-6">Item</th>
+                  <th className="px-5 py-3">Damaged</th>
+                  <th className="px-5 py-3">Reported by</th>
+                  <th className="px-5 py-3">Returned</th>
+                  <th className="px-5 py-3">Who repairs</th>
+                  <th className="px-5 py-3 sm:px-6">Repair check</th>
+                </tr>
+              </thead>
+              <tbody>
+                {facilityRepairs.map((row) => {
+                  // GSO and ITSS items both get the same check here; the owner only shows who is responsible for the repair.
+                  const forGso = true
+                  const open = openUnits(row)
+                  return <tr key={`${row.requestId}-${row.itemCode}-${row.assetId}`} className="border-t border-slate-100">
+                    <td className="px-5 py-4 sm:px-6">
+                      <span className="block text-xs font-extrabold text-slate-800">{row.itemName}</span>
+                      <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{row.itemCode} · {row.referenceNo}</span>
+                    </td>
+                    <td className="px-5 py-4 text-xs font-semibold text-slate-700">{row.damagedQuantity}</td>
+                    <td className="px-5 py-4 text-xs font-semibold text-slate-700">{row.accountableName}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-600">{row.returnedAt ? formatDateTime(row.returnedAt) : '—'}</td>
+                    <td className="px-5 py-4">
+                      <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-slate-700">{forGso ? 'GSO' : 'ITSS'}</span>
+                    </td>
+                    <td className="px-5 py-4 sm:px-6">
+                      {forGso ? <div>
+                        <button type="button" onClick={() => openFacilityCheck(row)} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
+                        <p className="mt-1.5 text-[0.62rem] font-bold text-slate-500">{open} of {row.damagedQuantity} left to check.</p>
+                      </div> : <span className="text-[0.65rem] font-bold text-slate-500">With ITSS. Waits for their return.</span>}
+                    </td>
+                  </tr>
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>}
+        {repairSource !== 'facility' && taggedChecks.length > 0 && <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+          <div className="flex items-center justify-between gap-3 bg-amber-50/60 px-5 py-3 sm:px-6">
+            <p className="text-xs font-extrabold text-amber-900">Tagged units to check</p>
+            <span className="text-[0.62rem] font-extrabold text-amber-800">{taggedChecks.length} to check</span>
+          </div>
+          <div className="overflow-auto">
+            <table className="min-w-220 w-full text-left">
+              <thead className="bg-slate-50 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-500">
+                <tr>
+                  <th className="px-5 py-3 sm:px-6">Item</th>
+                  <th className="px-5 py-3">Unit</th>
+                  <th className="px-5 py-3">Reported by</th>
+                  <th className="px-5 py-3">Returned</th>
+                  <th className="px-5 py-3">Who repairs</th>
+                  <th className="px-5 py-3">Repair check</th>
+                </tr>
+              </thead>
+              <tbody>
+                {taggedChecks.map((item) => (
+                  <tr key={`${item.returnId}-${item.code}`} className="border-t border-slate-100">
+                    <td className="px-5 py-4 sm:px-6">
+                      <span className="block text-xs font-extrabold text-slate-800">{item.asset}</span>
+                      <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{item.itemCode}</span>
+                    </td>
+                    <td className="px-5 py-4 text-xs font-semibold text-slate-700">{item.tagCode || item.code}</td>
+                    <td className="px-5 py-4 text-xs font-semibold text-slate-700">{item.reportedBy}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-600">{item.dateReported}</td>
+                    <td className="px-5 py-4">
+                      <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-slate-700">GSO</span>
+                    </td>
+                    <td className="px-5 py-4 sm:px-6">
+                      <button type="button" onClick={() => { setCompletionChoice('repaired'); setRepairActionError(''); setRepairCompletionItem(item) }} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
+                      <p className="mt-1.5 text-[0.62rem] font-bold text-slate-500">1 left to check.</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>}
+        {repairSource === 'all' && (isLoadingRepairs || filteredRepairs.length > 0 || Boolean(repairLoadError)) && <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5"><div className="max-h-[65vh] overflow-auto overscroll-contain">
           <table className="min-w-220 w-full text-left">
             <thead className="sticky top-0 z-10 bg-slate-50 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-500 shadow-sm">
               <tr>
@@ -767,75 +742,16 @@ export default function ToRepaired() {
               )}
             </tbody>
           </table>
-        </div>
-      </section>
+        </div></section>}
+      </div>
       )}
 
-      {activeRepairSection === 'history' && (
-      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
-          <div>
-            <h2 className="text-base font-black tracking-tight text-slate-900">Completed Repair History</h2>
-            <p className="mt-1 text-xs font-medium text-slate-500">Repairs marked complete are kept here with their completion status.</p>
-          </div>
-          <span className="rounded-lg bg-emerald-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-emerald-700">
-            {repairHistoryItems.length} completed
-          </span>
-        </div>
-
-        <div className="max-h-[55vh] overflow-auto overscroll-contain border-t border-slate-100">
-          <table className="min-w-220 w-full text-left">
-            <thead className="sticky top-0 z-10 bg-slate-50 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-500 shadow-sm">
-              <tr>
-                <th className="px-5 py-3.5 sm:px-6">Asset / Item</th>
-                <th className="px-5 py-3.5">Reported By</th>
-                <th className="px-5 py-3.5">Date Reported</th>
-                <th className="px-5 py-3.5">Completed On</th>
-                <th className="px-5 py-3.5">Issue / Damage</th>
-                <th className="px-5 py-3.5 sm:px-6">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoadingRepairs && (
-                <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">Loading repair history...</td>
-                </tr>
-              )}
-              {!isLoadingRepairs && filteredRepairHistory.map((item, index) => (
-                <tr
-                  key={`${item.code}-${item.dateReported}-${index}`}
-                  onClick={() => setSelectedRepairItem(item)}
-                  className="cursor-pointer border-t border-slate-100 transition hover:bg-slate-50/60"
-                >
-                  <td className="px-5 py-4 sm:px-6">
-                    <span className="block text-xs font-extrabold text-slate-800">{item.asset}</span>
-                    <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{item.code} · {item.category}</span>
-                  </td>
-                  <td className="px-5 py-4 text-xs font-semibold text-slate-700">{item.reportedBy}</td>
-                  <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-600">{item.dateReported}</td>
-                  <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-600">{item.dateCompleted || '—'}</td>
-                  <td className="max-w-xs px-5 py-4 text-xs text-slate-600">{item.issue}</td>
-                  <td className="px-5 py-4 sm:px-6">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${item.repairStatusTone}`}>{item.repairStatus}</span>
-                  </td>
-                </tr>
-              ))}
-              {!isLoadingRepairs && filteredRepairHistory.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-xs font-semibold text-slate-400">No completed repairs match your search and date filters.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      )}
 
       {selectedRepairItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-black text-slate-900">Repair Ticket Details</h3>
+              <h3 className="text-base font-black text-slate-900">Repair Ticket Details</h3>
               <button
                 type="button"
                 onClick={() => setSelectedRepairItem(null)}
@@ -897,8 +813,120 @@ export default function ToRepaired() {
         </div>
       )}
 
+      {checkingRow && (() => {
+        const row = checkingRow
+        const open = openUnits(row)
+        const busy = repairingAssetId === row.assetId
+        const entry = repairInputs[row.assetId] ?? { repaired: '', unserviceable: '' }
+        const problem = repairCheckProblem(open, entry)
+        const unserviceableCount = Number(entry.unserviceable || 0)
+        const isConfirming = confirmingAssetId === row.assetId
+        const closeCheck = () => {
+          if (busy) return
+          setCheckingAssetId('')
+          setConfirmingAssetId('')
+          setFacilityRepairError('')
+        }
+        return (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="facility-check-title"
+              onKeyDown={(event) => { if (event.key === 'Escape') closeCheck() }}
+              className="flex max-h-[94vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
+            >
+              <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">GSO repair check</p>
+                  <h2 id="facility-check-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Repair check</h2>
+                  <p className="mt-1 text-sm font-semibold text-slate-600">{row.itemName} · {row.itemCode}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-500">
+                    Reported by {row.accountableName}{row.returnedAt ? ` · returned ${formatDateTime(row.returnedAt)}` : ''}
+                  </p>
+                </div>
+                <button type="button" onClick={closeCheck} disabled={busy} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:opacity-50">Close</button>
+              </header>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6 scrollbar-thin">
+
+              <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 p-4 text-sm font-semibold text-slate-700">
+                {row.damagedQuantity} damaged · {open} still waiting for a check
+              </div>
+
+              <fieldset className="mt-4 grid gap-3 sm:grid-cols-2" disabled={busy}>
+                <label className="block">
+                  <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-emerald-700">Repaired · to stock</span>
+                  <input type="number" min={0} max={open} inputMode="numeric" value={entry.repaired} onChange={(event) => setRepairInputs((current) => ({ ...current, [row.assetId]: { ...entry, repaired: event.target.value } }))} aria-label={`Repaired units of ${row.itemName}`} className="h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-lg font-bold text-slate-900 outline-none focus:border-blue-600" />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-rose-700">Unserviceable · to history</span>
+                  <input type="number" min={0} max={open} inputMode="numeric" value={entry.unserviceable} onChange={(event) => setRepairInputs((current) => ({ ...current, [row.assetId]: { ...entry, unserviceable: event.target.value } }))} aria-label={`Unserviceable units of ${row.itemName}`} className="h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-lg font-bold text-slate-900 outline-none focus:border-blue-600" />
+                </label>
+              </fieldset>
+
+              {unserviceableCount > 0 && (
+                <div className="mt-4">
+                  <p className="text-base font-black text-slate-900">Why can't it be fixed? <span className="text-xs font-semibold text-rose-600">(required)</span></p>
+                  <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label={`Reason for ${row.itemName}`}>
+                    {UNSERVICEABLE_REASONS.map((reason) => <button key={reason} type="button" disabled={busy} onClick={() => setUnserviceableReasons((current) => ({ ...current, [row.assetId]: reason }))} className={`rounded-full border-2 px-4 py-2.5 text-sm font-extrabold transition ${unserviceableReasons[row.assetId] === reason ? 'border-rose-500 bg-white text-rose-800 ring-2 ring-rose-200' : 'border-slate-300 bg-white text-slate-700 hover:border-rose-300'}`}>{reason}</button>)}
+                  </div>
+                  {unserviceableReasons[row.assetId] === 'Other' && <input value={unserviceableOther[row.assetId] || ''} onChange={(event) => setUnserviceableOther((current) => ({ ...current, [row.assetId]: event.target.value }))} maxLength={300} disabled={busy} placeholder="Write the reason" className="mt-2 h-14 w-full rounded-xl border-2 border-slate-300 px-4 text-base font-semibold text-slate-900 outline-none focus:border-blue-600" />}
+                </div>
+              )}
+
+              {isConfirming && (
+                <div role="alert" className="mt-4 rounded-xl border-2 border-rose-300 bg-rose-50/40 p-4">
+                  <p className="text-sm font-black text-rose-800">Write off {entry.unserviceable} unserviceable {row.itemName}?</p>
+                  <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">They leave the stock and go to History. Reason: {unserviceableReasonText(row.assetId)}.</p>
+                  <p className="mt-1 text-xs font-extrabold text-rose-800">{estimatedWriteOff(row, unserviceableCount)}</p>
+                  <div className="mt-3 grid gap-2" role="radiogroup" aria-label={`Charge decision for ${row.itemName}`}>
+                    {([
+                      ['waive', 'Waive, no charge', 'The damage is not charged to the requester.'],
+                      ['charge', 'Charge the requester', 'Finance collects the amount in person.'],
+                    ] as const).map(([value, label, detail]) => <button key={value} type="button" role="radio" aria-checked={writeOffDecision[row.assetId] === value} disabled={busy} onClick={() => setWriteOffDecision((current) => ({ ...current, [row.assetId]: value }))} className={`rounded-xl border-2 bg-white px-4 py-3.5 text-left transition ${writeOffDecision[row.assetId] === value ? 'border-rose-500 ring-2 ring-rose-100' : 'border-slate-200 hover:border-rose-200'}`}>
+                      <span className="block text-sm font-extrabold text-slate-900">{label}</span>
+                      <span className="block text-xs font-semibold text-slate-500">{detail}</span>
+                    </button>)}
+                  </div>
+                  {writeOffDecision[row.assetId] === 'waive' && (
+                    <label className="mt-3 block">
+                      <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Who checked the items at GSO, and why <span className="text-rose-600">*</span></span>
+                      <input value={waiverNotes[row.assetId] || ''} onChange={(event) => setWaiverNotes((current) => ({ ...current, [row.assetId]: event.target.value }))} maxLength={500} disabled={busy} placeholder="e.g. Checked by Juan Dela Cruz, GSO staff, unit is beyond repair" className="h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-semibold text-slate-900 outline-none focus:border-blue-600" />
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {facilityRepairError &&<p role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900">{facilityRepairError}</p>}
+              {!facilityRepairError && problem && <p role="alert" className="mt-4 text-xs font-extrabold text-rose-700">{problem}</p>}
+              {!problem && !isConfirming && (entry.repaired.trim() !== '' || entry.unserviceable.trim() !== '') && (
+                <p className="mt-4 text-xs font-bold text-slate-500">
+                  {Number(entry.repaired || 0) > 0 && <span className="text-emerald-700">{entry.repaired} go back to Item Master stock. </span>}
+                  {unserviceableCount > 0 && <span className="text-rose-700">{entry.unserviceable} unserviceable go to History.</span>}
+                </p>
+              )}
+
+              </div>
+              <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-7">
+                {isConfirming ? (
+                  <>
+                    <button type="button" onClick={() => setConfirmingAssetId('')} disabled={busy} className="rounded-xl border-2 border-slate-300 bg-white px-6 py-3.5 text-base font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+                    <button type="button" onClick={() => void saveFacilityRepair(row)} disabled={busy || !writeOffDecision[row.assetId] || (writeOffDecision[row.assetId] === 'waive' && !(waiverNotes[row.assetId] || '').trim())} className="rounded-xl bg-rose-600 px-6 py-3.5 text-base font-extrabold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : 'Yes, write off'}</button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" onClick={closeCheck} disabled={busy} className="rounded-xl border-2 border-slate-300 bg-white px-6 py-3.5 text-base font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+                    <button type="button" disabled={busy || Boolean(problem) || (entry.repaired.trim() === '' && entry.unserviceable.trim() === '') || (unserviceableCount > 0 && !unserviceableReasonText(row.assetId))} onClick={() => askSaveFacilityRepair(row, unserviceableCount)} className="rounded-xl bg-blue-600 px-6 py-3.5 text-base font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : 'Save check'}</button>
+                  </>
+                )}
+              </div>
+            </section>
+          </div>
+        )
+      })()}
+
       {repairCompletionItem && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
           <section
             role="dialog"
             aria-modal="true"
@@ -906,76 +934,101 @@ export default function ToRepaired() {
             onKeyDown={(event) => {
               if (event.key === 'Escape' && !isCompletingRepair) { setRepairCompletionItem(null); setRepairActionError('') }
             }}
-            className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl"
+            className="flex max-h-[94vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
           >
-            <h3 id="repair-completion-title" className="text-sm font-black text-slate-900">Close this repair</h3>
-            <p className="mt-1 text-xs text-slate-500">
-              <span className="font-bold text-slate-700">{repairCompletionItem.asset}</span> · {repairCompletionItem.tagCode || repairCompletionItem.code}
-            </p>
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="min-w-0">
+                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Tagged unit</p>
+                <h2 id="repair-completion-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Repair check</h2>
+                <p className="mt-1 text-sm font-semibold text-slate-600">
+                  {repairCompletionItem.asset} · {repairCompletionItem.tagCode || repairCompletionItem.code}
+                </p>
+              </div>
+              <button type="button" onClick={() => { if (!isCompletingRepair) { setRepairCompletionItem(null); setRepairActionError('') } }} disabled={isCompletingRepair} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:opacity-50">Close</button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6 scrollbar-thin">
 
-            <fieldset className="mt-4 space-y-2" disabled={isCompletingRepair}>
-              <legend className="mb-2 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">What happened to the item?</legend>
-              <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border-2 p-3.5 shadow-md shadow-slate-300/35 transition ${completionChoice === 'repaired' ? 'border-emerald-300 bg-emerald-50/60 ring-4 ring-emerald-100' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5 hover:border-slate-400'}`}>
-                <input type="radio" name="repair-outcome" checked={completionChoice === 'repaired'} onChange={() => { setCompletionChoice('repaired'); setRepairActionError('') }} className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600" />
-                <span>
-                  <span className="block text-xs font-extrabold text-slate-900">It was repaired</span>
-                  <span className="mt-0.5 block text-[0.68rem] leading-relaxed text-slate-500">
-                    {repairCompletionItem.tagCode ? 'The unit goes back to GSO Storage.' : 'The units from this return can be issued again.'}
-                  </span>
-                </span>
+            <fieldset className="mt-4 grid gap-2" disabled={isCompletingRepair}>
+              <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 p-3.5 transition ${completionChoice === 'repaired' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 bg-white hover:border-slate-400'}`}>
+                <input type="radio" name="repair-outcome" checked={completionChoice === 'repaired'} onChange={() => { setCompletionChoice('repaired'); setRepairActionError('') }} className="h-4 w-4 accent-emerald-600" />
+                <span className="text-base font-extrabold text-slate-900">Repaired · to stock</span>
               </label>
-              {repairCompletionItem.returnId && repairCompletionItem.repairStatus !== writeOffRequestedStatus && (
-                <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border-2 p-3.5 shadow-md shadow-slate-300/35 transition ${completionChoice === 'writeOff' ? 'border-rose-300 bg-rose-50/60 ring-4 ring-rose-100' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5 hover:border-slate-400'}`}>
-                  <input type="radio" name="repair-outcome" checked={completionChoice === 'writeOff'} onChange={() => { setCompletionChoice('writeOff'); setRepairActionError('') }} className="mt-0.5 h-4 w-4 shrink-0 accent-rose-600" />
-                  <span>
-                    <span className="block text-xs font-extrabold text-slate-900">It can't be repaired</span>
-                    <span className="mt-0.5 block text-[0.68rem] leading-relaxed text-slate-500">Ask IT Admin to write it off. It stays in this queue until they approve it.</span>
-                  </span>
+              {repairCompletionItem.returnId && (
+                <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 p-3.5 transition ${completionChoice === 'writeOff' ? 'border-rose-500 bg-rose-50' : 'border-slate-300 bg-white hover:border-slate-400'}`}>
+                  <input type="radio" name="repair-outcome" checked={completionChoice === 'writeOff'} onChange={() => { setCompletionChoice('writeOff'); setRepairActionError('') }} className="h-4 w-4 accent-rose-600" />
+                  <span className="text-base font-extrabold text-slate-900">Unserviceable · to history</span>
                 </label>
               )}
             </fieldset>
 
             {completionChoice === 'writeOff' && (
-              <label className="mt-3 block">
-                <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Why it can't be repaired</span>
-                <textarea
-                  autoFocus
-                  value={writeOffNote}
-                  onChange={(event) => setWriteOffNote(event.target.value)}
-                  maxLength={1000}
-                  disabled={isCompletingRepair}
-                  placeholder="e.g. Frame cracked beyond repair; parts no longer available"
-                  className="min-h-20 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                />
-              </label>
+              <div className="mt-4 space-y-4">
+                <div>
+                  <p className="text-base font-black text-slate-900">Why can't it be fixed?</p>
+                  <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Reason">
+                    {TAGGED_WRITE_OFF_REASONS.map((reason) => <button key={reason} type="button" onClick={() => setTagWriteOffReason(reason)} disabled={isCompletingRepair} className={`rounded-full border-2 px-4 py-2.5 text-sm font-extrabold transition ${tagWriteOffReason === reason ? 'border-rose-500 bg-white text-rose-800 ring-2 ring-rose-200' : 'border-slate-300 bg-white text-slate-700 hover:border-rose-300'}`}>{reason}</button>)}
+                  </div>
+                  {tagWriteOffReason === 'Other' && <input value={writeOffNote} onChange={(event) => setWriteOffNote(event.target.value)} maxLength={300} disabled={isCompletingRepair} placeholder="Write the reason" className="mt-2 h-14 w-full rounded-xl border-2 border-slate-300 px-4 text-base font-semibold text-slate-900 outline-none focus:border-blue-600" />}
+                </div>
+                {tagWriteOffReason && (
+                  <div role="alert" className="rounded-xl border-2 border-rose-300 bg-rose-50/40 p-4">
+                    <p className="text-sm font-black text-rose-800">Write off this unserviceable {repairCompletionItem.asset}?</p>
+                    <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">They leave the stock and go to History. Reason: {tagWriteOffReason === 'Other' ? (writeOffNote.trim() || '—') : tagWriteOffReason}.</p>
+                    <p className="mt-1 text-xs font-extrabold text-rose-800">
+                      Estimated value: {(() => {
+                        const unit = Number(inventoryItems.find((item) => item.itemCode.toLowerCase() === repairCompletionItem.itemCode.toLowerCase())?.unitCost)
+                        return unit > 0 ? `${unit.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })} (1 × ${unit.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })} unit cost)` : 'No unit cost in the Item Master, so no estimate yet.'
+                      })()}
+                    </p>
+                    <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Charge decision">
+                      {([
+                        ['waive', 'Waive, no charge', 'The damage is not charged to the requester.'],
+                        ['charge', 'Charge the requester', 'Finance collects the amount in person.'],
+                      ] as const).map(([value, label, detail]) => <button key={value} type="button" role="radio" aria-checked={tagWriteOffDecision === value} onClick={() => setTagWriteOffDecision(value)} disabled={isCompletingRepair} className={`rounded-xl border-2 bg-white px-4 py-3.5 text-left transition ${tagWriteOffDecision === value ? 'border-rose-500 ring-2 ring-rose-100' : 'border-slate-200 hover:border-rose-200'}`}>
+                        <span className="block text-sm font-extrabold text-slate-900">{label}</span>
+                        <span className="block text-xs font-semibold text-slate-500">{detail}</span>
+                      </button>)}
+                    </div>
+                    {tagWriteOffDecision === 'waive' && (
+                      <label className="mt-3 block">
+                        <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Who checked the items at GSO, and why <span className="text-rose-600">*</span></span>
+                        <input value={tagWaiverNote} onChange={(event) => setTagWaiverNote(event.target.value)} maxLength={300} disabled={isCompletingRepair} placeholder="e.g. Checked by Juan Dela Cruz, GSO staff, unit is beyond repair" className="h-14 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-semibold text-slate-900 outline-none focus:border-blue-600" />
+                      </label>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
 
             {repairActionError && (
-              <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">
+              <p role="alert" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm font-semibold text-amber-900">
                 {repairActionError}
               </p>
             )}
-            <div className="mt-6 flex justify-end gap-2">
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-7">
               <button
                 type="button"
                 disabled={isCompletingRepair}
                 onClick={() => { setRepairCompletionItem(null); setRepairActionError('') }}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-xl border-2 border-slate-300 bg-white px-6 py-3.5 text-base font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={isCompletingRepair || (completionChoice === 'writeOff' && !writeOffNote.trim())}
-                onClick={() => { void (completionChoice === 'writeOff' ? handleRequestWriteOff() : handleMarkAsRepaired()) }}
-                className={`rounded-xl px-4 py-2 text-xs font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${completionChoice === 'writeOff' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                disabled={isCompletingRepair || (completionChoice === 'writeOff' && (!tagWriteOffReason || !tagWriteOffDecision || (tagWriteOffReason === 'Other' && !writeOffNote.trim()) || (tagWriteOffDecision === 'waive' && !tagWaiverNote.trim())))}
+                onClick={() => { void (completionChoice === 'writeOff' ? handleGsoWriteOff() : handleMarkAsRepaired()) }}
+                className={`rounded-xl px-6 py-3.5 text-base font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${completionChoice === 'writeOff' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'}`}
               >
-                {isCompletingRepair ? 'Saving...' : completionChoice === 'writeOff' ? 'Send write-off request' : 'Mark as repaired'}
+                {isCompletingRepair ? 'Saving…' : completionChoice === 'writeOff' ? 'Yes, write off' : 'Save check'}
               </button>
             </div>
           </section>
         </div>
       )}
-    </GsoPageFrame>
+    </>
   )
+  if (embedded) return page
+  return <GsoPageFrame activePage="Repair & Maintenance" searchPlaceholder="Search asset, code, or reporter...">{page}</GsoPageFrame>
 }

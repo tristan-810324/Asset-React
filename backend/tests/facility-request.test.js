@@ -98,6 +98,22 @@ test.after(async () => {
   await pool.end();
 });
 
+test('a request completes while a missing item is still unsettled, and Finance keeps the row', async () => {
+  const request = await submit([{ itemId: '3', quantity: 2 }]);
+  const asset = await approveAndRelease(request);
+  await requestsService.updateStatus(request.id, { status: 'Returned', returns: [{ assetId: asset.id, returned: 1, condition: 'Good' }] }, gso);
+  await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+
+  const [saved] = await assetsOf(request.id);
+  assert.equal(saved.settlement_status, 'Pending');
+  const rows = (await facilityFlow.financeReport()).filter((row) => String(row.requestId) === String(request.id));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].lostQuantity, 1);
+  assert.ok(rows[0].accountableName);
+  // Finance settles it later; here the replacement puts the stock back so the next tests start clean.
+  await facilityFlow.settleFacilityItem(request.id, asset.id, { status: 'Replaced', note: 'Same model returned' }, gso);
+});
+
 test('each equipment row keeps the Item Master record, not the text the form sends', async () => {
   const request = await submit([{ itemId: '3', quantity: 4, name: 'Typed by hand', unit: 'box' }]);
   assert.deepEqual(await storedEquipment(request.id), [{
@@ -176,7 +192,7 @@ test('a request without items goes from Approved straight to Completed and has n
 test('a damaged return is saved as For Repair and keeps the items out until it is fixed', async () => {
   const request = await submit([{ itemId: '3', quantity: 2 }]);
   const asset = await approveAndRelease(request);
-  const returns = [{ assetId: asset.id, returned: 2, condition: 'Needs Repair' }];
+  const returns = [{ assetId: asset.id, returned: 2, condition: 'Needs Repair', repairBy: 'GSO' }];
   await rejects(requestsService.updateStatus(request.id, { status: 'Returned', returns }, gso), /For Repair/, 409);
   await requestsService.updateStatus(request.id, { status: 'For Repair', returns }, gso);
   assert.equal(await stockOf('AST-OE-0001'), 18);
@@ -188,7 +204,7 @@ test('a damaged return is saved as For Repair and keeps the items out until it i
 test('a return records how many came back, how many are damaged, and how many are missing', async () => {
   const request = await submit([{ itemId: '3', quantity: 5 }]);
   const asset = await approveAndRelease(request);
-  const line = (change) => ({ assetId: asset.id, returned: 4, damaged: 1, condition: 'Needs Repair', ...change });
+  const line = (change) => ({ assetId: asset.id, returned: 4, damaged: 1, condition: 'Needs Repair', repairBy: 'GSO', ...change });
   await rejects(requestsService.updateStatus(request.id, { status: 'For Repair', returns: [line({ damaged: 5 })] }, gso), /0 to 4/, 400);
   await rejects(requestsService.updateStatus(request.id, { status: 'For Repair', returns: [line({ condition: 'Good' })] }, gso), /what is wrong/, 400);
   await rejects(requestsService.updateStatus(request.id, { status: 'Returned', returns: [line()] }, gso), /For Repair/, 409);
@@ -216,9 +232,9 @@ test('a missing item leaves the stock, blocks equipment requests, and any GSO st
   assert.equal((await one("SELECT COUNT(*)::INTEGER AS n FROM inventory_change_logs WHERE flag = 'ITEM_LOST' AND request_id = $1", [request.id])).n, 1);
   assert.equal((await one("SELECT COUNT(*)::INTEGER AS n FROM app_notifications WHERE recipient_user_id = 3 AND title = 'Missing items' AND href = $1", [`/requester/requests/${request.id}`])).n, 1);
 
-  await rejects(requestsService.updateStatus(request.id, { status: 'Completed' }, gso), /Settle the missing items/, 409);
-  await rejects(submit([{ itemId: '3', quantity: 1 }]), /missing items/, 409);
-  assert.ok(await submit([]), 'a venue-only request is still allowed');
+  const report = await facilityFlow.financeReport();
+  assert.ok(report.some((row) => String(row.requestId) === String(request.id) && row.lostQuantity === 1 && row.accountableName), 'Finance report names the requester');
+  assert.ok(await submit([{ itemId: '3', quantity: 1 }]), 'a missing item does not block new equipment requests');
 
   await rejects(facilityFlow.settleFacilityItem(request.id, asset.id, { status: 'Waived' }, gso), /reason for the waiver/, 400);
   // gso recorded this return and can still settle it.
@@ -226,7 +242,6 @@ test('a missing item leaves the stock, blocks equipment requests, and any GSO st
   assert.equal(await itemMasterAvailable('AST-OE-0001'), 20);
   await rejects(facilityFlow.settleFacilityItem(request.id, asset.id, { status: 'Paid' }, otherGso), /already settled/, 409);
   await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
-  assert.ok(await submit([{ itemId: '3', quantity: 1 }]), 'equipment requests work again once settled');
 });
 
 test('a released item past its end time gets one reminder a day until it is returned', async () => {
@@ -330,4 +345,33 @@ test('a Paid settlement keeps the missing unit out of stock', async () => {
   await facilityFlow.settleFacilityItem(request.id, asset.id, { status: 'Paid', note: 'OR 12345' }, otherGso);
   assert.equal(Number((await one('SELECT quantity FROM item_catalog WHERE id = 5')).quantity), 0);
   await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+});
+
+test('a Needs Repair return must say who repairs it, and the choice is saved', async () => {
+  // Afternoon slot, so it does not clash with the earlier morning bookings in this file.
+  const request = await submit([{ itemId: '3', quantity: 3 }], { startTime: '13:00', endTime: '15:00' });
+  const asset = await approveAndRelease(request);
+  await rejects(requestsService.updateStatus(request.id, { status: 'For Repair', returns: [{ assetId: asset.id, returned: 3, damaged: 1, condition: 'Needs Repair' }] }, gso), /Choose who repairs/, 400);
+  await requestsService.updateStatus(request.id, { status: 'For Repair', returns: [{ assetId: asset.id, returned: 3, damaged: 1, condition: 'Needs Repair', repairBy: 'ITSS' }] }, gso);
+  const [saved] = await assetsOf(request.id);
+  assert.equal(saved.repair_owner, 'ITSS');
+  // The Finance report and To Be Repaired read this same owner.
+  const report = await facilityFlow.financeReport();
+  assert.equal(report.find((row) => String(row.requestId) === String(request.id)).repairOwner, 'ITSS');
+});
+
+test('GSO splits a Needs Repair row: some units repaired, the rest unserviceable, and the request closes after the last unit', async () => {
+  const start = await stockOf('AST-OE-0001');
+  const request = await submit([{ itemId: '3', quantity: 2 }], { startTime: '16:00', endTime: '17:00' });
+  const asset = await approveAndRelease(request);
+  await requestsService.updateStatus(request.id, { status: 'For Repair', returns: [{ assetId: asset.id, returned: 2, condition: 'Needs Repair', repairBy: 'GSO' }] }, gso);
+  assert.equal(await stockOf('AST-OE-0001'), start - 2);
+  await requestsService.resolveFacilityRepair(asset.id, { repaired: 1 }, gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'For Repair', 'one unit is still waiting');
+  await rejects(requestsService.resolveFacilityRepair(asset.id, { repaired: 2 }, gso), /more than the units/, 409);
+  await requestsService.resolveFacilityRepair(asset.id, { unserviceable: 1 }, gso);
+  assert.equal(await stockOf('AST-OE-0001'), start);
+  const [saved] = await assetsOf(request.id);
+  assert.deepEqual([saved.repaired_quantity, saved.unserviceable_quantity], [1, 1]);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'Completed');
 });

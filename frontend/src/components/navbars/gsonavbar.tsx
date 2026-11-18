@@ -14,21 +14,22 @@ export type GsoNavigationItem =
   | 'Facilities and equipment'
   | 'Service Workboard'
   | 'Issuance History'
+  | 'History'
   | 'Audit Logs'
-  | 'Returns & Histories'
+  | 'Return Issuance'
   | 'Return Items'
   | 'Loss & Damage Cases'
   | 'Repair & Maintenance'
   | 'Notifications'
   | 'Profile'
 
-type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Returns & Histories'>
+type VisibleNavigationItem = Exclude<GsoNavigationItem, 'Return Issuance'>
 type NavigationIconName = 'alert' | 'archive' | 'bell' | 'building' | 'cart' | 'chevron-down' | 'clipboard' | 'clipboard-check' | 'clipboard-plus' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'package' | 'return' | 'search' | 'settings' | 'user' | 'truck' | 'users' | 'wrench'
 
 type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string; activePages?: GsoNavigationItem[] }
 type NavigationGroup = {
   kind: 'group'
-  name: 'Returns & Histories'
+  name: 'Return Issuance'
   icon: NavigationIconName
   href: string
   activePages: GsoNavigationItem[]
@@ -167,19 +168,20 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Overview', icon: 'grid', href: '/gso' },
   { kind: 'link', name: 'Item Master Data', icon: 'package', href: '/gso/items' },
   { kind: 'link', name: 'Employees & Requesters', icon: 'users', href: '/gso/employees' },
-  { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/purchase-requisitions', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
   { kind: 'link', name: 'Procurement', icon: 'cart', href: '/gso/procurement' },
-  { kind: 'link', name: 'Facilities and equipment', icon: 'building', href: '/gso/facilities-equipment' },
-  { kind: 'link', name: 'Service Workboard', icon: 'wrench', href: '/gso/service-workboard' },
+  { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/purchase-requisitions', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
   {
     kind: 'group',
-    name: 'Returns & Histories',
-    icon: 'history',
+    name: 'Return Issuance',
+    icon: 'return',
     href: '/gso/return-items',
     activePages: ['Return Items'],
   },
+  { kind: 'link', name: 'Facilities and equipment', icon: 'building', href: '/gso/facilities-equipment' },
+  { kind: 'link', name: 'Service Workboard', icon: 'wrench', href: '/gso/service-workboard' },
   { kind: 'link', name: 'Loss & Damage Cases', icon: 'alert', href: '/gso/loss-damage-cases' },
-  { kind: 'link', name: 'Repair & Maintenance', icon: 'wrench', href: '/gso/to-be-repaired' },
+  { kind: 'link', name: 'Repair & Maintenance', icon: 'settings', href: '/gso/to-be-repaired' },
+  { kind: 'link', name: 'History', icon: 'history', href: '/gso/history' },
   { kind: 'link', name: 'Notifications', icon: 'bell', href: '/gso/notifications' },
 ]
 
@@ -221,8 +223,7 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoN
           </button>
         </div>
 
-        <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
-        <nav className="mt-3 space-y-1.5" aria-label="Primary navigation">
+        <nav className="mt-9 space-y-1.5" aria-label="Primary navigation">
           {navigation.map((item) => {
             const isActive = item.kind === 'group'
               ? item.activePages.includes(currentPage)
@@ -245,20 +246,6 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoN
             )
           })}
         </nav>
-
-        <div className="mt-auto rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/80 to-slate-900/70 p-4">
-          <div className="flex items-center gap-2 text-blue-200">
-            <NavigationIcon name="archive" className="h-4 w-4" />
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">GSO Operations</span>
-          </div>
-          <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">
-            Manage inventory, staff, requests, and returns from one workspace.
-          </p>
-          <a href="/gso" className="mt-3 inline-block text-xs font-extrabold text-white transition hover:text-blue-200">
-            Open workspace overview <span aria-hidden="true">→</span>
-          </a>
-        </div>
-
       </aside>
 
       {mobileMenuOpen && (

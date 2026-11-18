@@ -552,7 +552,7 @@ async function verifyBulkReturnOtp({ challengeId, issuanceId, quantity, conditio
 
 async function confirmScannedTagReturn({
   tagCode, condition, reason, entryMethod, returnedByName = null, serialLast4 = '',
-  otpChallengeId, otpHash, tokenHash, requestedByUserId,
+  otpChallengeId, otpHash, tokenHash, requestedByUserId, repairOwner = null,
 }) {
   const isLost = condition === 'Lost';
   const client = await pool.connect();
@@ -661,8 +661,8 @@ async function confirmScannedTagReturn({
       `INSERT INTO employee_issuance_returns (
          issuance_id, asset_unit_tag_id, requested_by_user_id, status, token_hash,
          token_expires_at, return_condition, reason, decision_note, decided_at, quantity,
-         returned_by_name, confirmation_method, tag_snapshot, settlement_status
-       ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, NOW(), 1, $9, $10, $11::JSONB, $12)
+         returned_by_name, confirmation_method, tag_snapshot, settlement_status, repair_owner
+       ) VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, NOW(), 1, $9, $10, $11::JSONB, $12, $13)
        RETURNING id, status, requested_at AS "requestedAt", decided_at AS "decidedAt"`,
       [
         issuance.id, tag.tag_id, requestedByUserId, isLost ? 'Lost' : 'Returned', tokenHash,
@@ -677,6 +677,7 @@ async function confirmScannedTagReturn({
           issuanceId: String(issuance.id),
         }),
         isLost ? 'Pending' : null,
+        repairOwner,
       ],
     );
 
@@ -1189,12 +1190,12 @@ async function inTransaction(work) {
 async function lockReturnForFollowUp(client, returnId) {
   const result = await client.query(
     `SELECT return_record.id, return_record.status, return_record.quantity, return_record.return_condition,
-            return_record.repair_resolved_at, return_record.settlement_status,
+            return_record.repair_resolved_at, return_record.settlement_status, return_record.repair_owner,
             return_record.asset_unit_tag_id, return_record.tag_snapshot, return_record.approval_action, return_record.approval_note,
             return_record.approval_requested_by_user_id,
             issue.id AS issuance_id, issue.employee_id, issue.item_id, issue.unit_of_measure,
             item.item_code, item.description,
-            employee.employee_code
+            employee.employee_code, employee.email AS employee_email
        FROM employee_issuance_returns AS return_record
        JOIN employee_issuances AS issue ON issue.id = return_record.issuance_id
        JOIN item_catalog AS item ON item.id = issue.item_id
@@ -1229,7 +1230,7 @@ function isAwaitingSettlement(record) {
 }
 
 // Closes a damaged return in To Be Repaired: the units go back to stock or leave it for good.
-async function applyRepairOutcome(client, record, { outcome, note, userId, approvalText = '' }) {
+async function applyRepairOutcome(client, record, { outcome, note, userId, approvalText = '', writeOff = null }) {
   if (!isAwaitingRepair(record)) {
     throw conflict(record.repair_resolved_at ? 'Tapos na ang repair record na ito.' : 'Hindi ito return na nasa repair.');
   }
@@ -1276,10 +1277,18 @@ async function applyRepairOutcome(client, record, { outcome, note, userId, appro
   }
 
   await client.query(
-    `UPDATE employee_issuance_returns
-        SET repair_outcome = $2, repair_resolved_at = NOW(), repair_resolved_by_user_id = $3
-      WHERE id = $1`,
-    [record.id, outcome, userId],
+    writeOff
+      ? `UPDATE employee_issuance_returns
+            SET repair_outcome = $2, repair_resolved_at = NOW(), repair_resolved_by_user_id = $3,
+                write_off_reason = $4, write_off_decision = $5, write_off_estimated_value = $6,
+                write_off_by_user_id = $3, write_off_at = NOW()
+          WHERE id = $1`
+      : `UPDATE employee_issuance_returns
+            SET repair_outcome = $2, repair_resolved_at = NOW(), repair_resolved_by_user_id = $3
+          WHERE id = $1`,
+    writeOff
+      ? [record.id, outcome, userId, writeOff.reason, writeOff.decision, writeOff.estimatedValue]
+      : [record.id, outcome, userId],
   );
   const inventoryStatus = await refreshInventoryStatus(client, record.item_id);
   await writeReturnAuditLog(client, record, {
@@ -1295,11 +1304,21 @@ async function applyRepairOutcome(client, record, { outcome, note, userId, appro
     itemCode: record.item_code,
     itemName: record.description,
     tagCode: record.tag?.tag_code || null,
+    employeeEmail: record.employee_email || null,
+    repairOwner: record.repair_owner || null,
+    writeOff,
   };
 }
 
-async function resolveReturnRepair({ returnId, outcome, note, userId }) {
-  return inTransaction(async (client) => applyRepairOutcome(client, await lockReturnForFollowUp(client, returnId), { outcome, note, userId }));
+async function resolveReturnRepair({ returnId, outcome, note, userId, writeOff = null }) {
+  return inTransaction(async (client) => applyRepairOutcome(client, await lockReturnForFollowUp(client, returnId), { outcome, note, userId, writeOff }));
+}
+
+// The sign-in account with this email, so the requester can be notified in the app.
+async function findAccountIdByEmail(email) {
+  if (!email) return null;
+  const result = await pool.query('SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1', [email]);
+  return result.rows[0]?.id || null;
 }
 
 async function applySettlement(client, record, { status, note, userId, approvalText = '' }) {
@@ -1703,6 +1722,7 @@ async function claimOverdueReminders(limit = 10) {
 
 module.exports = {
   resolveReturnRepair,
+  findAccountIdByEmail,
   updateReturnSettlement,
   requestReturnApproval,
   decideApprovalRequest,

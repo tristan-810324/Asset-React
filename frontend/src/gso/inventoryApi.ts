@@ -107,6 +107,8 @@ export type InventoryItemRecord = {
   currentValue: number | string | null
   quantity: number
   availableQuantity: number
+  // Units in To Be Repaired that have not had their check yet. They are the only "On hold" stock.
+  repairQuantity?: number
   unitOfMeasure: string
   condition: string
   status: string

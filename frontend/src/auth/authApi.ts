@@ -47,6 +47,12 @@ const pendingEmailVerificationKey = 'dyciPendingEmailVerification';
 const pendingPasswordResetKey = 'dyciPendingPasswordReset';
 const passwordResetTokenKey = 'dyciPasswordResetToken';
 
+function backendConnectionError() {
+  return new ApiError(import.meta.env.DEV
+    ? 'Unable to connect to the backend. Make sure the server is running on port 5000.'
+    : `Unable to connect to the backend from ${window.location.origin}. Confirm this exact origin is included in the backend Vercel FRONTEND_ORIGIN setting, then redeploy the backend.`);
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit & { auth?: boolean } = {}): Promise<T> {
   const { auth = true, headers: requestHeaders, ...requestOptions } = options;
   const headers = new Headers(requestHeaders);
@@ -64,12 +70,15 @@ export async function apiRequest<T>(path: string, options: RequestInit & { auth?
   try {
     response = await fetch(`${apiBaseUrl}${path}`, { ...requestOptions, headers });
   } catch {
-    throw new ApiError(import.meta.env.DEV
-      ? 'Unable to connect to the backend. Make sure the server is running on port 5000.'
-      : `Unable to connect to the backend from ${window.location.origin}. Confirm this exact origin is included in the backend Vercel FRONTEND_ORIGIN setting, then redeploy the backend.`);
+    throw backendConnectionError();
   }
 
   const envelope = await response.json().catch(() => null) as ApiEnvelope<T> | null;
+  // Vite returns an HTML 5xx response when its local /api proxy cannot reach port 5000.
+  // Fetch considers that a completed response, so surface the same helpful message as a network failure.
+  if (!envelope && import.meta.env.DEV && !response.ok && response.status >= 500) {
+    throw backendConnectionError();
+  }
   if (!response.ok || !envelope?.success || envelope.data === undefined) {
     throw new ApiError(
       envelope?.error?.message || 'The request could not be processed. Please try again.',

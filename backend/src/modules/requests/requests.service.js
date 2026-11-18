@@ -8,6 +8,7 @@ const notificationsRepository = require('../notifications/notifications.reposito
 const auditRepository = require('../audit/audit.repository');
 const signaturesService = require('../signatures/signatures.service');
 const facilityFlow = require('./facility-flow.service');
+const facilityRepository = require('./facility-flow.repository');
 const serviceWorkOrders = require('./service-work-orders.service');
 const { invalid, text, validateCreateRequest, validateRequestFilters, validateRequestId } = require('./requests.validation');
 
@@ -158,6 +159,7 @@ const requestTypeLabels = {
 const gsoRequestPages = {
   PURCHASE_REQUISITION: '/gso/purchase-requisitions',
   BORROWING: '/gso/borrowing-requests',
+  FACILITY_USE: '/gso/facility-requests',
 };
 
 // Notifications and audit entries run after the request change is saved, so a failure is
@@ -183,7 +185,8 @@ function notifyRole(roleKey, request, { type = 'REQUEST', key, title, message, h
 }
 
 function notifyStaff(request, notice) {
-  return notifyRole('GSO_STAFF', request, { href: gsoRequestPages[request.requestType] || '/gso', ...notice });
+  const page = gsoRequestPages[request.requestType];
+  return notifyRole('GSO_STAFF', request, { href: page ? `${page}?request=${encodeURIComponent(request.id)}` : '/gso', ...notice });
 }
 
 function notifyHead(request, notice) {
@@ -207,8 +210,15 @@ const requesterStatusNotices = {
   'For Repair': ['Return received: repair needed', 'GSO received the return, and some items need repair.'],
 };
 
+// A facility approval says whether items are waiting to be picked up, or only the venue is booked.
+function facilityApprovalNotice(request) {
+  return request.assets?.length > 0
+    ? ['Facility approved. Items ready to pick up', 'Your facility and items were approved. Bring your slip to the GSO office to get the items.']
+    : ['Facility approved', 'Your facility request was approved. You can use the facility on the approved date.'];
+}
+
 function notifyRequesterStatus(request, status, note = '') {
-  const notice = requesterStatusNotices[status];
+  const notice = request.requestType === 'FACILITY_USE' && status === 'Approved' ? facilityApprovalNotice(request) : requesterStatusNotices[status];
   if (!notice || !request?.requesterId) return null;
   return sideEffect('Requester notification', () => notificationsRepository.createUserNotification({
     userId: request.requesterId,
@@ -1024,7 +1034,62 @@ async function updateStatus(idValue, input, user) {
   return updated;
 }
 
+// The GSO check on a Needs Repair facility item. Repaired or Unserviceable is recorded once per item. When the last
+// damaged item of a request has its outcome, the request moves Returned then Completed, which releases its units.
+async function resolveFacilityRepair(assetIdValue, input, user) {
+  if (!/^\d+$/.test(String(assetIdValue))) invalid('Item record not found.', 404);
+  const counts = ['repaired', 'unserviceable'].map((key) => Number(input?.[key] ?? 0));
+  if (counts.some((count) => !Number.isInteger(count) || count < 0)) invalid('Enter whole numbers, 0 or more.');
+  if (counts[0] + counts[1] === 0) invalid('Enter how many were repaired or unserviceable.');
+  // An unserviceable unit needs a reason and a waive-or-charge decision. The estimate is shown to the requester.
+  let writeOff = null;
+  if (counts[1] > 0) {
+    const reason = String(input?.writeOffReason || '').trim();
+    const decision = input?.writeOffDecision;
+    if (!reason) invalid('Write down why the unserviceable units cannot be fixed.');
+    if (reason.length > 300) invalid('The reason must be 300 characters or fewer.');
+    if (!['WAIVED', 'CHARGED'].includes(decision)) invalid('Choose whether the write-off is waived or charged to the requester.');
+    const estimatedValue = input?.writeOffEstimatedValue == null ? null : Number(input.writeOffEstimatedValue);
+    if (estimatedValue !== null && (!Number.isFinite(estimatedValue) || estimatedValue < 0)) invalid('The estimated value must be 0 or more.');
+    writeOff = { reason, decision, estimatedValue };
+  }
+  const row = await facilityRepository.recordRepairCounts({ assetId: String(assetIdValue), repaired: counts[0], unserviceable: counts[1], userId: user.id, writeOff });
+  if (!row) invalid('These counts are more than the units still waiting for a check.', 409);
+  if (row.repairOwner === 'ITSS') {
+    const parts = [counts[0] && `${counts[0]} repaired`, counts[1] && `${counts[1]} unserviceable`].filter(Boolean).join(', ');
+    await sideEffect('ITSS repair notice', () => notificationsRepository.createRoleNotification({
+      roleKey: 'GSO_STAFF',
+      type: 'REQUEST',
+      title: 'ITSS finished a repair check',
+      message: `${row.unit}: ITSS checked the returned items: ${parts}.`,
+      href: `/gso/facility-requests?request=${encodeURIComponent(row.requestId)}`,
+      dedupeKey: `facility-itss-outcome:${assetIdValue}:${Date.now()}`,
+    }));
+  }
+  if (writeOff?.decision === 'CHARGED') {
+    const request = await requestsRepository.getById(null, row.requestId);
+    if (request?.requesterId) {
+      const value = writeOff.estimatedValue === null ? '' : ` Estimated value: ₱${writeOff.estimatedValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`;
+      await sideEffect('Requester notification', () => notificationsRepository.createUserNotification({
+        userId: request.requesterId,
+        type: 'REQUEST',
+        title: 'Payment needed for a damaged item',
+        message: `${request.referenceNo}: ${counts[1]} ${row.unit} of an item you borrowed came back unserviceable (${writeOff.reason}).${value} Please pay at the Finance office in person.`,
+        href: `/requester/requests/${request.id}`,
+        dedupeKey: `facility-writeoff:${assetIdValue}:${counts[1]}:${Date.now()}`,
+      }));
+    }
+  }
+  if ((await facilityRepository.countOpenRepairs(row.requestId)) === 0) {
+    const note = 'GSO finished the repair check for the returned items.';
+    await updateStatus(row.requestId, { status: 'Returned', note }, user);
+    await updateStatus(row.requestId, { status: 'Completed', note }, user);
+  }
+  return requestsRepository.getById(null, row.requestId);
+}
+
 module.exports = {
+  resolveFacilityRepair,
   listAssets,
   listPurchaseItemNames,
   createRequest,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { getCurrentUser } from '../auth/authApi'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import { IssuanceProgressPath } from '../components/requestpath'
+import { ProgressPath } from '../components/requestpath'
 import {
   confirmTaggedAssetReturn,
   createEmployeeReturn,
@@ -18,9 +18,20 @@ const barcodeScanQuietPeriodMs = 220
 // USB scanners type a label in a burst of a few ms per character; people take far longer.
 const scannerMaxMsPerChar = 35
 const returnReasons = ['Tapos na gamitin', 'Sira o may depekto', 'Lilipat ng opisina', 'Resigned o end of contract', 'Hindi na kailangan', 'Iba pa']
+// Stored values stay as they are (audit records use them). Only the labels shown on screen are in English.
+const returnReasonLabels: Record<string, string> = {
+  'Tapos na gamitin': 'Finished using it',
+  'Sira o may depekto': 'Damaged or defective',
+  'Lilipat ng opisina': 'Office transfer',
+  'Resigned o end of contract': 'Resigned or end of contract',
+  'Hindi na kailangan': 'No longer needed',
+  'Iba pa': 'Other',
+}
 // Best to worst, to spot a return that lowers the condition on record.
 const conditionRank = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable']
 const repairConditionNames = ['Needs Repair', 'Under Maintenance', 'Unserviceable']
+// Why a unit cannot be used. Required when the unit goes to repair, so the reason is recorded, not just the condition.
+const repairReasons = ['Broken or cracked', 'Beyond repair', 'Missing parts', 'Water or fire damage', 'Electrical fault', 'Other']
 // Only count units physically returned to the GSO counter here.
 const bulkLineConditions = conditionRank
 
@@ -67,7 +78,7 @@ const bulkSteps: { key: Exclude<BulkStep, 'done'>; label: string; prompt: string
 
 const bulkConditionGroups = [
   { title: 'Back to stock', hint: 'Usable right away', conditions: ['New', 'Good', 'Fair'], dot: 'bg-emerald-500' },
-  { title: 'For repair', hint: 'Goes to To Be Repaired', conditions: repairConditionNames, dot: 'bg-amber-500' },
+  { title: 'For repair', hint: 'Goes to To Be Repaired', conditions: ['Needs Repair'], dot: 'bg-amber-500' },
 ]
 
 const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('')
@@ -243,7 +254,7 @@ function BulkReturnPanel({ options, onReturned }: { options: BulkReturnOption[];
     goTo('employee')
   }
 
-  const fieldClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none transition placeholder:font-medium placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50'
+  const fieldClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:font-medium placeholder:text-slate-500 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50'
   const labelClass = 'mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500'
   const choiceClass = 'group flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-left transition hover:border-blue-300 hover:bg-blue-50/40 focus-visible:border-blue-400 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100'
   const secondaryButton = 'rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50'
@@ -446,7 +457,7 @@ function BulkReturnPanel({ options, onReturned }: { options: BulkReturnOption[];
               <span className={labelClass}>Reason for return</span>
               <select value={reason} onChange={(event) => setReason(event.target.value)} required className={`${fieldClass} h-11`}>
                 <option value="" disabled>Select a reason</option>
-                {returnReasons.map((option) => <option key={option}>{option}</option>)}
+                {returnReasons.map((option) => <option key={option} value={option}>{returnReasonLabels[option]}</option>)}
               </select>
             </label>
             <label className="block">
@@ -582,6 +593,10 @@ export default function ReturnItems() {
   const [returnCondition, setReturnCondition] = useState('Good')
   const [returnReason, setReturnReason] = useState('')
   const [returnNote, setReturnNote] = useState('')
+  const [repairReason, setRepairReason] = useState('')
+  // Who checks whether the unit can still be fixed: GSO or ITSS.
+  const [repairOwner, setRepairOwner] = useState<'GSO' | 'ITSS' | ''>('')
+  const [writeOffConfirmed, setWriteOffConfirmed] = useState(false)
   const [returnMode, setReturnMode] = useState<'scan' | 'bulk'>('scan')
   const [bulkReturnOptions, setBulkReturnOptions] = useState<BulkReturnOption[]>([])
   const [returnedByName, setReturnedByName] = useState('')
@@ -689,6 +704,9 @@ export default function ReturnItems() {
       setReturnCondition(['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(tag.condition) ? tag.condition : 'Good')
       setReturnReason('')
       setReturnNote('')
+    setRepairReason('')
+    setRepairOwner('')
+    setWriteOffConfirmed(false)
       setHasPhysicalCheck(false)
       setOtpChallenge(null)
       setOtpCode('')
@@ -739,6 +757,9 @@ export default function ReturnItems() {
     setScannerCode('')
     setReturnReason('')
     setReturnNote('')
+    setRepairReason('')
+    setRepairOwner('')
+    setWriteOffConfirmed(false)
     setHasPhysicalCheck(false)
     setOtpChallenge(null)
     setOtpCode('')
@@ -773,8 +794,11 @@ export default function ReturnItems() {
       const note = returnNote.trim()
       const result = await confirmTaggedAssetReturn(scannedTag.tagCode, {
         condition: returnCondition,
-        reason: note ? `${returnReason} — ${note}` : returnReason,
+        reason: [isRepairTag ? repairReason : '', isRepairTag && repairOwner ? (repairOwner === 'ITSS' ? 'Sent to ITSS to check' : 'GSO checks') : '', note].filter(Boolean).length > 0
+          ? `${effectiveReturnReason} — ${[isRepairTag ? repairReason : '', isRepairTag && repairOwner ? (repairOwner === 'ITSS' ? 'Sent to ITSS to check' : 'GSO checks') : '', note].filter(Boolean).join(': ')}`
+          : effectiveReturnReason,
         entryMethod,
+        ...(isRepairTag && repairOwner ? { repairOwner } : {}),
         returnedByName: returnedByName.trim(),
         ...(needsSerialCheck ? { serialLast4 } : {}),
         otpChallengeId: otpChallenge.challengeId,
@@ -784,6 +808,9 @@ export default function ReturnItems() {
       setScannerCode('')
       setReturnReason('')
       setReturnNote('')
+    setRepairReason('')
+    setRepairOwner('')
+    setWriteOffConfirmed(false)
       setHasPhysicalCheck(false)
       setOtpChallenge(null)
       setOtpCode('')
@@ -839,9 +866,17 @@ export default function ReturnItems() {
   const needsSerialCheck = serialTailLength > 0
   const isSerialEntered = !needsSerialCheck || serialLast4.length === serialTailLength
   // A typed code or a condition downgrade needs a written explanation for the audit log.
-  const isNoteRequired = returnReason === 'Iba pa' || isConditionDowngrade || entryMethod === 'typed'
-  const missingForReturn = !returnReason
+  // A unit that goes to repair is recorded as damaged; its reason comes from the repair reason chips.
+  const effectiveReturnReason = isRepairTag ? 'Sira o may depekto' : returnReason
+  const isNoteRequired = effectiveReturnReason === 'Iba pa' || isConditionDowngrade || entryMethod === 'typed'
+  const missingForReturn = !effectiveReturnReason
     ? 'Select the reason for return.'
+    : isRepairTag && !repairReason
+      ? 'Choose why the unit cannot be used.'
+    : isRepairTag && !repairOwner
+      ? 'Choose who checks it: GSO or ITSS.'
+    : returnCondition === 'Unserviceable' && !writeOffConfirmed
+      ? 'Confirm the write-off for the unserviceable unit.'
     : isNoteRequired && !returnNote.trim()
       ? 'Add the return notes.'
       : !isSerialEntered
@@ -853,7 +888,7 @@ export default function ReturnItems() {
           : otpCode.length !== 6
             ? "Enter the employee's 6-digit code."
             : ''
-  const isInspectionDone = Boolean(returnReason) && (!isNoteRequired || Boolean(returnNote.trim())) && isSerialEntered && hasPhysicalCheck
+  const isInspectionDone = Boolean(effectiveReturnReason) && (!isNoteRequired || Boolean(returnNote.trim())) && isSerialEntered && hasPhysicalCheck
 
   return (
     <GsoPageFrame activePage="Return Items" searchPlaceholder="Search returned asset, code, or employee...">
@@ -874,9 +909,6 @@ export default function ReturnItems() {
         <nav className="relative mt-6 flex flex-wrap gap-2 border-t border-blue-400/20 pt-4" aria-label="Returns and records pages">
           <a href="/gso/return-items" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
             + Return Items
-          </a>
-          <a href="/gso/issuance" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
-            + Issuances Records
           </a>
         </nav>
       </section>
@@ -992,7 +1024,7 @@ export default function ReturnItems() {
                   <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">
                     Item return · <span className="font-mono tracking-normal">{scannedTag.tagCode}</span>
                   </p>
-                  <h2 id="return-confirm-title" className="mt-1 truncate text-lg font-black text-slate-950 sm:text-xl">{scannedTag.itemName}</h2>
+                  <h2 id="return-confirm-title" className="mt-1 truncate text-lg font-black text-slate-950 sm:text-xl">{scannedTag.itemName}{scannedTag.itemDescription && scannedTag.itemDescription.trim().toLowerCase() !== scannedTag.itemName.trim().toLowerCase() ? <span className="font-semibold text-slate-600"> · {scannedTag.itemDescription}</span> : null}</h2>
                   {currentAssignment && <span className="mt-2 inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">Issued</span>}
                   <p className="mt-0.5 text-xs text-slate-500">
                     From <span className="font-bold text-slate-700">{scannedTag.employeeName}</span> · processed by <span className="font-bold text-slate-700">{staffName || 'your account'}</span>
@@ -1006,7 +1038,7 @@ export default function ReturnItems() {
                   <aside className="space-y-4">
                     {entryMethod === 'typed' && (
                       <p role="note" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-relaxed text-amber-900">
-                        This code was typed, not scanned. Explain why in the notes, for example a damaged label. The return is flagged in the audit log.
+                        Typed, not scanned. Add a note why. It is flagged in the audit log.
                       </p>
                     )}
 
@@ -1015,7 +1047,7 @@ export default function ReturnItems() {
                         { label: 'Item code', value: `${scannedTag.itemCode} · Unit ${scannedTag.unitNumber}`, note: '' },
                         { label: 'Issued by', value: issuerName, note: [issuerCode, scannedTag.issuedByDepartment].filter(Boolean).join(' · ') },
                         holderIsIssuer && roomDesignated
-                          ? { label: 'Used by', value: 'Not assigned to a person', note: `Designated to the room. Stays under ${issuerName}.` }
+                          ? { label: 'Used by', value: 'Not assigned to a person', note: `Designated to the room. Under ${issuerName}.` }
                           : { label: 'Used by', value: scannedTag.employeeName ?? '—', note: holderIsIssuer ? 'Same as issued by' : [scannedTag.employeeCode, currentAssignment?.department].filter(Boolean).join(' · ') },
                         { label: 'Location', value: scannedTag.assignedLocation || 'No room recorded', note: '' },
                         { label: 'Issued on', value: formatBorrowerHistoryDate(currentAssignment?.issuedAt ?? null), note: '' },
@@ -1031,7 +1063,8 @@ export default function ReturnItems() {
                       ))}
                     </dl>
 
-                    <IssuanceProgressPath status="Issued" />
+                    {/* Return steps, not the issuance lifecycle: inspect the unit, confirm with the employee, then it is returned. */}
+                    <ProgressPath steps={['Inspect', 'Confirm', 'Returned']} current={isInspectionDone ? 1 : 0} />
 
                     <section aria-labelledby="return-history-title">
                       <h3 id="return-history-title" className="text-[0.65rem] font-black uppercase tracking-wide text-slate-500">History</h3>
@@ -1052,9 +1085,9 @@ export default function ReturnItems() {
                     </section>
 
                     <p className="rounded-xl border border-slate-100 bg-slate-50/60 px-3.5 py-3 text-[0.68rem] leading-relaxed text-slate-600">
-                      <span className="font-extrabold text-slate-700">Giving it to another employee?</span> Record this return first, then issue the unit from{' '}
+                      <span className="font-extrabold text-slate-700">New holder?</span> Issue it from{' '}
                       <a href="/gso/main-issuance" className="font-extrabold text-blue-700 underline underline-offset-2 hover:no-underline">Main Issuance</a>
-                      {' '}so the new employee confirms receipt.
+                      {' '}after this return.
                     </p>
                   </aside>
 
@@ -1086,7 +1119,7 @@ export default function ReturnItems() {
                                       className="peer sr-only"
                                     />
                                     <span className="inline-flex rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 peer-checked:border-blue-600 peer-checked:bg-blue-600 peer-checked:text-white peer-focus-visible:ring-4 peer-focus-visible:ring-blue-100">
-                                      {condition}
+                                      {condition === 'Needs Repair' && group.title === 'For repair' ? 'To check' : condition}
                                     </span>
                                   </label>
                                 ))}
@@ -1099,23 +1132,49 @@ export default function ReturnItems() {
                       <p className={`mt-3 rounded-xl border px-3 py-2.5 text-xs font-semibold ${isRepairTag ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'}`}>
                         {isRepairTag ? 'Goes to To Be Repaired.' : 'Goes back to GSO Storage.'}
                       </p>
+                      {isRepairTag && (
+                        <div className="mt-3 rounded-xl border-2 border-rose-200 bg-rose-50/60 p-3.5">
+                          <p className="text-sm font-black text-rose-900">Why can't it be used? <span className="text-xs font-semibold text-rose-700">(required)</span></p>
+                          <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Reason for repair">
+                            {repairReasons.map((reason) => <button key={reason} type="button" onClick={() => setRepairReason(reason)} disabled={isConfirmingReturn} className={`rounded-full border-2 px-3 py-1.5 text-xs font-extrabold transition ${repairReason === reason ? 'border-rose-500 bg-white text-rose-800 ring-2 ring-rose-200' : 'border-rose-200 bg-white text-rose-800 hover:border-rose-300'}`}>{reason}</button>)}
+                          </div>
+                          <p className="mt-3 text-sm font-black text-rose-900">Who checks if it can be fixed? <span className="text-xs font-semibold text-rose-700">(required)</span></p>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Who checks the unit">
+                            {([
+                              ['GSO', 'GSO checks it', 'GSO staff checks if it can still be fixed.'],
+                              ['ITSS', 'Send to ITSS', 'ITSS checks if it can be fixed, then returns it to GSO.'],
+                            ] as const).map(([value, label, detail]) => <button key={value} type="button" role="radio" aria-checked={repairOwner === value} onClick={() => setRepairOwner(value)} disabled={isConfirmingReturn} className={`rounded-xl border-2 px-3 py-2.5 text-left transition ${repairOwner === value ? 'border-rose-500 bg-white ring-2 ring-rose-200' : 'border-rose-200 bg-white hover:border-rose-300'}`}>
+                              <span className="block text-xs font-extrabold text-slate-900">{label}</span>
+                              <span className="mt-0.5 block text-[0.7rem] font-semibold text-slate-600">{detail}</span>
+                            </button>)}
+                          </div>
+                          {returnCondition === 'Unserviceable' && (
+                            <label className="mt-3 flex items-start gap-2.5 rounded-lg border-2 border-rose-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900">
+                              <input type="checkbox" checked={writeOffConfirmed} onChange={(event) => setWriteOffConfirmed(event.target.checked)} disabled={isConfirmingReturn} className="mt-0.5 h-4 w-4 shrink-0 accent-rose-600" />
+                              <span>I confirm this unit is unserviceable. It will be written off.</span>
+                            </label>
+                          )}
+                        </div>
+                      )}
                       {isConditionDowngrade && (
                         <p role="note" className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold text-amber-900">
-                          Condition dropped from <strong>{scannedTag.condition}</strong> to <strong>{returnCondition}</strong>. Describe the damage in the notes.
+                          <strong>{scannedTag.condition}</strong> → <strong>{returnCondition}</strong>
                         </p>
                       )}
 
                       <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {!isRepairTag && (
                         <label className="block">
                           <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Reason for return</span>
-                          <select value={returnReason} onChange={(event) => setReturnReason(event.target.value)} required disabled={isConfirmingReturn} className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">
+                          <select value={returnReason} onChange={(event) => setReturnReason(event.target.value)} required disabled={isConfirmingReturn} className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 placeholder:text-slate-500 outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50">
                             <option value="" disabled>Select a reason</option>
-                            {returnReasons.map((reason) => <option key={reason}>{reason}</option>)}
+                            {returnReasons.map((reason) => <option key={reason} value={reason}>{returnReasonLabels[reason]}</option>)}
                           </select>
                         </label>
-                        <label className="block">
+                        )}
+                        <label className={`block ${isRepairTag ? 'sm:col-span-2' : ''}`}>
                           <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Brought in by <span className="normal-case text-slate-400">(if not the borrower)</span></span>
-                          <input type="text" maxLength={200} value={returnedByName} onChange={(event) => setReturnedByName(event.target.value)} disabled={isConfirmingReturn} placeholder="Name of the person at the counter" className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" />
+                          <input type="text" maxLength={200} value={returnedByName} onChange={(event) => setReturnedByName(event.target.value)} disabled={isConfirmingReturn} placeholder="Name of the person at the counter" className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 placeholder:text-slate-500 outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50" />
                         </label>
                       </div>
                       <label className="mt-3 block">
@@ -1128,11 +1187,11 @@ export default function ReturnItems() {
                           required={isNoteRequired}
                           disabled={isConfirmingReturn}
                           placeholder={entryMethod === 'typed'
-                            ? 'Explain why the code was typed (for example, a damaged label)'
+                            ? 'Why was the code typed?'
                             : isConditionDowngrade
-                              ? 'Describe the damage or what changed'
+                              ? 'Describe the damage'
                               : returnReason === 'Iba pa'
-                                ? 'Explain why the item is being returned'
+                                ? 'Why is it being returned?'
                                 : "Anything worth noting about the unit's condition"}
                           className="min-h-20 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                         />
@@ -1160,7 +1219,7 @@ export default function ReturnItems() {
                       )}
                       <label className="mt-3 flex items-start gap-2.5 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-xs font-semibold leading-relaxed text-slate-700">
                         <input type="checkbox" checked={hasPhysicalCheck} onChange={(event) => setHasPhysicalCheck(event.target.checked)} required disabled={isConfirmingReturn} className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600" />
-                        <span>The physical item is in front of me, and its barcode label matches this record.</span>
+                        <span>I have the item, and the barcode matches.</span>
                       </label>
                     </section>
 
@@ -1170,7 +1229,7 @@ export default function ReturnItems() {
                         <h3 id="return-otp-title" className="text-sm font-black text-slate-900">Employee confirmation</h3>
                       </div>
                       <p className="mt-2 text-xs leading-relaxed text-slate-500">
-                        Every return is confirmed by the borrower. A 6-digit code is emailed to {scannedTag.employeeName}, who reads it out to you only if they are returning this unit now.
+                        A 6-digit code was emailed to {scannedTag.employeeName}. Ask for it only if they are returning this unit.
                       </p>
                       {otpChallenge ? (
                         <div className="mt-3">

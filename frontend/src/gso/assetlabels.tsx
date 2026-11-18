@@ -180,10 +180,12 @@ export default function AssetLabels() {
   const toPrintCount = activeUnitLabels.filter((label) => label.needsPrinting).length
   const labelSearchText = labelSearch.trim().toLowerCase()
   const visibleUnitLabels = unitLabels.filter((label) => {
+    // Returned labels stay in All Issued (marked Do not reprint), so the record is still visible there.
     const matchesFilter = labelStatusFilter === 'returned'
       ? label.isReturned
-      : !label.isReturned && (labelStatusFilter === 'all'
-        || (labelStatusFilter === 'toPrint' ? label.needsPrinting : !label.needsPrinting))
+      : labelStatusFilter === 'all'
+        ? true
+        : !label.isReturned && (labelStatusFilter === 'toPrint' ? label.needsPrinting : !label.needsPrinting)
     const matchesSearch = !labelSearchText || [
       label.itemName,
       label.itemCode,
@@ -411,7 +413,7 @@ export default function AssetLabels() {
                 {isLoading && <p role="status" className="rounded-xl bg-white px-4 py-8 text-center text-xs font-semibold text-slate-400">Loading asset labels…</p>}
                 {!isLoading && !loadError && visibleGroups.length > 0 && <div className="space-y-3">
                   {visibleGroups.map((group, index) => {
-                    const printableLabels = group.labels.filter((label) => label.needsPrinting)
+                    const printableLabels = group.labels.filter((label) => label.needsPrinting && !label.isReturned)
                     const printedLabels = group.labels.filter((label) => !label.needsPrinting && !label.isReturned)
                     const returnedLabels = group.labels.filter((label) => label.isReturned)
                     const assignedRecipients = [...new Map(group.labels.map((label) => [
@@ -451,9 +453,10 @@ export default function AssetLabels() {
                                 <p className="break-all font-mono text-sm font-extrabold text-slate-900">{label.tagCode}</p>
                                 <p className="mt-0.5 text-sm font-semibold text-slate-800">{label.itemName} · {label.itemCode} · Unit {label.unitNumber}</p>
                                 <p className="mt-0.5 text-sm text-slate-700">Assigned to: <span className="font-bold">{label.holderName}</span> · {label.holderCode}</p>
+                                {label.isReturned && <p className="mt-1 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-900">Returned. Do not reprint.</p>}
                               </div>
                               <div className="flex shrink-0 items-center gap-2">
-                                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${label.isReturned ? 'bg-slate-100 text-slate-600' : label.needsPrinting ? 'bg-blue-600 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
+                                <span className={`rounded-full px-2.5 py-1 text-xs font-extrabold ${label.isReturned ? 'bg-amber-100 text-amber-900 ring-1 ring-amber-300' : label.needsPrinting ? 'bg-blue-600 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
                                   {label.isReturned ? 'Returned' : label.needsPrinting ? 'To print' : 'Printed'}
                                 </span>
                                 {!label.isReturned && !label.needsPrinting && <button type="button" disabled={isReprinting || labelsToPrint.length > 0} onClick={() => { setReprintTarget(label); setReprintReason(''); setReprintDetails(''); setReprintError('') }} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">Reprint</button>}

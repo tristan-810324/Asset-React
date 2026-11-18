@@ -178,6 +178,19 @@ const today = () => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
+// The facility date and time must still be ahead: no past dates, and a time today must not have passed (Manila time).
+const nowTime = () => {
+  const date = new Date()
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+function facilityScheduleProblem(date: string, startTime: string, endTime: string) {
+  if (!date) return ''
+  if (date < today()) return 'That date has passed. Pick today or a later date.'
+  if (date === today() && startTime && startTime <= nowTime()) return 'That start time has already passed. Pick a later time.'
+  if (startTime && endTime && endTime <= startTime) return 'The end time must be after the start time.'
+  return ''
+}
+
 type ItemPrefill = {
   name?: string
   description?: string
@@ -671,6 +684,10 @@ function RequestItemContent() {
       setError('Complete every item assignment and request detail before continuing.')
       return
     }
+    if (type === 'FACILITY_USE' && facilityScheduleProblem(String(form.date || ''), String(form.startTime || ''), String(form.endTime || ''))) {
+      setError(facilityScheduleProblem(String(form.date || ''), String(form.startTime || ''), String(form.endTime || '')))
+      return
+    }
     if (type === 'FACILITY_USE' && facilityShortages.length > 0) {
       setError(`Not enough stock: ${facilityShortages.join(', ')}. Lower the quantity or remove the item.`)
       return
@@ -996,8 +1013,8 @@ function RequestItemContent() {
               <FormGroup title="Schedule and venue" hint="Pick a venue from the list. Choose a lab or Others to type the exact room.">
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Field label="Date needed"><input className={inputClass} type="date" min={today()} value={form.date} onChange={(event) => setField('date', event.target.value)} required /></Field>
-                  <Field label="Start time"><input className={inputClass} type="time" value={form.startTime} onChange={(event) => setField('startTime', event.target.value)} required /></Field>
-                  <Field label="End time"><input className={inputClass} type="time" value={form.endTime} onChange={(event) => setField('endTime', event.target.value)} required /></Field>
+                  <Field label="Start time" hint={facilityScheduleProblem(String(form.date || ''), String(form.startTime || ''), String(form.endTime || '')) || undefined}><input className={inputClass} type="time" min={form.date === today() ? nowTime() : undefined} value={form.startTime} onChange={(event) => setField('startTime', event.target.value)} required /></Field>
+                  <Field label="End time"><input className={inputClass} type="time" min={form.startTime || undefined} value={form.endTime} onChange={(event) => setField('endTime', event.target.value)} required /></Field>
                   <div className={chosenVenue?.requiresDetail ? 'sm:col-span-2' : 'sm:col-span-3'}><Field label="Venue"><select className={inputClass} value={String(form.venueChoice || '')} onChange={(event) => setVenue(event.target.value, String(form.venueDetail || ''))} required><option value="">Select venue</option>{venueOptions.map((option) => <option key={option.id} value={option.id}>{option.requiresDetail ? `${option.label} (specify)` : option.label}</option>)}</select></Field></div>
                   {chosenVenue?.requiresDetail && <Field label={chosenVenue.detailLabel ?? 'Details'}><input className={inputClass} value={String(form.venueDetail || '')} onChange={(event) => setVenue(chosenVenue.id, event.target.value)} maxLength={150} required /></Field>}
                 </div>

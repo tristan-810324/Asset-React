@@ -160,31 +160,25 @@ const saveFacilityDamageDecision = asyncHandler(async (req, res) => {
   res.json({ success: true, data: result });
 });
 
-const createFacilityDamagePaymentLink = asyncHandler(async (req, res) => {
-  const result = await facilityFlowService.createFacilityDamagePaymentLink(req.params.id, req.user);
-  res.json({ success: true, data: result });
+const resolveFacilityRepair = asyncHandler(async (req, res) => {
+  const request = await requestsService.resolveFacilityRepair(req.params.assetId, req.body, req.user);
+  res.json({ success: true, data: { request } });
 });
 
-const cancelFacilityDamagePaymentLink = asyncHandler(async (req, res) => {
-  const result = await facilityFlowService.cancelFacilityDamagePaymentLink(req.params.id, req.body, req.user);
-  res.json({ success: true, data: result });
-});
-
-const getMyFacilityDamage = asyncHandler(async (req, res) => {
-  const result = await facilityFlowService.getMyFacilityDamage(req.params.id, req.user);
-  res.json({ success: true, data: result });
+const getFacilityFinanceReport = asyncHandler(async (req, res) => {
+  const rows = await facilityFlowService.financeReport();
+  res.json({ success: true, data: { rows } });
 });
 
 module.exports = {
   confirmMyService,
   reopenMyService,
+  getFacilityFinanceReport,
+  resolveFacilityRepair,
   recordFacilitySlipPrints,
   reprintFacilitySlip,
   settleFacilityItem,
   saveFacilityDamageDecision,
-  createFacilityDamagePaymentLink,
-  cancelFacilityDamagePaymentLink,
-  getMyFacilityDamage,
   listAssets,
   listPurchaseItemNames,
   listRequesterDepartmentStaff,

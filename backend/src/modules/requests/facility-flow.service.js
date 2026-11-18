@@ -8,8 +8,6 @@ const facilityRepository = require('./facility-flow.repository');
 const facilityDamageRepository = require('./facility-damage-payments.repository');
 const notificationsRepository = require('../notifications/notifications.repository');
 const auditRepository = require('../audit/audit.repository');
-const paymongo = require('../loss-damage/paymongo');
-const { reconcileFacilityDamagePayment } = require('../loss-damage/loss-damage.service');
 const { invalid, text, validateRequestId } = require('./requests.validation');
 
 const mailTransport = env.smtp
@@ -24,8 +22,8 @@ const mailTransport = env.smtp
 // Under Maintenance is not offered for facility returns (user's choice, 2026-11-15).
 const RETURN_CONDITIONS = new Set(['New', 'Good', 'Fair', 'Needs Repair', 'Unserviceable']);
 const REPAIR_CONDITIONS = new Set(['Needs Repair', 'Unserviceable']);
+const REPAIR_OWNERS = new Set(['GSO', 'ITSS']);
 const SETTLEMENTS = ['Replaced', 'Paid', 'Waived'];
-const DAMAGE_SETTLEMENTS = ['WAIVED', 'PAYMENT_REQUIRED'];
 const SLIP_REPRINT_REASONS = ['Damaged or unreadable', 'Torn or peeling', 'Slip lost or missing', 'Printer error', 'Other'];
 
 const dueText = (request) => [request.formData?.date, request.formData?.endTime].filter(Boolean).join(' ');
@@ -83,20 +81,6 @@ function noticeRole(roleKey, request, event, title, message, href) {
   }).catch((error) => console.error('Facility damage role notice could not be saved.', { code: error.code, referenceNo: request.referenceNo }));
 }
 
-function amountInCentavos(value) {
-  const typed = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim().replace(/,/g, '') : '';
-  const match = /^(\d{1,7})(?:\.(\d{1,2}))?$/.exec(typed);
-  if (!match) invalid('Enter the amount in pesos, for example 1500 or 1500.50.');
-  const amount = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0'));
-  if (amount < 100) invalid('The amount must be at least ₱1.00.');
-  return amount;
-}
-
-function returnPageFor(id) {
-  const origin = Array.isArray(env.frontendOrigin) ? env.frontendOrigin[0] : env.frontendOrigin;
-  return `${origin}/requester/requests/${id}`;
-}
-
 // What came back for each released row: how many returned (0 to the released quantity) and how many of those are
 // damaged. Damaged units need a damage type (condition); the rest are good. A caller that sends no damaged count
 // but a repair condition counts every returned unit as damaged.
@@ -118,12 +102,16 @@ function facilityReturnLines(request, provided) {
       : Number(line.damaged);
     if (!Number.isInteger(damaged) || damaged < 0 || damaged > returned) invalid(`Enter how many ${name} are damaged (0 to ${returned}).`);
     if (damaged > 0 && !REPAIR_CONDITIONS.has(condition)) invalid(`Choose what is wrong with the damaged ${name}.`);
+    // A Needs Repair item is repaired by GSO or sent to ITSS; the choice is required, and nothing else needs it.
+    const repairOwner = damaged > 0 && condition === 'Needs Repair' ? String(line.repairBy || '') : null;
+    if (repairOwner !== null && !REPAIR_OWNERS.has(repairOwner)) invalid(`Choose who repairs the ${name}: GSO or ITSS.`);
     return {
       assetId: String(asset.id),
       returned,
       damaged,
       lost: Number(asset.quantity) - returned,
       condition: damaged > 0 ? condition : (REPAIR_CONDITIONS.has(condition) ? 'Good' : condition),
+      repairOwner,
     };
   });
 }
@@ -134,12 +122,6 @@ function prepareStatusChange(request, status, input) {
   if (status === 'Issued' && !hasItems) invalid('This request has no items to release.', 409);
   if (status === 'Completed' && request.status === 'Approved' && hasItems) {
     invalid('Release and return the items before you complete this request.', 409);
-  }
-  if (status === 'Completed' && request.assets.some((asset) => asset.settlementStatus === 'Pending')) {
-    invalid('Settle the missing items before you complete this request.', 409);
-  }
-  if (status === 'Returned' && request.status === 'For Repair' && request.assets.some((asset) => Number(asset.damagedQuantity || 0) > 0 && asset.conditionIn === 'Unserviceable' && asset.settlementStatus === 'Pending')) {
-    invalid('Resolve the unserviceable returned item before you complete this repair step.', 409);
   }
   if (request.status !== 'Issued' || !['Returned', 'For Repair'].includes(status)) return null;
   const lines = facilityReturnLines(request, input?.returns);
@@ -161,14 +143,18 @@ async function afterStatusChange(request, status, lines) {
     await emailRequester(request, 'Return received', `GSO received your items. ${damaged || 'Some'} of them need repair.`);
     const unserviceable = (lines || []).filter((line) => line.damaged > 0 && line.condition === 'Unserviceable').reduce((total, line) => total + line.damaged, 0);
     if (unserviceable > 0) {
-      await noticeRequester(request, 'Unserviceable item needs a decision', `${unserviceable} returned item${unserviceable === 1 ? ' is' : 's are'} marked Unserviceable. GSO will decide whether the charge is waived or a payment is required.`);
-      await noticeRole('GSO_STAFF', request, 'unserviceable', 'Unserviceable facility item needs a decision', `${unserviceable} returned item${unserviceable === 1 ? ' is' : 's are'} marked Unserviceable. Choose Waive or Payment required.`, '/gso/facility-requests');
+      await noticeRequester(request, 'Unserviceable item needs a decision', `${unserviceable} returned item${unserviceable === 1 ? ' is' : 's are'} marked Unserviceable. GSO will record the no-charge decision.`);
+      await noticeRole('GSO_STAFF', request, 'unserviceable', 'Unserviceable facility item needs a decision', `${unserviceable} returned item${unserviceable === 1 ? ' is' : 's are'} marked Unserviceable. Record the no-charge decision.`, `/gso/facility-requests?request=${encodeURIComponent(request.id)}`);
       await noticeRole('GSO_HEAD', request, 'unserviceable', 'Unserviceable facility item reported', `${unserviceable} returned item${unserviceable === 1 ? ' is' : 's are'} marked Unserviceable and needs a settlement decision.`, '/gso-head/items');
+    }
+    const itssDamaged = (lines || []).filter((line) => line.damaged > 0 && line.repairOwner === 'ITSS').reduce((total, line) => total + line.damaged, 0);
+    if (itssDamaged > 0) {
+      await noticeRole('IT_ADMIN', request, 'itss-repair', 'Facility item sent to ITSS for a repair check', `${itssDamaged} returned item${itssDamaged === 1 ? ' needs' : 's need'} an ITSS check to see if ${itssDamaged === 1 ? 'it' : 'they'} can still be fixed.`, '/admin/repair');
     }
   }
   const missing = (lines || []).reduce((total, line) => total + line.lost, 0);
   if (missing > 0) {
-    await noticeRequester(request, 'Missing items', `${missing} item${missing === 1 ? ' was' : 's were'} not returned. Settle this with GSO. You cannot request equipment until it is settled.`);
+    await noticeRequester(request, 'Missing items', `${missing} item${missing === 1 ? ' was' : 's were'} not returned. The request is closed and GSO has recorded it for Finance. Contact GSO if you have questions.`);
   }
 }
 
@@ -190,105 +176,14 @@ async function settleFacilityItem(idValue, assetIdValue, input, user) {
 
 async function saveFacilityDamageDecision(idValue, input, user) {
   const requestId = validateRequestId(idValue);
-  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Choose how the unserviceable item should be handled.');
-  const resolution = String(input.resolution || '');
-  if (!DAMAGE_SETTLEMENTS.includes(resolution)) invalid('Choose Waived or Payment required.');
-  const reason = text(input.reason, 'reason for the decision', 1000);
-  const amountCentavos = resolution === 'PAYMENT_REQUIRED' ? amountInCentavos(input.amount) : null;
-  const saved = await facilityDamageRepository.saveDecision({ requestId, userId: user.id, resolution, reason, amountCentavos });
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Add the reason for the no-charge decision.');
+  const reason = text(input.reason, 'reason for the no-charge decision', 1000);
+  const saved = await facilityDamageRepository.saveDecision({ requestId, userId: user.id, reason });
   const request = saved.request;
-
-  let linkError = '';
-  if (resolution === 'PAYMENT_REQUIRED') {
-    try {
-      if (!paymongo.setupState().paymentLinks) throw Object.assign(new Error(paymongo.SETUP_MESSAGE), { status: 503 });
-      const checkout = await paymongo.createCheckoutSession({
-        referenceNumber: request.referenceNo,
-        description: `Unserviceable facility item ${request.referenceNo}`,
-        amountCentavos,
-        successUrl: returnPageFor(request.id),
-        cancelUrl: returnPageFor(request.id),
-        metadata: { requestId: String(request.id), kind: 'facility_damage' },
-      });
-      const attached = await facilityDamageRepository.attachLink({
-        requestId,
-        amountCentavos,
-        link: checkout,
-        userId: user.id,
-        note: `GCash test checkout created for ₱${(amountCentavos / 100).toFixed(2)} for an unserviceable facility item.`,
-      });
-      if (!attached) {
-        await paymongo.cancelPaymentCheckout(checkout.id).catch(() => console.error('An unused facility PayMongo checkout could not be expired.'));
-        throw Object.assign(new Error('The facility damage decision changed while the payment was being created. Refresh the request.'), { status: 409 });
-      }
-      await noticeRequester(request, 'Payment required for an unserviceable item', `GSO requires a payment of ₱${(amountCentavos / 100).toFixed(2)}. Open this request to pay through the GCash test checkout.`);
-      await noticeRole('GSO_STAFF', request, 'payment-link', 'Facility damage payment link created', `The requester can pay ₱${(amountCentavos / 100).toFixed(2)} through the GCash test checkout.`, '/gso/facility-requests');
-      await noticeRole('GSO_HEAD', request, 'payment-link', 'Facility damage payment requested', `GSO requested ₱${(amountCentavos / 100).toFixed(2)} for an unserviceable returned item.`, '/gso-head/items');
-    } catch (error) {
-      if (!error.status) throw error;
-      linkError = error.message;
-    }
-  } else {
-    await noticeRequester(request, 'Unserviceable item settlement recorded', 'GSO waived the charge for the returned unserviceable item. The item remains marked Unserviceable in Item Master Data.');
-    await noticeRole('GSO_STAFF', request, 'waived', 'Facility damage charge waived', 'The charge was waived and the returned item remains Unserviceable.', '/gso/facility-requests');
-    await noticeRole('GSO_HEAD', request, 'waived', 'Facility damage charge waived', 'GSO waived the charge for a returned unserviceable item.', '/gso-head/items');
-  }
-  return { request: await requestsRepository.getById(null, requestId), linkError };
-}
-
-async function createFacilityDamagePaymentLink(idValue, user) {
-  const requestId = validateRequestId(idValue);
-  if (!paymongo.setupState().paymentLinks) invalid(paymongo.SETUP_MESSAGE, 503);
-  const settlement = await facilityDamageRepository.getSettlement(null, requestId);
-  if (!settlement || settlement.status !== 'PENDING_LINK' || settlement.resolution !== 'PAYMENT_REQUIRED') {
-    invalid('This facility return is not waiting for a payment link.', 409);
-  }
-  const request = await requestsRepository.getById(null, requestId);
-  const checkout = await paymongo.createCheckoutSession({
-    referenceNumber: request.referenceNo,
-    description: `Unserviceable facility item ${request.referenceNo}`,
-    amountCentavos: settlement.amountCentavos,
-    successUrl: returnPageFor(request.id),
-    cancelUrl: returnPageFor(request.id),
-    metadata: { requestId: String(request.id), kind: 'facility_damage' },
-  });
-  const attached = await facilityDamageRepository.attachLink({
-    requestId,
-    amountCentavos: settlement.amountCentavos,
-    link: checkout,
-    userId: user.id,
-    note: `GCash test checkout created for ₱${(settlement.amountCentavos / 100).toFixed(2)} for an unserviceable facility item.`,
-  });
-  if (!attached) {
-    await paymongo.cancelPaymentCheckout(checkout.id).catch(() => undefined);
-    invalid('The facility damage decision changed while the payment was being created. Refresh the request.', 409);
-  }
-  await noticeRequester(request, 'Payment required for an unserviceable item', `GSO requires a payment of ₱${(settlement.amountCentavos / 100).toFixed(2)}. Open this request to pay through the GCash test checkout.`);
-  return { request: await requestsRepository.getById(null, requestId), linkError: '' };
-}
-
-async function cancelFacilityDamagePaymentLink(idValue, input, user) {
-  const requestId = validateRequestId(idValue);
-  const reason = text(input?.reason, 'reason for cancelling the payment', 500);
-  const settlement = await facilityDamageRepository.getSettlement(null, requestId);
-  if (!settlement || settlement.status !== 'AWAITING_PAYMENT' || !settlement.linkId) invalid('This facility return has no open payment.', 409);
-  await paymongo.cancelPaymentCheckout(settlement.linkId);
-  const cleared = await facilityDamageRepository.clearLink({
-    requestId, linkId: settlement.linkId, userId: user.id, note: `Facility damage payment cancelled. Reason: ${reason}`,
-  });
-  if (!cleared) invalid('The facility damage payment changed. Refresh the request.', 409);
-  const request = await requestsRepository.getById(null, requestId);
-  await noticeRequester(request, 'Facility damage payment cancelled', `Do not pay the old checkout. GSO will update the decision. Reason: ${reason}`);
-  return { request, linkError: '' };
-}
-
-async function getMyFacilityDamage(idValue, user) {
-  const requestId = validateRequestId(idValue);
-  const request = await requestsRepository.getMineById(requestId, user.id);
-  if (!request || request.requestType !== 'FACILITY_USE') invalid('Request not found.', 404);
-  await reconcileFacilityDamagePayment(requestId);
-  const latest = await requestsRepository.getMineById(requestId, user.id);
-  return { requestStatus: latest.status, settlement: latest.facilityDamageSettlement || null };
+  await noticeRequester(request, 'Unserviceable item settlement recorded', 'GSO recorded that there is no charge for the returned unserviceable item. The item remains marked Unserviceable in Item Master Data.');
+  await noticeRole('GSO_STAFF', request, 'no-charge', 'Facility damage decision recorded', 'No charge was recorded and the returned item remains Unserviceable.', `/gso/facility-requests?request=${encodeURIComponent(request.id)}`);
+  await noticeRole('GSO_HEAD', request, 'no-charge', 'Facility damage decision recorded', 'GSO recorded no charge for a returned unserviceable item.', '/gso-head/items');
+  return { request: await requestsRepository.getById(null, requestId) };
 }
 
 async function recordSlipPrints(input, user) {
@@ -330,16 +225,18 @@ async function sendFacilityOverdueReminders() {
   return ids.length;
 }
 
+async function financeReport() {
+  return facilityRepository.listFinanceReport();
+}
+
 module.exports = {
   SLIP_REPRINT_REASONS,
   prepareStatusChange,
   afterStatusChange,
   settleFacilityItem,
   saveFacilityDamageDecision,
-  createFacilityDamagePaymentLink,
-  cancelFacilityDamagePaymentLink,
-  getMyFacilityDamage,
   recordSlipPrints,
   reprintSlip,
   sendFacilityOverdueReminders,
+  financeReport,
 };

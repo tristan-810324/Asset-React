@@ -34,6 +34,26 @@ async function notifyReturnRecorded({ employeeCode, requesterTitle, requesterMes
   }
 }
 
+// Repair notices for ITSS-owned checks: IT Admin hears when a unit is sent to them, GSO when they finish.
+async function notifyItssRepair({ roleKey, title, message, href, dedupeKey }) {
+  try {
+    await notificationsRepository.createRoleNotification({ roleKey, type: 'RETURN', title, message, href, dedupeKey });
+  } catch (error) {
+    console.error('Repair notification could not be saved.', { code: error.code });
+  }
+}
+
+async function notifyGsoOfItssOutcome(result, outcomeText) {
+  if (result.repairOwner !== 'ITSS') return;
+  await notifyItssRepair({
+    roleKey: 'GSO_STAFF',
+    title: 'ITSS finished a repair check',
+    message: `${result.itemName} (${result.tagCode || 'unit'}) was checked by ITSS: ${outcomeText}.`,
+    href: '/gso/to-be-repaired',
+    dedupeKey: `itss-outcome:${result.returnId}`,
+  });
+}
+
 // Conditions GSO can record for units physically returned to the counter.
 const returnLineConditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'];
 const approvalActions = ['Written Off', 'Paid', 'Replaced'];
@@ -288,6 +308,10 @@ async function confirmScannedTagReturn(tagCodeValue, input, user) {
     : `GSO confirmed the item return in condition: ${condition}.`;
   const returnedByName = readReturnedByName(input);
   const serialLast4 = typeof input.serialLast4 === 'string' ? input.serialLast4.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4) : '';
+  // Only a unit that needs repair has an owner: GSO checks it, or ITSS does.
+  const repairOwner = ['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(condition) && ['GSO', 'ITSS'].includes(input.repairOwner)
+    ? input.repairOwner
+    : null;
   // A returned unit goes back to GSO; giving it to someone else is a new issuance they acknowledge.
   if (input.destination !== undefined && input.destination !== 'storage') {
     throw httpError(400, 'Ibalik muna sa GSO Storage ang unit, saka i-issue sa bagong empleyado sa Main Issuance.');
@@ -312,7 +336,18 @@ async function confirmScannedTagReturn(tagCodeValue, input, user) {
     otpHash,
     tokenHash: hashToken(token),
     requestedByUserId: user.id,
+    repairOwner,
   });
+
+  if (repairOwner === 'ITSS') {
+    await notifyItssRepair({
+      roleKey: 'IT_ADMIN',
+      title: 'Unit sent to ITSS for a repair check',
+      message: `${result.itemName} (${result.tagCode}) was returned to GSO and needs an ITSS check to see if it can still be fixed.`,
+      href: '/admin/repair',
+      dedupeKey: `itss-repair:${result.id}`,
+    });
+  }
 
   const emailQueued = emailReceiptInBackground({
     returnIds: [result.id],
@@ -511,11 +546,40 @@ async function sendBulkReturnOtp(input, user) {
 // Repaired units go straight back to stock; writing units off needs IT Admin approval instead.
 async function resolveReturnRepair(returnIdValue, input, user) {
   const returnId = readId(returnIdValue, 'return record');
+  if (input?.outcome === 'Written Off') {
+    // GSO decides a write-off directly: the reason, waive or charge, and the estimate are required.
+    const reason = typeof input.writeOffReason === 'string' ? input.writeOffReason.trim() : '';
+    if (!reason) throw httpError(400, 'Write down why the unit cannot be fixed.');
+    if (reason.length > 300) throw httpError(400, 'The reason must be 300 characters or fewer.');
+    if (!['WAIVED', 'CHARGED'].includes(input.writeOffDecision)) throw httpError(400, 'Choose whether the write-off is waived or charged to the requester.');
+    const estimatedValue = input.writeOffEstimatedValue == null ? null : Number(input.writeOffEstimatedValue);
+    if (estimatedValue !== null && (!Number.isFinite(estimatedValue) || estimatedValue < 0)) throw httpError(400, 'The estimated value must be 0 or more.');
+    const writeOff = { reason, decision: input.writeOffDecision, estimatedValue };
+    const result = await returnsRepository.resolveReturnRepair({ returnId, outcome: 'Written Off', note: reason, userId: user.id, writeOff });
+    if (writeOff.decision === 'CHARGED') {
+      const accountId = await returnsRepository.findAccountIdByEmail(result.employeeEmail);
+      if (accountId) {
+        const value = estimatedValue === null ? '' : ` Estimated value: ₱${estimatedValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`;
+        await notificationsRepository.createUserNotification({
+          userId: accountId,
+          type: 'RETURN',
+          title: 'Payment needed for a damaged item',
+          message: `${result.itemName} (${result.tagCode || 'unit'}) came back unserviceable (${reason}).${value} Please pay at the Finance office in person.`,
+          href: '/requester',
+          dedupeKey: `tagged-writeoff:${returnId}:${Date.now()}`,
+        });
+      }
+    }
+    await notifyGsoOfItssOutcome(result, `unserviceable (${reason})`);
+    return result;
+  }
   if (input?.outcome !== 'Repaired') {
-    throw httpError(400, 'Ang write-off ay kailangang i-request at i-approve ng IT Admin.');
+    throw httpError(400, 'Choose Repaired or Unserviceable.');
   }
   const note = typeof input.note === 'string' && input.note.trim() ? requiredText(input.note, 'repair notes', 1000) : '';
-  return returnsRepository.resolveReturnRepair({ returnId, outcome: 'Repaired', note, userId: user.id });
+  const repaired = await returnsRepository.resolveReturnRepair({ returnId, outcome: 'Repaired', note, userId: user.id });
+  await notifyGsoOfItssOutcome(repaired, 'repaired and back in stock');
+  return repaired;
 }
 
 // Waiving lets an employee off the hook, so IT Admin does it directly; paid and replaced

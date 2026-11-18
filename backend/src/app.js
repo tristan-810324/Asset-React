@@ -35,8 +35,6 @@ app.use(cors({
     return callback(null, false);
   },
 }));
-// PayMongo sends a signed raw JSON body. Its route must read the raw bytes before express.json() parses them.
-app.use('/api/v1/loss-damage/webhooks', lossDamageRoutes.webhookRouter);
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/', (req, res) => {

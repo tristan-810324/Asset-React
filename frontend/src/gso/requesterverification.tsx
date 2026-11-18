@@ -200,7 +200,7 @@ export default function RequesterVerification() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">Staff Identity Queue</h2>
-            <p className="mt-1 text-xs font-medium text-slate-500">Review submitted staff details and verify requester accounts.</p>
+            <p className="mt-1 text-sm font-medium text-slate-500">Check the details, then verify or ask for a correction.</p>
           </div>
           <span className="rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
             {loading ? 'Loading requester profiles...' : `${filteredProfiles.length} requester${filteredProfiles.length === 1 ? '' : 's'} shown`}
@@ -235,9 +235,9 @@ export default function RequesterVerification() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-start gap-3">
                   {picture ? <img src={picture} alt={`${profileFullName(profile)} profile`} className="h-14 w-14 shrink-0 rounded-2xl border border-slate-200 object-cover" /> : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-blue-50 text-sm font-black text-blue-700">{profileFullName(profile).split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()}</span>}
-                  <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="text-base font-black text-slate-900">{profileFullName(profile)}</h3><span className={`rounded-full border px-2.5 py-1 text-[0.65rem] font-extrabold ${statusStyle[profile.status]}`}>{profile.status}</span></div><p className="mt-1 break-all text-xs font-medium text-slate-500">Account: {profile.accountName} · {profile.accountEmail}</p></div>
+                  <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="text-xl font-black text-slate-900">{profileFullName(profile)}</h3><span className={`rounded-full border px-3 py-1 text-xs font-extrabold ${statusStyle[profile.status]}`}>{profile.status}</span></div><p className="mt-1 break-all text-sm font-semibold text-slate-600">{profile.accountName} · {profile.accountEmail}</p></div>
                 </div>
-                <dl className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <dl className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   {[
                     ['Employee code', profile.employeeCode],
                     ['First name', profile.firstName || 'Not provided'],
@@ -247,26 +247,26 @@ export default function RequesterVerification() {
                     ['Department / office', profile.department],
                     ['Position', profile.position],
                     ['Contact number', profile.contactNumber],
-                  ].map(([label, value]) => <div key={label} className="rounded-xl bg-slate-50 px-3 py-2.5"><dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="mt-1 wrap-break-word text-xs font-bold text-slate-800">{value}</dd></div>)}
+                  ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"><dt className="text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 wrap-break-word text-base font-black text-slate-900">{value}</dd></div>)}
                 </dl>
                 <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3">
-                  <p className="text-xs font-extrabold text-blue-950">{profile.employeeRecordMatch ? 'Employee Master Data match found' : profile.matchedEmployeeCode ? 'Employee Master Data record needs manual review' : 'New employee record will be created after approval'}</p>
+                  <p className="text-sm font-black text-blue-950">{profile.employeeRecordMatch ? 'Employee record found' : profile.matchedEmployeeCode ? 'Employee record needs review' : 'New employee record on approval'}</p>
                   {profile.matchedEmployeeCode && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-700">Record: {profile.matchedEmployeeCode} · {profile.matchedDepartment || 'No department'} · {profile.matchedPosition || 'No position'} · {profile.matchedEmail || 'No email'} · {profile.matchedEmployeeStatus || 'No status'}</p>}
-                  {!profile.matchedEmployeeCode && <p className="mt-1 text-[0.68rem] leading-relaxed text-blue-800">No existing employee code matched. If approved, the system will create an employee profile using the verified requester details.</p>}
+                  {!profile.matchedEmployeeCode && <p className="mt-1 text-xs leading-relaxed text-blue-800">No matching employee code.</p>}
                 </div>
                 {profile.status !== 'Verified' && !profile.matchedEmployeeCode && <section className="mt-3 rounded-xl border border-blue-200 bg-blue-50/60 p-3.5">
-                  <div className="mb-3"><p className="text-xs font-extrabold text-blue-950">Department and position master data</p><p className="mt-1 text-[0.68rem] leading-relaxed text-blue-800">Use a saved option, or approve the requester’s suggestion and add it to the shared list.</p></div>
+                  <div className="mb-3"><p className="text-sm font-black text-blue-950">Department and position</p><p className="mt-1 text-xs leading-relaxed text-blue-800">Pick a saved option, or approve the new one.</p></div>
                   {masterDataError && <p className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[0.65rem] font-semibold leading-relaxed text-rose-700">{masterDataError}</p>}
                   <label className="mb-3 block"><span className="mb-1.5 block text-[0.65rem] font-extrabold text-slate-700">Department / office</span><select value={masterChoice(profile.department, masterDepartments, departmentChoices[key])} onChange={(event) => setDepartmentChoices((current) => ({ ...current, [key]: event.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"><option value={ADD_PROPOSED_VALUE}>Approve as new: {profile.department}</option>{masterDepartments.map((department) => <option key={department} value={department}>{department}{department.trim().toLowerCase() === profile.department.trim().toLowerCase() ? ' (matches request)' : ''}</option>)}</select></label>
                   <label className="block"><span className="mb-1.5 block text-[0.65rem] font-extrabold text-slate-700">Position</span><select value={masterChoice(profile.position, masterPositions, positionChoices[key])} onChange={(event) => setPositionChoices((current) => ({ ...current, [key]: event.target.value }))} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"><option value={ADD_PROPOSED_VALUE}>Approve as new: {profile.position}</option>{masterPositions.map((position) => <option key={position} value={position}>{position}{position.trim().toLowerCase() === profile.position.trim().toLowerCase() ? ' (matches request)' : ''}</option>)}</select></label>
                 </section>}
-                <p className="mt-2 text-[0.65rem] text-slate-400">Submitted {formatDate(profile.submittedAt)}{profile.reviewedAt ? ` · Last reviewed ${formatDate(profile.reviewedAt)}` : ''}</p>
+                <p className="mt-3 text-xs font-semibold text-slate-500">Submitted {formatDate(profile.submittedAt)}{profile.reviewedAt ? ` · Last reviewed ${formatDate(profile.reviewedAt)}` : ''}</p>
                 {profile.reviewNote && <p className="mt-2 text-xs font-semibold text-blue-800">Previous GSO note: {profile.reviewNote}</p>}
               </div>
 
               {profile.status !== 'Verified' && <div className="w-full xl:max-w-xs">
-                <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-slate-600">Review note <span className="font-medium text-slate-400">(required for correction or manual verification)</span></span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="Tell the requester what to correct, or add the basis for a manual verification." className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label>
-                <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => void decide(profile, 'Needs Correction')} disabled={isBusy} className="rounded-xl border border-blue-200 bg-white px-3 py-2.5 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50">Needs correction</button><button type="button" onClick={() => void decide(profile, 'Verified')} disabled={isBusy} className="rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Verify requester'}</button></div>
+                <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-slate-600">Review note <span className="font-medium text-slate-400">(required for correction)</span></span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="What should the requester fix?" className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label>
+                <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => void decide(profile, 'Needs Correction')} disabled={isBusy} className="rounded-xl border-2 border-blue-300 bg-white px-3 py-3 text-sm font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50">Needs correction</button><button type="button" onClick={() => void decide(profile, 'Verified')} disabled={isBusy} className="rounded-xl bg-blue-600 px-3 py-3 text-sm font-extrabold text-white transition hover:bg-blue-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Verify requester'}</button></div>
               </div>}
             </div>
           </article>

@@ -945,7 +945,6 @@ async function listMyIssuanceActivity(userId) {
                     SELECT 1 FROM employee_issuance_returns AS loss_record
                      WHERE loss_record.issuance_id = issue.id
                        AND loss_record.status IN ('Lost', 'Returned')
-                       AND loss_record.decision_note = 'Recorded when PayMongo confirmed a Loss & Damage payment.'
                        AND loss_record.decided_at IS NOT NULL
                   ),
                 'returnedAt', (
@@ -1288,6 +1287,7 @@ async function getAssetTagByCode(tagCode) {
             item.id::TEXT AS "itemId",
             item.item_code AS "itemCode",
             COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
+            item.description AS "itemDescription",
             employee.employee_code AS "employeeCode",
             employee.first_name || ' ' || employee.last_name AS "employeeName",
             COALESCE((
@@ -2007,6 +2007,7 @@ async function listEmployeeIssuances(employeeCode) {
               history."returnId",
               history."repairOutcome",
               history."repairResolvedAt",
+              history."repairOwner",
               history."returnCondition",
               history."returnedByName",
               history."confirmationMethod",
@@ -2028,6 +2029,7 @@ async function listEmployeeIssuances(employeeCode) {
                   NULL::TEXT AS "returnId",
                   NULL::TEXT AS "repairOutcome",
                   NULL::TIMESTAMPTZ AS "repairResolvedAt",
+                  NULL::TEXT AS "repairOwner",
                   NULL::TEXT AS "returnCondition",
                   NULL::TEXT AS "returnedByName",
                   NULL::TEXT AS "confirmationMethod",
@@ -2065,6 +2067,7 @@ async function listEmployeeIssuances(employeeCode) {
                   return_request.id::TEXT AS "returnId",
                   return_request.repair_outcome AS "repairOutcome",
                   return_request.repair_resolved_at AS "repairResolvedAt",
+                  return_request.repair_owner AS "repairOwner",
                   return_request.return_condition AS "returnCondition",
                   return_request.returned_by_name AS "returnedByName",
                   return_request.confirmation_method AS "confirmationMethod",

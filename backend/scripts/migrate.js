@@ -20,6 +20,8 @@ const { Client } = require('pg');
 
 const migrationsDir = path.resolve(__dirname, '../database/migrations');
 const retiredDir = path.resolve(__dirname, '../database/migrations_archive/pre-consolidation-2026-11-15');
+// Files 008 to 013 were folded into 007 on 2026-11-17. Ledgers that recorded them still name these files, so they stay known.
+const foldedDir = path.resolve(__dirname, '../database/migrations_archive/folded-2026-11-17');
 // The last consolidated file. Files up to this number describe the schema of the retired history.
 const CONSOLIDATED_VERSION = 7;
 
@@ -117,7 +119,7 @@ async function migrate() {
     const applied = new Set(rows.map((row) => row.file_name));
 
     // Every name in the ledger must be a file this runner knows, so an unknown history is never replayed.
-    const known = new Set([...files, ...retiredFiles]);
+    const known = new Set([...files, ...retiredFiles, ...listSqlFiles(foldedDir)]);
     const unknown = [...applied].filter((fileName) => !known.has(fileName));
     if (unknown.length) {
       throw new Error(`This ledger has migrations this runner does not know: ${unknown.join(', ')}. Nothing was changed.`);

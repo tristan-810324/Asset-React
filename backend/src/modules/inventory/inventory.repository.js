@@ -44,6 +44,7 @@ const itemColumns = `
   i.current_value AS "currentValue",
   i.quantity,
   GREATEST(i.quantity - COALESCE(stock_usage.active_quantity, 0) - COALESCE(stock_usage.repair_quantity, 0), 0)::INTEGER AS "availableQuantity",
+  COALESCE(stock_usage.repair_quantity, 0)::INTEGER AS "repairQuantity",
   i.unit_of_measure AS "unitOfMeasure",
   i.condition,
   CASE
@@ -168,7 +169,7 @@ function stockUsageJoin(includeRequesterInventory) {
     : '0';
   const borrowerIssued = includeRequesterInventory
     ? `COALESCE((
-         SELECT SUM(asset.quantity)
+         SELECT SUM(asset.quantity - CASE WHEN request.status = 'For Repair' THEN COALESCE(asset.returned_quantity, 0) ELSE 0 END)
            FROM service_request_assets AS asset
            JOIN service_requests AS request ON request.id = asset.request_id
           WHERE asset.item_id = i.id AND request.status IN ('Issued', 'Return Requested', 'For Repair')

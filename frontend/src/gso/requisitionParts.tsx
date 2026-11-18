@@ -141,35 +141,79 @@ function UndoDelivery({ receipt, onUndo }: { receipt: PurchaseRequisitionReceipt
 
 // The purchased deliveries linked to one requisition item: what arrived, how many, the receipt, who, and when.
 // With `onUndo`, GSO Staff can take a delivery back until its units are issued; an undone record stays listed.
+// Units logged together (same receipt, recorder, minute and unit) show as one row with a code range.
+// Open the row to see each unit and undo one. Undone deliveries stay listed on their own.
 export function DeliveryRecords({ line, onUndo }: { line: PurchaseRequisitionLine; onUndo?: (receiptId: string) => Promise<void> }) {
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
   const receipts = line.receipts || []
   if (!receipts.length) return null
   const received = receipts.filter((receipt) => !receipt.voidedAt).reduce((total, receipt) => total + Number(receipt.quantity), 0)
   const canUndo = Boolean(onUndo) && !['HANDOVER_PENDING', 'ISSUED', 'REJECTED', 'CANCELLED'].includes(line.routeStatus)
+
+  const renderReceipt = (receipt: PurchaseRequisitionReceipt) => receipt.voidedAt
+    ? <li key={receipt.id} className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-slate-500">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <span className="text-xs font-bold line-through">{receipt.quantity} {receipt.unitOfMeasure} · {receipt.itemCode}</span>
+        <span className="text-[0.62rem] font-semibold">{formatDateTime(receipt.receivedAt)}</span>
+      </div>
+      <p className="mt-0.5 text-[0.62rem] font-semibold">Undone by {receipt.voidedBy || 'GSO Staff'} · {formatDateTime(receipt.voidedAt)}</p>
+    </li>
+    : <li key={receipt.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <span className="text-xs font-extrabold text-slate-800">{receipt.quantity} {receipt.unitOfMeasure} · {receipt.itemCode}</span>
+        <span className="text-[0.62rem] font-semibold text-slate-500">{formatDateTime(receipt.receivedAt)}</span>
+      </div>
+      <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className="text-[0.65rem] text-slate-600">
+          Receipt/invoice: <span className="font-bold text-slate-800">{receipt.receiptReference || 'Not recorded'}</span>
+          <span className="text-slate-400"> · </span>Recorded by {receipt.receivedBy || 'GSO Staff'}
+        </p>
+        {canUndo && onUndo && <UndoDelivery receipt={receipt} onUndo={onUndo} />}
+      </div>
+    </li>
+
+  // Build the rows in order: a group of same-time units becomes one entry at its first position.
+  const groups = new Map<string, PurchaseRequisitionReceipt[]>()
+  const entries: Array<{ key: string; receipt?: PurchaseRequisitionReceipt; group?: PurchaseRequisitionReceipt[] }> = []
+  for (const receipt of receipts) {
+    if (receipt.voidedAt) { entries.push({ key: receipt.id, receipt }); continue }
+    const key = [receipt.receiptReference || '', receipt.receivedBy || '', String(receipt.receivedAt || '').slice(0, 16), receipt.unitOfMeasure].join('|')
+    const existing = groups.get(key)
+    if (existing) { existing.push(receipt); continue }
+    const group = [receipt]
+    groups.set(key, group)
+    entries.push({ key, group })
+  }
+
   return <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
     <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">Delivery records · {received} received</p>
     <ul className="mt-2 space-y-1.5">
-      {receipts.map((receipt) => receipt.voidedAt
-        ? <li key={receipt.id} className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-slate-500">
+      {entries.map((entry) => {
+        if (entry.receipt) return renderReceipt(entry.receipt)
+        const group = entry.group || []
+        if (group.length === 1) return renderReceipt(group[0])
+        const sorted = [...group].sort((a, b) => a.itemCode.localeCompare(b.itemCode, undefined, { numeric: true }))
+        const first = sorted[0]
+        const last = sorted[sorted.length - 1]
+        const total = group.reduce((sum, receipt) => sum + Number(receipt.quantity), 0)
+        const isOpen = Boolean(openGroups[entry.key])
+        return <li key={entry.key} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <span className="text-xs font-bold line-through">{receipt.quantity} {receipt.unitOfMeasure} · {receipt.itemCode}</span>
-            <span className="text-[0.62rem] font-semibold">{formatDateTime(receipt.receivedAt)}</span>
-          </div>
-          <p className="mt-0.5 text-[0.62rem] font-semibold">Undone by {receipt.voidedBy || 'GSO Staff'} · {formatDateTime(receipt.voidedAt)}</p>
-        </li>
-        : <li key={receipt.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <span className="text-xs font-extrabold text-slate-800">{receipt.quantity} {receipt.unitOfMeasure} · {receipt.itemCode}</span>
-            <span className="text-[0.62rem] font-semibold text-slate-500">{formatDateTime(receipt.receivedAt)}</span>
+            <span className="text-xs font-extrabold text-slate-800">{total} {first.unitOfMeasure} · {first.itemCode} – {last.itemCode}</span>
+            <span className="text-[0.62rem] font-semibold text-slate-500">{formatDateTime(first.receivedAt)}</span>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <p className="text-[0.65rem] text-slate-600">
-              Receipt/invoice: <span className="font-bold text-slate-800">{receipt.receiptReference || 'Not recorded'}</span>
-              <span className="text-slate-400"> · </span>Recorded by {receipt.receivedBy || 'GSO Staff'}
+              Receipt/invoice: <span className="font-bold text-slate-800">{first.receiptReference || 'Not recorded'}</span>
+              <span className="text-slate-400"> · </span>Recorded by {first.receivedBy || 'GSO Staff'}
             </p>
-            {canUndo && onUndo && <UndoDelivery receipt={receipt} onUndo={onUndo} />}
+            <button type="button" aria-expanded={isOpen} onClick={() => setOpenGroups((current) => ({ ...current, [entry.key]: !isOpen }))} className="rounded-md px-1.5 py-0.5 text-[0.62rem] font-extrabold text-blue-700 transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">
+              {isOpen ? 'Hide units' : `Show all ${group.length} units`}
+            </button>
           </div>
-        </li>)}
+          {isOpen && <ul className="mt-2 space-y-1.5">{sorted.map(renderReceipt)}</ul>}
+        </li>
+      })}
     </ul>
   </div>
 }

@@ -21,33 +21,16 @@ export type RequestAsset = {
   lostQuantity?: number
   returnedByUserId?: string | null
   settlementStatus?: FacilitySettlement | 'Pending' | null
+  writeOffReason?: string | null
+  writeOffDecision?: 'WAIVED' | 'CHARGED' | null
+  writeOffEstimatedValue?: number | string | null
+  writeOffAt?: string | null
   settlementNote?: string | null
   settledAt?: string | null
   settledBy?: string | null
 }
 
 export type FacilitySettlement = 'Replaced' | 'Paid' | 'Waived'
-export type FacilityDamageResolution = 'WAIVED' | 'PAYMENT_REQUIRED'
-export type FacilityDamageSettlement = {
-  id: string
-  requestId: string
-  resolution: FacilityDamageResolution
-  reason: string
-  amountCentavos: number | null
-  currency: string
-  status: 'NO_CHARGE' | 'PENDING_LINK' | 'AWAITING_PAYMENT' | 'PAID'
-  decidedAt: string
-  assessedBy: string | null
-  linkId: string | null
-  checkoutUrl: string | null
-  linkReference: string | null
-  linkCreatedAt: string | null
-  linkCreatedBy: string | null
-  paymentId: string | null
-  paidAt: string | null
-  updatedAt: string
-  facilityAssetIds: string[] | null
-}
 export type FacilityReturnLine = { assetId: string; returned: number; damaged: number; condition: string }
 
 export type RequestHistory = {
@@ -194,7 +177,6 @@ export type ServiceRequest = {
   slipPrintedAt?: string | null
   slipPrintedBy?: string | null
   assets: RequestAsset[]
-  facilityDamageSettlement?: FacilityDamageSettlement | null
   history: RequestHistory[]
   labelsAllPrinted?: boolean
   /** Job / Service Request lifecycle fields supplied by the service workflow API. */
@@ -550,26 +532,48 @@ export function settleFacilityItem(id: string, assetId: string, payload: { statu
   }).then((data) => data.request)
 }
 
-export function saveFacilityDamageDecision(id: string, payload: { resolution: FacilityDamageResolution; reason: string; amount?: string }) {
-  return apiRequest<{ request: ServiceRequest; linkError?: string }>(`/requests/${encodeURIComponent(id)}/damage-settlement`, {
+export type FacilityFinanceRow = {
+  assetId: string
+  repairedQuantity: number
+  unserviceableQuantity: number
+  requestId: string
+  referenceNo: string
+  requestStatus: string
+  accountableName: string
+  accountableEmail: string
+  itemCode: string
+  itemName: string
+  quantity: number
+  returnedQuantity: number
+  lostQuantity: number
+  damagedQuantity: number
+  condition: string | null
+  repairOwner: string | null
+  settlementStatus: string | null
+  settlementNote: string | null
+  // WAIVED = no charge; CHARGED = the requester pays Finance in person. The reason ends with "Checked by: <GSO staff>" when waived.
+  writeOffReason?: string | null
+  writeOffDecision?: 'WAIVED' | 'CHARGED' | null
+  writeOffEstimatedValue?: number | string | null
+  issuedAt: string | null
+  returnedAt: string | null
+}
+
+export function listFacilityFinanceReport() {
+  return apiRequest<{ rows: FacilityFinanceRow[] }>('/requests/facility-finance-report').then((data) => data.rows)
+}
+
+// The GSO check on a Needs Repair facility item: how many were Repaired (back to stock) and how many Unserviceable.
+export function resolveFacilityRepair(assetId: string, counts: { repaired: number; unserviceable: number; writeOffReason?: string; writeOffDecision?: 'WAIVED' | 'CHARGED'; writeOffEstimatedValue?: number | null }) {
+  return apiRequest(`/requests/facility-repairs/${encodeURIComponent(assetId)}`, {
     method: 'PATCH',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(counts),
   })
 }
 
-export function createFacilityDamagePaymentLink(id: string) {
-  return apiRequest<{ request: ServiceRequest; linkError?: string }>(`/requests/${encodeURIComponent(id)}/damage-settlement/payment-link`, {
-    method: 'POST',
-  })
-}
-
-export function cancelFacilityDamagePaymentLink(id: string, reason: string) {
-  return apiRequest<{ request: ServiceRequest; linkError?: string }>(`/requests/${encodeURIComponent(id)}/damage-settlement/cancel-link`, {
-    method: 'POST',
+export function saveFacilityDamageDecision(id: string, reason: string) {
+  return apiRequest<{ request: ServiceRequest }>(`/requests/${encodeURIComponent(id)}/damage-settlement`, {
+    method: 'PATCH',
     body: JSON.stringify({ reason }),
-  })
-}
-
-export function getMyFacilityDamageCase(id: string) {
-  return apiRequest<{ requestStatus: string; settlement: FacilityDamageSettlement | null }>(`/requests/mine/${encodeURIComponent(id)}/facility-damage`)
+  }).then((data) => data.request)
 }

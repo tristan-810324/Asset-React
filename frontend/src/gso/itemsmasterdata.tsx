@@ -784,8 +784,9 @@ function LegacyReturnableStockStatus({ item }: { item: InventoryItem }) {
     .reduce((sum, borrower) => sum + Number(borrower.quantity), 0)
   const borrowed = quantityIn('Borrowed')
   const reserved = quantityIn('Reserved')
-  // Stock that is neither lent out nor available is being kept back for repair or its condition.
-  const onHold = Math.max(total - available - borrowed - reserved, 0)
+  // On hold is only the stock still waiting in To Be Repaired. Repaired units are already back in Available,
+  // and units written off as unserviceable are already out of the total.
+  const onHold = item.repairQuantity ?? Math.max(total - available - borrowed - reserved, 0)
   const counts = [
     { label: 'Total', value: total, tone: 'border-slate-200 bg-slate-50 text-slate-900' },
     { label: 'Borrowed', value: borrowed, tone: 'border-blue-200 bg-blue-50 text-blue-900' },
@@ -809,7 +810,7 @@ function LegacyReturnableStockStatus({ item }: { item: InventoryItem }) {
         ))}
       </dl>
       {onHold > 0 && (
-        <p className="mt-2 text-xs font-semibold text-amber-800">On hold means it cannot be lent right now because of a repair or its condition.</p>
+        <p className="mt-2 text-xs font-semibold text-amber-800">On hold means it is waiting in To Be Repaired. It comes back to Available after the repair check.</p>
       )}
 
       <h4 className="mt-5 text-xs font-extrabold uppercase tracking-wide text-slate-600">Current borrowers ({item.currentBorrowers.length})</h4>
@@ -2193,7 +2194,7 @@ export default function ItemsMasterData() {
             <button
               type="button"
               onClick={() => handleClearForm()}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100"
+              className="rounded-xl border-2 border-slate-300 bg-white px-6 py-3.5 text-base font-extrabold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100"
             >
               Clear form
             </button>
@@ -2201,7 +2202,7 @@ export default function ItemsMasterData() {
               type="button"
               onClick={handleSaveItem}
               disabled={isSavingItem}
-              className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-xl bg-blue-600 px-6 py-3.5 text-base font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSavingItem ? 'Saving...' : 'Save item'}
             </button>

@@ -7,6 +7,8 @@ const router = express.Router();
 
 router.use(authenticate);
 router.get('/positions', requireRole('GSO_STAFF', 'BORROWER'), employeesController.listEmployeePositions);
+// IT Admin reads the employee list for repair checks; everything else below stays GSO only.
+router.get('/', requireRole('GSO_STAFF', 'IT_ADMIN'), employeesController.listEmployees);
 router.use(requireRole('GSO_STAFF'));
 router.get('/', employeesController.listEmployees);
 router.post('/positions', employeesController.createEmployeePosition);

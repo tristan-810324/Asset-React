@@ -61,16 +61,6 @@ const frontendOrigins = [...new Set([
   .map((origin) => origin.trim().replace(/\/+$/, ''))
   .filter((origin) => origin && (!isVercel || /^https:\/\//i.test(origin)));
 
-// PayMongo TEST mode, for Loss & Damage payments. Both values are optional: until they are set, GSO can still
-// decide cases, but no payment link can be created (without the secret key) or confirmed (without the webhook secret).
-// Put them in backend/.env locally (see .env.example) or in the backend's Vercel Environment Variables.
-const paymongoSecretKey = process.env.PAYMONGO_SECRET_KEY?.trim() || '';
-if (paymongoSecretKey && !paymongoSecretKey.startsWith('sk_test_')) {
-  // This app only runs PayMongo in test mode, so a live key (sk_live_) or a public key (pk_) is refused.
-  throw new Error('PAYMONGO_SECRET_KEY must be a PayMongo TEST secret key, which starts with sk_test_. Live keys and public keys are not allowed.');
-}
-const paymongoWebhookSecret = process.env.PAYMONGO_WEBHOOK_SECRET?.trim() || '';
-
 module.exports = Object.freeze({
   nodeEnv: process.env.NODE_ENV || 'development',
   isVercel,
@@ -87,8 +77,4 @@ module.exports = Object.freeze({
         from: process.env.SMTP_FROM?.trim() || smtpValues.SMTP_USER,
       }
     : null,
-  paymongo: Object.freeze({
-    secretKey: paymongoSecretKey || null,
-    webhookSecret: paymongoWebhookSecret || null,
-  }),
 });

@@ -19,9 +19,7 @@ npm run db:migrate
 | `004_requests_and_audit.sql` | Request Center (service requests, assets, history), Job / Service work orders, and the audit log |
 | `005_issuances_assets_and_returns.sql` | Issuing and borrowing, barcode tags per unit, label reprints, returns, and return codes |
 | `006_purchase_requisition_workflow.sql` | Requisition routing, stock reservations, deliveries, and the approval policy history |
-| `007_platform_support.sql` | Notifications, GSO Head signatures, and Facility Use venues with seed |
-| `008_loss_damage_cases.sql` | Loss / Damage decisions and signed PayMongo webhook records |
-| `009_facility_damage_payments.sql` | PayMongo settlement links for unserviceable Facility Use returns |
+| `007_platform_support.sql` | Notifications, GSO Head signatures, Facility Use venues with seed, Loss / Damage decisions and custody, and facility damage and repair columns |
 
 ## Which case you are in
 
@@ -46,7 +44,8 @@ Do not rename, edit, or delete a file that has already been applied.
 ## Archive
 
 [migrations_archive/pre-consolidation-2026-11-15](./migrations_archive/pre-consolidation-2026-11-15/) keeps the 29
-files that were used before consolidation, unchanged. Its README lists where each one went, and each one-time data
+files that were used before consolidation, unchanged. [migrations_archive/folded-2026-11-17](./migrations_archive/folded-2026-11-17/)
+keeps the former 008 to 013 files that were folded into 007 on 2026-11-17, so ledgers that recorded them still work. The pre-consolidation README lists where each one went, and each one-time data
 step that was not carried over, with the reason.
 
 ## Seed data

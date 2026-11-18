@@ -59,6 +59,7 @@ const navigation: Array<{ name: string; icon: AdminIconName; href: string }> = [
   { name: 'User management', icon: 'users', href: '/admin/users' },
   { name: 'Audit logs', icon: 'history', href: '/admin/audit-logs' },
   { name: 'Support Queue', icon: 'wrench', href: '/admin/support-queue' },
+  { name: 'Repair & Maintenance', icon: 'wrench', href: '/admin/repair' },
 ]
 
 type AdminNavbarProps = {

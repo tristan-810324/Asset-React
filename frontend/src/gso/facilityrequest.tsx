@@ -22,7 +22,7 @@ import { Banner, EmptyState, fieldLabel } from './requisitionParts'
 type Tab = 'review' | 'approved' | 'out' | 'close'
 type StepStatus = 'current' | 'upcoming' | 'done'
 type EquipmentRow = { itemId?: string; itemCode?: string; name?: string; description?: string; quantity?: number | string; unit?: string }
-type ReturnDraft = Record<string, { returned: string; damaged: string; condition: string }>
+type ReturnDraft = Record<string, { returned: string; damaged: string; condition: string; repairBy: string }>
 type SaveHandler = (message: string, updated?: ServiceRequest) => void
 type EntryMethod = 'scan' | 'typed'
 
@@ -30,14 +30,20 @@ type EntryMethod = 'scan' | 'typed'
 const TABS: Record<Tab, { label: string; hint: string; empty: string; statuses: string[] }> = {
   review: { label: 'To check', hint: 'Check the venue and the items, then approve or reject.', empty: 'No new requests to check.', statuses: ['Submitted', 'Under Review', 'Needs Information'] },
   approved: { label: 'Approved', hint: 'Print the slip, then scan it when the requester picks up the items.', empty: 'No approved requests.', statuses: ['Approved'] },
-  out: { label: 'Out now', hint: 'Items with the requester. Scan the slip when they come back.', empty: 'No items are out.', statuses: ['Issued', 'For Repair'] },
-  close: { label: 'To close', hint: 'Settle missing items, then mark the request completed.', empty: 'Nothing to close.', statuses: ['Returned', 'Completed'] },
+  out: { label: 'Out now', hint: 'Items with the requester. Scan the slip when they come back.', empty: 'No items are out.', statuses: ['Issued'] },
+  close: { label: 'To close', hint: 'Mark the request completed. Damaged items stay in repair until they are fixed.', empty: 'Nothing to close.', statuses: ['Returned', 'Completed'] },
 }
 const TAB_ORDER = Object.keys(TABS) as Tab[]
 
 const REPAIR_CONDITIONS = ['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']
 // What can be wrong with a damaged item on return. Damaged items send the request to For Repair.
-const DAMAGE_TYPES = ['Needs Repair', 'Unserviceable']
+// Every item that comes back damaged goes to To Be Repaired. What is wrong is decided there, not at the return.
+const DAMAGE_CONDITION = 'Needs Repair'
+// Who repairs an item that came back as Needs Repair: GSO staff here, or ITSS through the Service Workboard.
+const REPAIR_OWNERS: { value: 'GSO' | 'ITSS'; label: string; detail: string }[] = [
+  { value: 'GSO', label: 'GSO checks it', detail: 'GSO staff checks if it can still be fixed.' },
+  { value: 'ITSS', label: 'Send to ITSS', detail: 'ITSS checks if it can be fixed, then returns it to GSO.' },
+]
 // Same rule as Return Items: a scanner enters each character in under 35 ms; slower input or a paste counts as typed.
 const SCANNER_MAX_MS_PER_CHAR = 35
 const TYPED_REASONS = ['Scanner not working', 'Slip is damaged', 'Slip is lost']
@@ -80,6 +86,9 @@ const inputClass = 'h-10 w-full rounded-xl border border-slate-300 bg-white px-3
 const dialogSectionClass = 'rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5'
 const dialogLabelClass = 'mb-2 block text-sm font-extrabold text-slate-900'
 const dialogControlClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
+// Pop-up footer buttons: one primary action on the right, Cancel on the left.
+const dialogPrimaryButton = 'rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50'
+const dialogCancelButton = 'rounded-xl border-2 border-slate-300 bg-white px-5 py-2.5 text-sm font-extrabold text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100 disabled:cursor-not-allowed disabled:opacity-50'
 
 // Field readers for a facility request. The form stores each answer as its own key.
 // A name typed all in lowercase is shown with capitals ("tristan ivan bautista" → "Tristan Ivan Bautista");
@@ -95,6 +104,15 @@ const venueOf = (request: ServiceRequest) => formText(request.formData.venue)
 const dateOf = (request: ServiceRequest) => formText(request.formData.date)
 const startOf = (request: ServiceRequest) => formText(request.formData.startTime)
 const endOf = (request: ServiceRequest) => formText(request.formData.endTime)
+// 24-hour "14:30" shown as "2:30 PM" for staff; anything else is shown as typed.
+const clockText = (value: string) => {
+  const match = /^(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return value
+  const hour = Number(match[1])
+  const period = hour < 12 ? 'AM' : 'PM'
+  return `${hour % 12 || 12}:${match[2]} ${period}`
+}
+const timeRangeOf = (request: ServiceRequest) => (startOf(request) && endOf(request) ? `${clockText(startOf(request))} – ${clockText(endOf(request))}` : '')
 // Approval turns the requested equipment into reserved rows; only those can be released.
 const hasItems = (request: ServiceRequest) => request.assets.length > 0
 const openAssets = (request: ServiceRequest) => request.assets.filter((asset) => !asset.returnedAt)
@@ -125,7 +143,7 @@ function isOverdue(request: ServiceRequest, now: number) {
 }
 
 function dueLabel(request: ServiceRequest) {
-  return dateOf(request) ? `${formatDate(dateOf(request))} · ${endOf(request) || 'end of activity'}` : 'End of activity'
+  return dateOf(request) ? `${formatDate(dateOf(request))} · ${endOf(request) ? clockText(endOf(request)) : 'end of activity'}` : 'End of activity'
 }
 
 function chipFor(request: ServiceRequest, now: number) {
@@ -253,6 +271,20 @@ export default function FacilityRequests() {
   useEffect(() => { void loadRequests() }, [loadRequests])
   useEffect(() => { void loadInventory() }, [loadInventory])
 
+  // A notification's Open link (?request=ID) opens that request in its stage, once after the first load.
+  const deepLinkDone = useRef(false)
+  useEffect(() => {
+    if (deepLinkDone.current || loading || !requests.length) return
+    deepLinkDone.current = true
+    const id = new URLSearchParams(window.location.search).get('request')
+    const match = id ? requests.find((request) => request.id === id) : undefined
+    const matchTab = match ? tabOf(match) : null
+    if (!match || !matchTab) return
+    setChosenTab(matchTab)
+    setSelectedId(match.id)
+    setSearch('')
+  }, [requests, loading])
+
   // Overdue depends on the clock, so it is refreshed every minute.
   useEffect(() => {
     const first = window.setTimeout(() => setNow(Date.now()), 0)
@@ -295,7 +327,6 @@ export default function FacilityRequests() {
   const selected = visible.find((request) => request.id === selectedId) || visible[0] || null
   const stockById = useMemo(() => inventory ? new Map(inventory.map((item) => [String(item.id), item] as const)) : null, [inventory])
   const clashing = useMemo(() => selected ? requests.filter((other) => clashes(selected, other)) : [], [requests, selected])
-  const unprintedSlips = useMemo(() => requests.filter((request) => request.status === 'Approved' && hasItems(request) && !request.slipPrintedAt), [requests])
   const releaseRequest = requests.find((request) => request.id === releaseId && request.status === 'Approved' && hasItems(request)) ?? null
   const returnRequest = requests.find((request) => request.id === returnId && request.status === 'Issued' && openAssets(request).length > 0) ?? null
 
@@ -432,10 +463,6 @@ export default function FacilityRequests() {
               <button type="button" onClick={() => { setLoading(true); void loadRequests() }} disabled={loading} className="h-11 shrink-0 rounded-xl border border-slate-300 bg-white px-4 text-xs font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 disabled:cursor-wait disabled:opacity-60">{loading ? 'Loading…' : 'Refresh'}</button>
             </div>
 
-            {tab === 'approved' && unprintedSlips.length > 0 && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5">
-              <p className="text-xs font-semibold text-amber-900"><span className="font-extrabold">{unprintedSlips.length} slip{unprintedSlips.length === 1 ? '' : 's'}</span> to print</p>
-              <button type="button" onClick={() => void printSlips(unprintedSlips)} disabled={printing} className="rounded-xl bg-amber-600 px-3.5 py-2 text-xs font-extrabold text-white shadow-sm transition hover:bg-amber-700 disabled:opacity-50">{printing ? 'Preparing…' : 'Print all slips'}</button>
-            </div>}
 
             <div className="inventory-list-scrollbar mt-3 max-h-[58vh] space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
               {loading && requests.length === 0 ? <p className="p-8 text-center text-xs font-semibold text-slate-400">Loading facility requests…</p>
@@ -446,7 +473,7 @@ export default function FacilityRequests() {
                     return <button key={request.id} type="button" onClick={() => { setSelectedId(request.id); setNotice('') }} aria-current={isSelected ? 'true' : undefined} className={`block w-full rounded-xl border p-3.5 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${isSelected ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}>
                       <span className="flex items-center justify-between gap-2"><span className="text-sm font-extrabold text-slate-900">{request.referenceNo}</span><span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${chip.tone}`}>{chip.label}</span></span>
                       <span className="mt-1.5 block truncate text-xs font-semibold text-slate-700">{requesterName(request)} · {formText(request.formData.departmentOrganization) || request.requesterEmail}</span>
-                      <span className="mt-1 block truncate text-xs text-slate-500">{venueOf(request) || 'Venue not set'} · {dateOf(request) ? formatDate(dateOf(request)) : 'Date not set'} · {startOf(request)}–{endOf(request)}</span>
+                      <span className="mt-1 block truncate text-xs text-slate-500">{venueOf(request) || 'Venue not set'} · {dateOf(request) ? formatDate(dateOf(request)) : 'Date not set'} · {timeRangeOf(request)}</span>
                       <span className="mt-1 block truncate text-xs text-slate-500">{hasItems(request) ? `${unitsOf(request.assets)} item${unitsOf(request.assets) === 1 ? '' : 's'}` : 'Venue only'}{request.status === 'Issued' ? ` · Due ${dueLabel(request)}` : ''}</span>
                     </button>
                   })}
@@ -522,6 +549,12 @@ function ReleaseDialog({ request, entryMethod, onClose, onReleased }: { request:
   // The receiver is recorded by first and last name.
   const receiverHasFullName = receivedBy.trim().split(/\s+/).filter(Boolean).length >= 2
   const ready = isHere && slipGiven && receiverHasFullName && (entryMethod === 'scan' || typedReason.trim().length > 0)
+  const gaps = [
+    !isHere && 'confirm the requester is here',
+    !receiverHasFullName && 'enter the first and last name of the person taking the items',
+    !slipGiven && 'confirm you gave the slip',
+    entryMethod === 'typed' && !typedReason.trim() && 'give a reason for the typed REQ number',
+  ].filter((gap): gap is string => Boolean(gap))
   const units = unitsOf(request.assets)
 
   useEffect(() => { firstCheckRef.current?.focus() }, [])
@@ -559,7 +592,7 @@ function ReleaseDialog({ request, entryMethod, onClose, onReleased }: { request:
           <div className="min-w-0">
             <EntryEyebrow method={entryMethod} action="Release items" />
             <h2 id="release-dialog-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">{request.referenceNo}</h2>
-            <p className="mt-1 text-xs font-semibold text-slate-500">{[venueOf(request), dateOf(request) ? formatDate(dateOf(request)) : '', `${startOf(request)}–${endOf(request)}`].filter(Boolean).join(' · ')}</p>
+            <p className="mt-1 text-xs font-semibold text-slate-500">{[venueOf(request), dateOf(request) ? formatDate(dateOf(request)) : '', timeRangeOf(request)].filter(Boolean).join(' · ')}</p>
           </div>
         </div>
         <button type="button" onClick={onClose} disabled={busy} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:opacity-50">Close</button>
@@ -600,13 +633,14 @@ function ReleaseDialog({ request, entryMethod, onClose, onReleased }: { request:
             <CheckCard checked={slipGiven} onChange={setSlipGiven} title="I gave the slip to the requester" detail={`Return by ${dueLabel(request)}. GSO scans the slip again for the return.`} />
           </section>
 
+          <DialogHint gaps={gaps} />
           {error && <Banner tone="error">{error}</Banner>}
         </div>
       </div>
 
       <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
-        <button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100 disabled:opacity-50">Not yet</button>
-        <button type="button" onClick={() => void release()} disabled={!ready || busy} className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60">{busy ? 'Releasing...' : 'Release items'}</button>
+        <button type="button" onClick={onClose} disabled={busy} className={dialogCancelButton}>Cancel</button>
+        <button type="button" onClick={() => void release()} disabled={!ready || busy} className={dialogPrimaryButton}>{busy ? 'Releasing…' : 'Release items'}</button>
       </div>
     </section>
   </div>
@@ -623,7 +657,7 @@ function TypedNotice({ reason, onChange }: { reason: string; onChange: (value: s
   return <section aria-labelledby="typed-slip-title" className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 shadow-md shadow-slate-300/35 sm:p-5">
     <div className="mb-3 border-b border-amber-200 pb-3">
       <h3 id="typed-slip-title" className="text-sm font-extrabold text-amber-950">The REQ number was typed, not scanned</h3>
-      <p className="mt-1 text-sm text-amber-900">It is flagged as a typed code in the audit log for GSO Staff and the GSO Head. Say why it was typed.</p>
+      <p className="mt-1 text-sm leading-relaxed text-amber-900">The audit log marks this action as typed. Choose a reason below, or write your own.</p>
     </div>
     <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Quick reasons">
       {TYPED_REASONS.map((option) => <button key={option} type="button" onClick={() => onChange(option)} className={`rounded-full border px-3 py-1.5 text-xs font-extrabold transition ${reason === option ? 'border-amber-500 bg-white text-amber-950 ring-2 ring-amber-200' : 'border-amber-300 bg-white/70 text-amber-900 hover:bg-white'}`}>{option}</button>)}
@@ -633,6 +667,14 @@ function TypedNotice({ reason, onChange }: { reason: string; onChange: (value: s
       <input value={reason} onChange={(event) => onChange(event.target.value)} maxLength={300} placeholder="For example: the scanner is not working" className={dialogControlClass} />
     </label>
   </section>
+}
+
+// Tells the staff member what is still missing before the primary button can be pressed.
+function DialogHint({ gaps }: { gaps: string[] }) {
+  if (gaps.length === 0) return null
+  return <div role="status" className="rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-relaxed text-amber-900">
+    <span className="font-extrabold">To continue, please:</span> {gaps.join('; ')}.
+  </div>
 }
 
 function DialogSectionHeader({ id, title, detail }: { id: string; title: string; detail: string }) {
@@ -659,7 +701,7 @@ function CheckCard({ checked, onChange, title, detail, inputRef }: {
   </label>
 }
 
-const completeCount = (asset: RequestAsset) => ({ returned: String(asset.quantity), damaged: '0', condition: DAMAGE_TYPES[0] })
+const completeCount = (asset: RequestAsset) => ({ returned: String(asset.quantity), damaged: '0', condition: DAMAGE_CONDITION, repairBy: '' })
 
 // Opens when the slip of released items is scanned: confirm the items are being returned, then check each item.
 // Missing units wait for settlement; damaged units send the request to For Repair until they are fixed.
@@ -681,15 +723,28 @@ function ReturnDialog({ request, entryMethod, now, onClose, onReturned }: { requ
     const damaged = Number(entry.damaged)
     const returnedValid = entry.returned.trim() !== '' && Number.isInteger(returned) && returned >= 0 && returned <= Number(asset.quantity)
     const damagedValid = returnedValid && entry.damaged.trim() !== '' && Number.isInteger(damaged) && damaged >= 0 && damaged <= returned
-    return { asset, entry, returned, damaged, returnedValid, damagedValid, missing: returnedValid ? Number(asset.quantity) - returned : 0 }
+    // A Needs Repair item must say who repairs it (GSO or ITSS).
+    const needsRepairOwner = damagedValid && damaged > 0
+    const repairByValid = !needsRepairOwner || REPAIR_OWNERS.some((owner) => owner.value === entry.repairBy)
+    return { asset, entry, returned, damaged, returnedValid, damagedValid, needsRepairOwner, repairByValid, missing: returnedValid ? Number(asset.quantity) - returned : 0 }
   })
-  const allValid = lines.every((line) => line.returnedValid && line.damagedValid)
+  const allValid = lines.every((line) => line.returnedValid && line.damagedValid && line.repairByValid)
   const missingTotal = lines.reduce((total, line) => total + line.missing, 0)
   const damagedTotal = lines.reduce((total, line) => total + (line.damagedValid ? line.damaged : 0), 0)
   const receiverHasFullName = returnedBy.trim().split(/\s+/).filter(Boolean).length >= 2
   const ready = isReturning && checkedAll && allValid && receiverHasFullName && (entryMethod === 'scan' || typedReason.trim().length > 0)
+  const gaps = [
+    !isReturning && 'confirm the items are being returned now',
+    !receiverHasFullName && 'enter the first and last name of the person returning the items',
+    !allValid && 'fix the counts in step 2 (numbers must fit the released quantity)',
+    !checkedAll && 'tick "I checked every item"',
+    entryMethod === 'typed' && !typedReason.trim() && 'give a reason for the typed REQ number',
+  ].filter((gap): gap is string => Boolean(gap))
   const outcome = damagedTotal > 0 ? 'For Repair' : 'Returned'
   const findings = [missingTotal > 0 ? `${missingTotal} missing` : '', damagedTotal > 0 ? `${damagedTotal} damaged` : ''].filter(Boolean).join(', ')
+  // What happens to each unit: the good ones go back to stock now, the damaged ones wait in To Be Repaired.
+  const backToStock = lines.reduce((total, line) => total + (line.returnedValid && line.damagedValid ? line.returned - line.damaged : 0), 0)
+  const recorded = [backToStock > 0 ? `${backToStock} back to stock` : '', damagedTotal > 0 ? `${damagedTotal} to repair` : '', missingTotal > 0 ? `${missingTotal} missing` : ''].filter(Boolean).join(', ')
 
   useEffect(() => { firstCheckRef.current?.focus() }, [])
   useEffect(() => {
@@ -700,7 +755,7 @@ function ReturnDialog({ request, entryMethod, now, onClose, onReturned }: { requ
 
   function setCount(assetId: string, change: Partial<ReturnDraft[string]>) {
     setCheckedAll(false)
-    setCounts((current) => ({ ...current, [assetId]: { ...(current[assetId] ?? { returned: '0', damaged: '0', condition: DAMAGE_TYPES[0] }), ...change } }))
+    setCounts((current) => ({ ...current, [assetId]: { ...(current[assetId] ?? { returned: '0', damaged: '0', condition: DAMAGE_CONDITION, repairBy: '' }), ...change } }))
   }
 
   async function confirm() {
@@ -714,7 +769,13 @@ function ReturnDialog({ request, entryMethod, now, onClose, onReturned }: { requ
         note: `Returned by ${receiver}. ${findings ? `Items: ${findings}.` : 'All items complete.'}`,
         entryMethod,
         ...(entryMethod === 'typed' ? { typedReason: typedReason.trim() } : {}),
-        returns: lines.map((line) => ({ assetId: String(line.asset.id), returned: line.returned, damaged: line.damaged, condition: line.damaged > 0 ? line.entry.condition : 'Good' })),
+        returns: lines.map((line) => ({
+          assetId: String(line.asset.id),
+          returned: line.returned,
+          damaged: line.damaged,
+          condition: line.damaged > 0 ? DAMAGE_CONDITION : 'Good',
+          ...(line.needsRepairOwner ? { repairBy: line.entry.repairBy } : {}),
+        })),
       })
       onReturned(`${request.referenceNo} returned by ${receiver}. ${findings ? `${findings[0].toUpperCase()}${findings.slice(1)}.` : 'All items complete.'}`, updated)
     } catch (reason) {
@@ -732,7 +793,7 @@ function ReturnDialog({ request, entryMethod, now, onClose, onReturned }: { requ
           <div className="min-w-0">
             <EntryEyebrow method={entryMethod} action="Return items" />
             <h2 id="return-dialog-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">{request.referenceNo}</h2>
-            <p className="mt-1 text-xs font-semibold text-slate-500">{[venueOf(request), dateOf(request) ? formatDate(dateOf(request)) : '', `${startOf(request)}–${endOf(request)}`].filter(Boolean).join(' · ')}</p>
+            <p className="mt-1 text-xs font-semibold text-slate-500">{[venueOf(request), dateOf(request) ? formatDate(dateOf(request)) : '', timeRangeOf(request)].filter(Boolean).join(' · ')}</p>
           </div>
         </div>
         <button type="button" onClick={onClose} disabled={busy} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:opacity-50">Close</button>
@@ -765,7 +826,7 @@ function ReturnDialog({ request, entryMethod, now, onClose, onReturned }: { requ
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div className="min-w-0">
                 <h3 id="return-check" className="text-sm font-extrabold text-slate-900">2. Check each item</h3>
-                <p className="mt-1 text-sm text-slate-600">Count what came back. Enter any damaged items.</p>
+                <p className="mt-1 text-sm text-slate-600">Count what came back. Items that need repair go to Repair &amp; Maintenance, where the repair check is done.</p>
               </div>
               <button type="button" onClick={() => { setCounts(Object.fromEntries(open.map((asset) => [String(asset.id), completeCount(asset)]))); setCheckedAll(false) }} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800">Mark all complete</button>
             </div>
@@ -782,45 +843,58 @@ function ReturnDialog({ request, entryMethod, now, onClose, onReturned }: { requ
                     <span className="flex flex-wrap gap-1.5">
                       {complete && <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-emerald-700">Complete</span>}
                       {line.returnedValid && line.missing > 0 && <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-rose-700">{line.missing} missing</span>}
-                      {line.damagedValid && line.damaged > 0 && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-amber-800">{line.damaged} damaged</span>}
+                      {line.damagedValid && line.damaged > 0 && <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-amber-800">{line.damaged} to repair</span>}
                     </span>
                   </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <label className="block">
                       <span className={dialogLabelClass}>Returned</span>
                       <input type="number" min={0} max={line.asset.quantity} step={1} inputMode="numeric" value={line.entry.returned} onChange={(event) => setCount(id, { returned: event.target.value })} aria-invalid={!line.returnedValid} className={`${dialogControlClass} ${line.returnedValid ? '' : 'border-rose-400'}`} />
                     </label>
                     <label className="block">
-                      <span className={dialogLabelClass}>Damaged</span>
+                      <span className={dialogLabelClass}>Needs repair</span>
                       <input type="number" min={0} max={line.returnedValid ? line.returned : undefined} step={1} inputMode="numeric" value={line.entry.damaged} onChange={(event) => setCount(id, { damaged: event.target.value })} aria-invalid={!line.damagedValid} className={`${dialogControlClass} ${line.damagedValid ? '' : 'border-rose-400'}`} />
                     </label>
-                    {line.damagedValid && line.damaged > 0 && <label className="block">
-                      <span className={dialogLabelClass}>What is wrong</span>
-                      <select value={line.entry.condition} onChange={(event) => setCount(id, { condition: event.target.value })} className={dialogControlClass}>
-                        {DAMAGE_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
-                      </select>
-                    </label>}
                   </div>
-                  {!line.returnedValid && <p className="mt-2 text-xs font-semibold text-rose-700">Enter 0 to {line.asset.quantity}.</p>}
-                  {line.returnedValid && !line.damagedValid && <p className="mt-2 text-xs font-semibold text-rose-700">Damaged can be 0 to {line.returned}.</p>}
+                  {line.needsRepairOwner && <div className="mt-3">
+                    <span className={dialogLabelClass}>Who checks if it can be fixed?</span>
+                    <div role="radiogroup" aria-label={`Who checks ${line.asset.itemName}`} className="mt-2 grid gap-2 sm:grid-cols-2">
+                      {REPAIR_OWNERS.map((owner) => {
+                        const chosen = line.entry.repairBy === owner.value
+                        return <button key={owner.value} type="button" role="radio" aria-checked={chosen} onClick={() => setCount(id, { repairBy: owner.value })} className={`rounded-xl border-2 px-3.5 py-2.5 text-left transition ${chosen ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-300'}`}>
+                          <span className="block text-xs font-extrabold text-slate-900">{owner.label}</span>
+                          <span className="mt-0.5 block text-[0.68rem] font-medium text-slate-500">{owner.detail}</span>
+                        </button>
+                      })}
+                    </div>
+                    {!line.repairByValid && <p className="mt-2 text-xs font-semibold text-rose-700">Choose who checks it: GSO or ITSS.</p>}
+                  </div>}
+                  {line.returnedValid && line.damagedValid && <p className="mt-2 text-xs font-semibold text-slate-600">
+                    <span className="text-emerald-700">{line.returned - line.damaged} back to stock</span>
+                    {line.damaged > 0 && <span className="text-amber-800"> · {line.damaged} to repair</span>}
+                    {line.missing > 0 && <span className="text-rose-700"> · {line.missing} missing</span>}
+                  </p>}
+                  {!line.returnedValid && <p className="mt-2 text-xs font-semibold text-rose-700">Enter a number from 0 to {line.asset.quantity}.</p>}
+                  {line.returnedValid && !line.damagedValid && <p className="mt-2 text-xs font-semibold text-rose-700">Damaged must be a number from 0 to {line.returned} (the number returned).</p>}
                 </div>
               })}
             </div>
           </section>
 
           <section aria-labelledby="return-confirm" className={dialogSectionClass}>
-            <DialogSectionHeader id="return-confirm" title="3. Confirm" detail={outcome === 'For Repair' ? 'Saved as For Repair. The items stay out of stock until you mark them repaired.' : 'Saved as Returned. The items go back to stock.'} />
-            {missingTotal > 0 && <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-800"><span className="font-extrabold">{missingTotal} missing.</span> They leave the stock until they are settled.</p>}
-            <CheckCard checked={checkedAll} onChange={setCheckedAll} title="I checked every item" detail={findings ? `Recorded: ${findings}.` : 'Everything came back complete.'} />
+            <DialogSectionHeader id="return-confirm" title="3. Confirm" detail={outcome === 'For Repair' ? 'Items that need repair are saved as For Repair. They stay out of stock until the repair check is done.' : 'Everything came back. The items go back to stock.'} />
+            {missingTotal > 0 && <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm font-semibold text-rose-800"><span className="font-extrabold">{missingTotal} missing.</span> They are recorded as missing and are not added back to stock.</p>}
+            <CheckCard checked={checkedAll} onChange={setCheckedAll} title="I checked every item" detail={recorded ? `Recorded: ${recorded}.` : 'Nothing counted yet.'} />
           </section>
 
+          <DialogHint gaps={gaps} />
           {error && <Banner tone="error">{error}</Banner>}
         </div>
       </div>
 
       <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
-        <button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100 disabled:opacity-50">Not yet</button>
-        <button type="button" onClick={() => void confirm()} disabled={!ready || busy} className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60">{busy ? 'Saving...' : 'Confirm return'}</button>
+        <button type="button" onClick={onClose} disabled={busy} className={dialogCancelButton}>Cancel</button>
+        <button type="button" onClick={() => void confirm()} disabled={!ready || busy} className={dialogPrimaryButton}>{busy ? 'Saving return…' : 'Confirm return'}</button>
       </div>
     </section>
   </div>
@@ -850,7 +924,6 @@ function ReviewPanel({ request, clashing, stockById, scanned, entryMethod, now, 
   const pending = pendingAssets(request)
   const pendingDamage = pendingDamageAssets(request)
   const unserviceableDamage = request.assets.filter((asset) => Number(asset.damagedQuantity || 0) > 0 && asset.conditionIn === 'Unserviceable')
-  const awaitingDamagePayment = request.facilityDamageSettlement?.status === 'AWAITING_PAYMENT'
   // Items the Item Master cannot cover right now. Approval would fail, so it is blocked here with the reason.
   const stockProblems = rows.flatMap((row) => {
     const check = stockCheck(row, stockById)
@@ -885,15 +958,15 @@ function ReviewPanel({ request, clashing, stockById, scanned, entryMethod, now, 
   }
 
   return <>
-    <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/70 p-3.5"><FacilitySummary request={request} now={now} /></div>
+    <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3"><FacilitySummary request={request} now={now} /></div>
     <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white px-3.5 pb-3 pt-1"><FlowTrail steps={flow.steps} current={flow.current} /></div>
 
     {inReview && <>
       <section className="mt-5 border-t border-slate-200 pt-5">
-        <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title="Check venue and items" description="Make sure the venue is free and the items are in stock." />
+        <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title="Check venue and items" description="Venue free and stock enough?" />
         <div className={`mt-4 rounded-xl border px-3.5 py-3 text-xs font-semibold leading-relaxed ${clashing.length > 0 ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
           {clashing.length > 0
-            ? <><span className="font-extrabold">Venue clash:</span> {venueOf(request)} on {formatDate(dateOf(request))} from {startOf(request)} to {endOf(request)} overlaps {clashing.map((other) => other.referenceNo).join(', ')}.</>
+            ? <><span className="font-extrabold">Venue clash:</span> {venueOf(request)} on {formatDate(dateOf(request))} from {clockText(startOf(request))} to {clockText(endOf(request))} overlaps {clashing.map((other) => other.referenceNo).join(', ')}.</>
             : <><span className="font-extrabold">Venue is free</span> at this time.</>}
         </div>
         <div className="mt-3 space-y-2">
@@ -917,13 +990,13 @@ function ReviewPanel({ request, clashing, stockById, scanned, entryMethod, now, 
 
       <section className="mt-5 border-t border-slate-200 pt-5" aria-label="Decide">
         {(clashing.length > 0 || stockProblems.length > 0) && <div role="status" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold leading-relaxed text-rose-800">
-          <span className="font-extrabold">Approve is blocked.</span> {clashing.length > 0 ? 'The venue is already booked at this time.' : `Not enough stock: ${stockProblems.join(', ')}.`} Reject it with a reason.
+          <span className="font-extrabold">Approve blocked:</span> {clashing.length > 0 ? 'venue already booked.' : `not enough stock (${stockProblems.join(', ')}).`}
         </div>}
-        <p className={fieldLabel}>Reason (required to reject)</p>
+        <p className={fieldLabel}>Reject reason</p>
         <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Quick reasons">
           {rejectReasons.map((reason) => <button key={reason.label} type="button" onClick={() => { setNote(reason.text); setError('') }} className={`rounded-full border px-3 py-1.5 text-[0.68rem] font-extrabold transition ${note === reason.text ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-slate-300 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50'}`}>{reason.label}</button>)}
         </div>
-        <textarea ref={noteRef} value={note} onChange={(event) => { setNote(event.target.value); setError('') }} maxLength={2000} aria-label="Reason" className="min-h-20 w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-xs font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" placeholder="Pick a reason above, or type your own." />
+        <textarea ref={noteRef} value={note} onChange={(event) => { setNote(event.target.value); setError('') }} maxLength={2000} aria-label="Reason" className="min-h-20 w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-xs font-medium outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" placeholder="Pick one above or type it." />
         <ActionBar error={error}>
           <button type="button" disabled={busy} onClick={reject} className="rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-extrabold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">Reject</button>
           <button type="button" disabled={busy || clashing.length > 0 || stockProblems.length > 0} onClick={() => void changeStatus('Approved', rows.length > 0 ? `${reference} approved. Print its slip next.` : `${reference} approved.`)} className={primaryButton}>{busy ? 'Saving…' : 'Approve'}</button>
@@ -970,15 +1043,13 @@ function ReviewPanel({ request, clashing, stockById, scanned, entryMethod, now, 
     </section>}
 
     {request.status === 'For Repair' && <section className="mt-5 border-t border-slate-200 pt-5">
-      <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title={pendingDamage.length > 0 ? 'Resolve the unserviceable item' : 'Items under repair'} description={pendingDamage.length > 0 ? 'Choose whether GSO waives the charge or requests payment. The requester is notified automatically.' : 'Mark them repaired when they are fixed. The stock comes back then.'} />
+      <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title={pendingDamage.length > 0 ? 'Resolve the unserviceable item' : 'Items under repair'} description={pendingDamage.length > 0 ? 'Record the no-charge decision for the unserviceable item. The new workflow will define the next settlement step.' : 'Mark them repaired when they are fixed. The stock comes back then.'} />
       <div className="mt-4"><ReturnedList assets={request.assets} /></div>
-      {pendingDamage.length > 0 && !awaitingDamagePayment
+      {pendingDamage.length > 0
         ? <div className="mt-4"><DamageSettlementRow request={request} assets={pendingDamage} onSettled={onSaved} /></div>
-        : awaitingDamagePayment
-          ? <p className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-2.5 text-xs font-semibold text-sky-800">Payment link sent to the requester. Wait for PayMongo confirmation before completing this return.</p>
-          : <ActionBar error={error}>
-            <button type="button" disabled={busy} onClick={() => void changeStatus('Returned', `${reference}: ${unserviceableDamage.length > 0 ? 'the unserviceable item settlement is complete.' : 'repaired items are back in stock.'}`)} className={primaryButton}>{busy ? 'Saving…' : unserviceableDamage.length > 0 ? 'Mark return resolved' : 'Mark repaired'}</button>
-          </ActionBar>}
+        : <ActionBar error={error}>
+          <button type="button" disabled={busy} onClick={() => void changeStatus('Returned', `${reference}: ${unserviceableDamage.length > 0 ? 'the unserviceable item settlement is complete.' : 'repaired items are back in stock.'}`)} className={primaryButton}>{busy ? 'Saving…' : unserviceableDamage.length > 0 ? 'Mark return resolved' : 'Mark repaired'}</button>
+        </ActionBar>}
     </section>}
 
     {request.status === 'Returned' && <section className="mt-5 border-t border-slate-200 pt-5">
@@ -991,33 +1062,25 @@ function ReviewPanel({ request, clashing, stockById, scanned, entryMethod, now, 
       </div>}
       <div className="mt-4"><ReturnedList assets={request.assets} /></div>
       <ActionBar error={error}>
-        <button type="button" disabled={busy || pending.length > 0} onClick={() => void changeStatus('Completed', `${reference} completed.`)} className={successButton}>{busy ? 'Saving…' : 'Mark as completed'}</button>
+        <button type="button" disabled={busy} onClick={() => void changeStatus('Completed', `${reference} completed.`)} className={successButton}>{busy ? 'Saving…' : 'Mark as completed'}</button>
       </ActionBar>
-      {pending.length > 0 && <p className="mt-2 text-right text-[0.62rem] font-semibold text-slate-500">Settle every missing item first.</p>}
     </section>}
   </>
 }
 
 function DamageSettlementRow({ request, assets, onSettled }: { request: ServiceRequest; assets: RequestAsset[]; onSettled: SaveHandler }) {
-  const [choice, setChoice] = useState<'WAIVED' | 'PAYMENT_REQUIRED' | ''>('')
   const [reason, setReason] = useState('')
-  const [amount, setAmount] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const needsAmount = choice === 'PAYMENT_REQUIRED'
-  const ready = Boolean(choice && reason.trim() && (!needsAmount || /^\d{1,7}(\.\d{1,2})?$/.test(amount.trim().replace(/,/g, ''))))
+  const ready = Boolean(reason.trim())
 
   async function save() {
     if (!ready || busy) return
     setBusy(true)
     setError('')
     try {
-      const result = await saveFacilityDamageDecision(request.id, {
-        resolution: choice as 'WAIVED' | 'PAYMENT_REQUIRED',
-        reason: reason.trim(),
-        ...(needsAmount ? { amount: amount.trim() } : {}),
-      })
-      onSettled(result.linkError ? `Decision saved, but the payment link is not ready yet: ${result.linkError}` : `Unserviceable item decision saved for ${request.referenceNo}.`, result.request)
+      const updated = await saveFacilityDamageDecision(request.id, reason.trim())
+      onSettled(`No-charge decision recorded for the unserviceable item in ${request.referenceNo}.`, updated)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'The damage decision was not saved. Try again.')
     } finally {
@@ -1033,22 +1096,12 @@ function DamageSettlementRow({ request, assets, onSettled }: { request: ServiceR
       </div>
       <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-amber-800">Decision needed</span>
     </div>
-    <div role="radiogroup" aria-label="Unserviceable item decision" className="mt-3 grid gap-2 sm:grid-cols-2">
-      <button type="button" role="radio" aria-checked={choice === 'WAIVED'} onClick={() => setChoice('WAIVED')} className={`rounded-xl border-2 p-3 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${choice === 'WAIVED' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300'}`}>
-        <span className="block text-xs font-extrabold text-slate-900">Waive the charge</span>
-        <span className="mt-1 block text-[0.65rem] leading-snug text-slate-600">No payment is requested. The item stays Unserviceable.</span>
-      </button>
-      <button type="button" role="radio" aria-checked={choice === 'PAYMENT_REQUIRED'} onClick={() => setChoice('PAYMENT_REQUIRED')} className={`rounded-xl border-2 p-3 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${choice === 'PAYMENT_REQUIRED' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300'}`}>
-        <span className="block text-xs font-extrabold text-slate-900">Payment required</span>
-        <span className="mt-1 block text-[0.65rem] leading-snug text-slate-600">Set the amount. A PayMongo test checkout is sent to the requester.</span>
-      </button>
+    <div className="mt-3">
+      <p className="mb-2 text-[0.68rem] font-semibold leading-relaxed text-slate-600">Record the no-charge decision to complete this settlement step.</p>
+      <label className="block"><span className={fieldLabel}>Reason for no charge <span className="text-rose-600">*</span></span><input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder="Why is the charge waived for now?" className={inputClass} /></label>
     </div>
-    {choice && <div className="mt-3 grid gap-3 sm:grid-cols-2">
-      {needsAmount && <label className="block"><span className={fieldLabel}>Amount (₱) <span className="text-rose-600">*</span></span><input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="For example 1500 or 1500.50" className={inputClass} /></label>}
-      <label className={needsAmount ? 'block' : 'block sm:col-span-2'}><span className={fieldLabel}>Reason <span className="text-rose-600">*</span></span><input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} placeholder={needsAmount ? 'Why is payment required?' : 'Why is the charge waived?'} className={inputClass} /></label>
-    </div>}
     {error && <div className="mt-3"><Banner tone="error">{error}</Banner></div>}
-    <div className="mt-3 flex justify-end"><button type="button" disabled={!ready || busy} onClick={() => void save()} className={primaryButton}>{busy ? 'Saving…' : needsAmount ? 'Save and create payment' : 'Save waived decision'}</button></div>
+    <div className="mt-3 flex justify-end"><button type="button" disabled={!ready || busy} onClick={() => void save()} className={primaryButton}>{busy ? 'Saving…' : 'Record no-charge decision'}</button></div>
   </div>
 }
 
@@ -1146,7 +1199,7 @@ function ScanCheck({ scanned, reference, method }: { scanned: boolean; reference
       ? <span><span className="font-extrabold">REQ number typed.</span> {reference} matches. It is flagged in the audit log.</span>
       : scanned
         ? <span><span className="font-extrabold">Slip scanned.</span> {reference} matches.</span>
-        : <span><span className="font-extrabold">Scan the slip</span> ({reference}) in the Scan slip box, or type the REQ number if the scanner is not working.</span>}
+        : <span><span className="font-extrabold">Scan the slip for {reference}</span> in the Scan slip box above. If the scanner is not working, type the REQ number instead.</span>}
   </div>
 }
 
@@ -1189,7 +1242,7 @@ function DueLine({ request, now }: { request: ServiceRequest; now: number }) {
   const overdue = isOverdue(request, now)
   return <div className={`mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-xs font-semibold ${overdue ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-slate-200 bg-white text-slate-700'}`}>
     <span><span className="font-extrabold">Due:</span> {dueLabel(request)}</span>
-    {overdue && <span className="rounded-full bg-rose-600 px-2.5 py-1 text-[0.62rem] font-extrabold text-white">Overdue · reminder sent daily</span>}
+    {overdue && <span className="rounded-full bg-rose-600 px-2.5 py-1 text-[0.62rem] font-extrabold text-white">Overdue · the requester gets a reminder about once a day</span>}
   </div>
 }
 
@@ -1198,34 +1251,24 @@ function FacilitySummary({ request, now }: { request: ServiceRequest; now: numbe
   const purpose = formText(request.formData.purpose)
   const remarks = formText(request.formData.remarks)
   const itemCount = hasItems(request) ? unitsOf(request.assets) : equipmentOf(request).reduce((total, row) => total + (Number(row.quantity) || 0), 0)
-  const facts: Array<[string, string]> = [
-    ['Date needed', dateOf(request) ? formatDate(dateOf(request)) : 'Not set'],
-    ['Time', startOf(request) && endOf(request) ? `${startOf(request)} – ${endOf(request)}` : 'Not set'],
-    ['Venue', venueOf(request) || 'Not set'],
-    ['Participants', participantsOf(request)],
-    ['Nature', natureOf(request)],
-    ['Items', itemCount > 0 ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : 'Venue only'],
-  ]
   return <div>
     <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
       <div className="min-w-0">
         <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.14em] text-blue-700">{request.referenceNo}</p>
         <h3 className="mt-1 text-lg font-black text-slate-900">{requesterName(request)}</h3>
-        <p className="mt-1 text-xs font-semibold text-slate-600">{[formText(request.formData.requesterEmployeeCode), formText(request.formData.departmentOrganization) || 'Department not set'].filter(Boolean).join(' · ')}</p>
-        <p className="mt-0.5 text-[0.65rem] text-slate-500">{request.requesterEmail} · Submitted {formatDateTime(request.createdAt)}</p>
+        <p className="mt-0.5 text-xs font-semibold text-slate-600">{[formText(request.formData.requesterEmployeeCode), formText(request.formData.departmentOrganization) || 'Department not set'].filter(Boolean).join(' · ')}</p>
+        <p className="mt-0.5 text-[0.65rem] text-slate-500">{request.requesterEmail}</p>
       </div>
       <span className={`rounded-full px-2.5 py-1.5 text-[0.62rem] font-extrabold ${chip.tone}`}>{chip.label}</span>
     </div>
-    <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-      {facts.map(([label, value]) => <div key={label} className="min-w-0 rounded-lg border border-slate-100 bg-white p-2.5">
-        <dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt>
-        <dd className="mt-1 wrap-break-word text-xs font-semibold text-slate-700">{value}</dd>
-      </div>)}
-    </dl>
-    <div className="mt-2 rounded-xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm shadow-slate-200/60">
-      <p className="text-[0.68rem] leading-relaxed text-slate-700"><span className="font-extrabold text-slate-500">Activity: </span>{formText(request.formData.activity) || 'Not set'}</p>
-      {purpose && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-700"><span className="font-extrabold text-slate-500">Purpose: </span>{purpose}</p>}
-      {remarks && <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-600"><span className="font-extrabold text-slate-500">Remarks: </span>{remarks}</p>}
+    <div className="mt-2 rounded-xl border border-blue-100 bg-white px-3.5 py-3">
+      <p className="text-sm font-black leading-snug text-slate-900">{formText(request.formData.venue) || 'Venue not set'} <span className="font-semibold text-slate-400">·</span> {dateOf(request) ? formatDate(dateOf(request)) : 'Date not set'} <span className="font-semibold text-slate-400">·</span> {timeRangeOf(request) || 'Time not set'}</p>
+      <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">{participantsOf(request)} <span className="text-slate-300">·</span> {natureOf(request)} <span className="text-slate-300">·</span> {itemCount > 0 ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : 'Venue only'}</p>
+    </div>
+    <div className="mt-2 space-y-1 text-xs leading-relaxed text-slate-700">
+      <p><span className="font-extrabold text-slate-500">Activity: </span>{formText(request.formData.activity) || 'Not set'}</p>
+      {purpose && <p><span className="font-extrabold text-slate-500">Purpose: </span>{purpose}</p>}
+      {remarks && <p className="text-slate-600"><span className="font-extrabold text-slate-500">Remarks: </span>{remarks}</p>}
     </div>
   </div>
 }

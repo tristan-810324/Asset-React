@@ -23,7 +23,6 @@ router.post('/mine/:id/respond', requireRole('BORROWER'), requestsController.res
 router.post('/mine/:id/return', requireRole('BORROWER'), requestsController.requestReturn);
 router.post('/mine/:id/confirm-service', requireRole('BORROWER'), requestsController.confirmMyService);
 router.post('/mine/:id/reopen-service', requireRole('BORROWER'), requestsController.reopenMyService);
-router.get('/mine/:id/facility-damage', requireRole('BORROWER'), requestsController.getMyFacilityDamage);
 
 router.get('/service-work-orders', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.listWorkOrders);
 router.get('/service-work-orders/:id', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.getWorkOrder);
@@ -45,9 +44,9 @@ router.get('/purchase-requisitions/:id/issuance-details', requireRole('GSO_STAFF
 router.post('/facility-slips/print', requireRole('GSO_STAFF'), requestsController.recordFacilitySlipPrints);
 router.post('/:id/slip/reprint', requireRole('GSO_STAFF'), requestsController.reprintFacilitySlip);
 router.patch('/:id/assets/:assetId/settlement', requireRole('GSO_STAFF'), requestsController.settleFacilityItem);
+router.get('/facility-finance-report', requireRole('GSO_STAFF', 'IT_ADMIN'), requestsController.getFacilityFinanceReport);
+router.patch('/facility-repairs/:assetId', requireRole('GSO_STAFF', 'IT_ADMIN'), requestsController.resolveFacilityRepair);
 router.patch('/:id/damage-settlement', requireRole('GSO_STAFF'), requestsController.saveFacilityDamageDecision);
-router.post('/:id/damage-settlement/payment-link', requireRole('GSO_STAFF'), requestsController.createFacilityDamagePaymentLink);
-router.post('/:id/damage-settlement/cancel-link', requireRole('GSO_STAFF'), requestsController.cancelFacilityDamagePaymentLink);
 
 router.get('/', requireRole('GSO_STAFF'), requestsController.listAll);
 router.get('/:id', requireRole('GSO_STAFF'), requestsController.getForGso);

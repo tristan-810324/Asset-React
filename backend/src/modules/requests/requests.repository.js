@@ -1,7 +1,7 @@
 const pool = require('../../config/db');
 const { getAvailableQuantity, refreshInventoryStatus } = require('../inventory/inventory.stock');
 const { staffRouteOptions, nextRequisitionStatus, nameMatch } = require('./requisition-routing');
-const { hasUnsettledItems, recordFacilityReturn } = require('./facility-flow.repository');
+const { recordFacilityReturn } = require('./facility-flow.repository');
 const serviceWorkOrdersRepository = require('./service-work-orders.repository');
 
 const httpError = (status, message) => Object.assign(new Error(message), { status });
@@ -57,6 +57,10 @@ const REQUEST_SELECT = `
              'lostQuantity', asset.lost_quantity,
              'returnedByUserId', asset.returned_by_user_id::TEXT,
              'settlementStatus', asset.settlement_status,
+             'writeOffReason', asset.write_off_reason,
+             'writeOffDecision', asset.write_off_decision,
+             'writeOffEstimatedValue', asset.write_off_estimated_value,
+             'writeOffAt', asset.write_off_at,
              'settlementNote', asset.settlement_note,
              'settledAt', asset.settled_at,
              'settledBy', (SELECT settler.name FROM users AS settler WHERE settler.id = asset.settled_by_user_id)
@@ -65,31 +69,6 @@ const REQUEST_SELECT = `
              JOIN item_catalog AS item ON item.id = asset.item_id
             WHERE asset.request_id = request.id
          ), '[]'::json) AS assets,
-         (
-           SELECT json_build_object(
-             'id', settlement.id::TEXT,
-             'requestId', settlement.request_id::TEXT,
-             'resolution', settlement.resolution,
-             'reason', settlement.reason,
-             'amountCentavos', settlement.amount_centavos,
-             'currency', settlement.currency,
-             'status', settlement.status,
-             'decidedAt', settlement.assessed_at,
-             'assessedBy', (SELECT assessor.name FROM users AS assessor WHERE assessor.id = settlement.assessed_by_user_id),
-             'linkId', settlement.paymongo_link_id,
-             'checkoutUrl', settlement.paymongo_checkout_url,
-             'linkReference', settlement.paymongo_reference_number,
-             'linkCreatedAt', settlement.link_created_at,
-             'linkCreatedBy', (SELECT creator.name FROM users AS creator WHERE creator.id = settlement.link_created_by_user_id),
-             'paymentId', settlement.paymongo_payment_id,
-             'paidAt', settlement.paid_at,
-             'updatedAt', settlement.updated_at,
-             'facilityAssetIds', settlement.facility_asset_ids
-           )
-             FROM loss_damage_settlements AS settlement
-            WHERE settlement.request_id = request.id
-              AND settlement.facility_asset_ids IS NOT NULL
-         ) AS "facilityDamageSettlement",
          COALESCE((
            SELECT json_agg(json_build_object(
              'id', event.id,
@@ -226,7 +205,7 @@ async function listAssets({ includeUnstocked = false } = {}) {
             item.unit_of_measure AS "unitOfMeasure",
             item.tracking_mode AS "trackingMode",
             item.issue_behavior AS "issueBehavior",
-            GREATEST(item.quantity - COALESCE(employee_usage.active_quantity, 0) - COALESCE(borrower_usage.active_quantity, 0), 0)::INTEGER AS "availableQuantity"
+            GREATEST(item.quantity - COALESCE(employee_usage.active_quantity, 0) - COALESCE(borrower_usage.active_quantity, 0) - COALESCE(repair_usage.repair_quantity, 0), 0)::INTEGER AS "availableQuantity"
        FROM item_catalog AS item
        LEFT JOIN LATERAL (
          SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
@@ -238,12 +217,21 @@ async function listAssets({ includeUnstocked = false } = {}) {
           WHERE issue.item_id = item.id AND issue.status IN ('Pending', 'Issued')
        ) AS employee_usage ON TRUE
        LEFT JOIN LATERAL (
-         SELECT COALESCE(SUM(asset.quantity), 0) AS active_quantity
+         SELECT COALESCE(SUM(asset.quantity - CASE WHEN request.status = 'For Repair' THEN COALESCE(asset.returned_quantity, 0) ELSE 0 END), 0) AS active_quantity
            FROM service_request_assets AS asset
            JOIN service_requests AS request ON request.id = asset.request_id
           WHERE asset.item_id = item.id
             AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')
        ) AS borrower_usage ON TRUE
+       -- Same rule as the Item Master: units waiting in To Be Repaired are held, tagged units count their own repair state.
+       LEFT JOIN LATERAL (
+         SELECT CASE WHEN COUNT(tag.id) = 0 THEN item.repair_quantity
+                     ELSE COUNT(tag.id) FILTER (WHERE tag.custody_status = 'Available' AND tag.lifecycle_status <> 'Disposed'
+                                                  AND tag.condition IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'))
+                END AS repair_quantity
+           FROM asset_unit_tags AS tag
+          WHERE tag.item_id = item.id
+       ) AS repair_usage ON TRUE
       WHERE (item.quantity > 0 OR $1::BOOLEAN)
         AND item.condition NOT IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
       ORDER BY lower(COALESCE(NULLIF(item.item_name, ''), item.description)), item.id`,
@@ -1180,9 +1168,6 @@ async function createRequest({ requestType, formData, userId }) {
     }
 
     if (requestType === 'FACILITY_USE' && formData.equipment.length) {
-      if (await hasUnsettledItems(client, userId)) {
-        throw Object.assign(new Error('You have missing items that are not settled yet. Settle them with GSO before you request equipment again.'), { status: 409 });
-      }
       // Each equipment row becomes an Item Master record. Its name, code, description and unit come from the record, not the form.
       formData = { ...formData, equipment: await facilityEquipmentRows(client, formData.equipment) };
     }

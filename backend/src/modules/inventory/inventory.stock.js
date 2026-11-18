@@ -51,7 +51,8 @@ async function getItemStockUsage(queryable, itemId) {
         WHERE item_id = $1 AND status IN ('Pending', 'Issued')
      ), borrower_usage AS (
        SELECT COALESCE(SUM(asset.quantity) FILTER (WHERE request.status IN ('Approved', 'Ready for Pickup')), 0)::INTEGER AS reserved_quantity,
-              COALESCE(SUM(asset.quantity) FILTER (WHERE request.status IN ('Issued', 'Return Requested', 'For Repair')), 0)::INTEGER AS issued_quantity
+              (COALESCE(SUM(asset.quantity) FILTER (WHERE request.status IN ('Issued', 'Return Requested')), 0)
+                + COALESCE(SUM(asset.quantity - COALESCE(asset.returned_quantity, 0)) FILTER (WHERE request.status = 'For Repair'), 0))::INTEGER AS issued_quantity
          FROM service_request_assets AS asset
          JOIN service_requests AS request ON request.id = asset.request_id
         WHERE asset.item_id = $1

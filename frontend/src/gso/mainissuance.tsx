@@ -2063,9 +2063,6 @@ export default function MainIssuance() {
                   </button>
                 </div>}
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <a href="/gso/issuance" className="rounded-lg border border-emerald-400 bg-white px-3 py-2 text-xs font-extrabold text-emerald-900 hover:bg-emerald-100">
-                    View issuance records
-                  </a>
                   <a href="/gso/asset-labels" className="rounded-lg border border-emerald-400 bg-white px-3 py-2 text-xs font-extrabold text-emerald-900 hover:bg-emerald-100">
                     View all asset labels
                   </a>

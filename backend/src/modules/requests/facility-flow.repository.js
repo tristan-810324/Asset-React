@@ -24,11 +24,11 @@ async function recordFacilityReturn(client, { requestId, referenceNo, lines, use
     const saved = await client.query(
       `UPDATE service_request_assets
           SET returned_quantity = $3, lost_quantity = $4, condition_in = $5, returned_at = NOW(),
-              returned_by_user_id = $6, damaged_quantity = $7,
+              returned_by_user_id = $6, damaged_quantity = $7, repair_owner = $8,
               settlement_status = CASE WHEN $4::INTEGER > 0 OR ($7::INTEGER > 0 AND $5 = 'Unserviceable') THEN 'Pending' END
         WHERE request_id = $1 AND id = $2 AND returned_at IS NULL
         RETURNING item_id, unit_of_measure`,
-      [requestId, line.assetId, line.returned, line.lost, line.condition, userId, line.damaged || 0],
+      [requestId, line.assetId, line.returned, line.lost, line.condition, userId, line.damaged || 0, line.repairOwner || null],
     );
     if (saved.rowCount !== 1) throw httpError(409, 'This return was already recorded. Refresh the list.');
     const { item_id: itemId, unit_of_measure: unit } = saved.rows[0];
@@ -142,17 +142,29 @@ async function settleFacilityItem({ requestId, assetId, status, note, userId }) 
   }
 }
 
-// A requester with a missing item that is not settled cannot request equipment again.
-async function hasUnsettledItems(queryable, userId) {
-  const result = await (queryable || pool).query(
-    `SELECT 1
+// Finance report: every facility item that came back (lost, damaged, or returned clean), with the requester who must account for it.
+async function listFinanceReport() {
+  const result = await pool.query(
+    `SELECT request.id AS "requestId", request.reference_no AS "referenceNo", request.status AS "requestStatus",
+            requester.name AS "accountableName", requester.email AS "accountableEmail",
+            item.item_code AS "itemCode", COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
+            asset.quantity, asset.returned_quantity AS "returnedQuantity", asset.lost_quantity AS "lostQuantity",
+            asset.damaged_quantity AS "damagedQuantity", asset.condition_in AS "condition",
+            asset.id AS "assetId", asset.repair_owner AS "repairOwner",
+            asset.repaired_quantity AS "repairedQuantity", asset.unserviceable_quantity AS "unserviceableQuantity",
+            asset.settlement_status AS "settlementStatus", asset.settlement_note AS "settlementNote",
+            asset.write_off_decision AS "writeOffDecision", asset.write_off_estimated_value AS "writeOffEstimatedValue",
+            asset.write_off_reason AS "writeOffReason",
+            asset.issued_at AS "issuedAt", asset.returned_at AS "returnedAt"
        FROM service_request_assets AS asset
        JOIN service_requests AS request ON request.id = asset.request_id
-      WHERE request.requested_by_user_id = $1 AND asset.settlement_status = 'Pending'
-      LIMIT 1`,
-    [userId],
+       JOIN users AS requester ON requester.id = request.requested_by_user_id
+       JOIN item_catalog AS item ON item.id = asset.item_id
+      WHERE request.request_type = 'FACILITY_USE' AND (asset.lost_quantity > 0 OR asset.damaged_quantity > 0 OR asset.returned_at IS NOT NULL)
+      ORDER BY request.created_at DESC, request.id DESC
+      LIMIT 10000`,
   );
-  return result.rowCount > 0;
+  return result.rows;
 }
 
 // The first print is kept; later prints are reprints, which need a reason (see the service).
@@ -195,10 +207,78 @@ async function claimOverdueFacilityReminders(limit = 10) {
   return result.rows.map((row) => row.id);
 }
 
+// Adds GSO's check counts to a GSO-owned Needs Repair row. The row must still have units waiting; the CHECK in
+// migration 013 refuses counts above what is damaged, so a double save cannot push it past its total.
+// Moves the stock too: repaired units leave the repair hold and go back to available stock; unserviceable units leave
+// the hold and are written off from the item's quantity. Both are logged, and the To Be Repaired history reads the counts.
+// shortcut: individually tracked units are not moved here, only quantity-tracked stock; upgrade when a unit-tracked item needs the check.
+async function recordRepairCounts({ assetId, repaired, unserviceable, userId, writeOff = null }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const row = (await client.query(
+      `UPDATE service_request_assets
+          SET repaired_quantity = repaired_quantity + $2::INTEGER, unserviceable_quantity = unserviceable_quantity + $3::INTEGER,
+              write_off_reason = CASE WHEN $3::INTEGER > 0 THEN $4 ELSE write_off_reason END,
+              write_off_decision = CASE WHEN $3::INTEGER > 0 THEN $5 ELSE write_off_decision END,
+              write_off_estimated_value = CASE WHEN $3::INTEGER > 0 THEN $6::NUMERIC ELSE write_off_estimated_value END,
+              write_off_by_user_id = CASE WHEN $3::INTEGER > 0 THEN $7::BIGINT ELSE write_off_by_user_id END,
+              write_off_at = CASE WHEN $3::INTEGER > 0 THEN NOW() ELSE write_off_at END
+        WHERE id = $1 AND condition_in = 'Needs Repair' AND damaged_quantity > 0 AND repair_owner IN ('GSO', 'ITSS')
+          AND damaged_quantity - repaired_quantity - unserviceable_quantity >= ($2::INTEGER + $3::INTEGER)
+        RETURNING request_id AS "requestId", item_id AS "itemId", unit_of_measure AS "unit", repair_owner AS "repairOwner"`,
+      [assetId, repaired, unserviceable, writeOff?.reason ?? null, writeOff?.decision ?? null, writeOff?.estimatedValue ?? null, userId],
+    )).rows[0];
+    if (!row) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const item = await lockItem(client, row.itemId);
+    if (item && item.tracking_mode !== 'individual') {
+      const hold = Math.max(Number(item.repair_quantity || 0) - repaired - unserviceable, 0);
+      const quantity = Math.max(Number(item.quantity) - unserviceable, 0);
+      await client.query('UPDATE item_catalog SET repair_quantity = $2, quantity = $3 WHERE id = $1', [row.itemId, hold, quantity]);
+      await auditRepository.writeLog(client, {
+        entityType: 'item',
+        entityKey: item.item_code,
+        entityName: item.name,
+        action: 'returned',
+        reason: `GSO repair check: ${repaired} ${row.unit} repaired and back to stock; ${unserviceable} ${row.unit} unserviceable and written off.`,
+        oldValues: { quantity: Number(item.quantity), repairQuantity: Number(item.repair_quantity || 0) },
+        newValues: { quantity, repairQuantity: hold, repaired, unserviceable },
+        changedByUserId: userId,
+        itemId: row.itemId,
+        requestId: row.requestId,
+      });
+      await refreshInventoryStatus(client, row.itemId);
+    }
+    await client.query('COMMIT');
+    return row;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// How many damaged items in this request still wait for the GSO check.
+async function countOpenRepairs(requestId) {
+  const result = await pool.query(
+    `SELECT COALESCE(SUM(damaged_quantity - repaired_quantity - unserviceable_quantity), 0)::INTEGER AS n
+       FROM service_request_assets
+      WHERE request_id = $1 AND condition_in = 'Needs Repair' AND damaged_quantity > 0`,
+    [requestId],
+  );
+  return result.rows[0].n;
+}
+
 module.exports = {
   recordFacilityReturn,
   settleFacilityItem,
-  hasUnsettledItems,
+  listFinanceReport,
   recordSlipPrints,
   claimOverdueFacilityReminders,
+  recordRepairCounts,
+  countOpenRepairs,
 };

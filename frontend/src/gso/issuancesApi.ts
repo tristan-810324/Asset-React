@@ -28,6 +28,8 @@ export type EmployeeIssuanceRecord = {
     confirmationMethod?: ConfirmationMethod | null
     repairOutcome?: 'Repaired' | 'Written Off' | null
     repairResolvedAt?: string | null
+    // Who checks the unit: GSO, or ITSS (then it lives on the IT Admin repair page, not GSO's).
+    repairOwner?: 'GSO' | 'ITSS' | null
     approvalAction?: ApprovalAction | null
     approvalDecisionNote?: string | null
   }>
@@ -301,6 +303,7 @@ export type AssetTagInspectionRecord = {
   itemId: string
   itemCode: string
   itemName: string
+  itemDescription?: string | null
   employeeCode: string | null
   employeeName: string | null
   borrowerHistory?: Array<{
@@ -486,6 +489,8 @@ export async function confirmTaggedAssetReturn(tagCode: string, input: {
   condition: string
   reason: string
   entryMethod: 'scan' | 'typed'
+  // Who checks a unit that needs repair: GSO, or ITSS (IT Admin gets a notice).
+  repairOwner?: 'GSO' | 'ITSS'
   returnedByName?: string
   // Required when the unit has a serial on file, read off the unit itself.
   serialLast4?: string
@@ -663,4 +668,16 @@ export async function submitReturnDecision(token: string, action: 'approve' | 'r
     body: JSON.stringify({ token, action }),
   })
   return result.request
+}
+
+// GSO repair check on a tagged unit. Repaired puts it back in stock; Written Off needs the reason and the waive-or-charge decision.
+export async function resolveTaggedRepair(
+  returnId: string,
+  input: { outcome: 'Repaired' } | { outcome: 'Written Off'; writeOffReason: string; writeOffDecision: 'WAIVED' | 'CHARGED'; writeOffEstimatedValue: number | null },
+) {
+  const result = await apiRequest<{ result: { returnId: string; outcome: string; itemName: string; tagCode: string | null } }>(
+    `/issuances/returns/${encodeURIComponent(returnId)}/repair`,
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+  return result.result
 }

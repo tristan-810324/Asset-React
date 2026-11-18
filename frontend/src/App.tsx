@@ -29,11 +29,11 @@ import GsoPurchaseRequisitions from './gso/purchaserequisitions'
 import GsoProcurement from './gso/procurement'
 import ViewFacilities from './gso/viewfacilities'
 import FacilityRequests from './gso/facilityrequest'
-import IssuanceRecord from './gso/issuancerecord'
 import GsoHeadIssuanceRecord from './gsohead/issuancerecord'
 import ReturnItems from './gso/returnitems'
 import ToRepaired from './gso/torepaired'
 import LossDamageCases from './gso/lossdamagecases'
+import GsoHistory from './gso/history'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
 import Notifications from './gso/notifications'
@@ -46,6 +46,7 @@ import GsoProfile from './gso/profilesettings'
 import ServiceWorkboard from './gso/serviceworkboard'
 import ITSSSupportQueue from './itstaff/itsssupportqueue'
 import AdminSupportQueue from './admin/supportqueue'
+import AdminRepairMaintenance from './admin/repairmaintenance'
 
 
 
@@ -140,6 +141,9 @@ export default function App() {
   if (path === '/admin/support-queue') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminSupportQueue /></ProtectedDashboard>
   }
+  if (path === '/admin/repair') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminRepairMaintenance /></ProtectedDashboard>
+  }
   if (path === '/admin/audit-logs') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AuditLogs /></ProtectedDashboard>
   }
@@ -204,9 +208,6 @@ export default function App() {
   if (path === '/gso/employees') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><EmployeeMasterData /></ProtectedDashboard>
   }
-  if (path === '/gso/issuance') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><IssuanceRecord /></ProtectedDashboard>
-  }
   if (path === '/gso/main-issuance') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><MainIssuance /></ProtectedDashboard>
   }
@@ -228,6 +229,9 @@ export default function App() {
   }
   if (path === '/gso/loss-damage-cases') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><LossDamageCases /></ProtectedDashboard>
+  }
+  if (path === '/gso/history') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoHistory /></ProtectedDashboard>
   }
   if (path === '/gso/facility-requests') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><FacilityRequests /></ProtectedDashboard>
