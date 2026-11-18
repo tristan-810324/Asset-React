@@ -73,6 +73,8 @@ type InventoryItem = {
   conditionTone: string
   quantity: string
   availableQuantity: string
+  // Units in To Be Repaired that have not had their check yet.
+  repairQuantity?: number
   unit: string
   assignedTo: string
   status: string
