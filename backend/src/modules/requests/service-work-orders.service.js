@@ -426,6 +426,34 @@ async function completeWork(idValue, input, user) {
   return workOrder;
 }
 
+// The assigned staff member says the job is not finished yet and why. The job stays In Progress; the reason goes to the
+// job history, the audit log, and the requester (user's request, 2026-11-20).
+async function notFinishWork(idValue, input, user) {
+  const id = requestId(idValue);
+  const reason = validateNote({ note: input?.reason }, 'Reason', 2000, { required: true });
+  // The expected finish date is required, must be a real calendar date, and cannot be in the past (Manila time).
+  const expectedDate = String(input?.expectedDate || '');
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(expectedDate) ? new Date(`${expectedDate}T00:00:00Z`) : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== expectedDate) invalid('Choose the expected finish date.');
+  if (expectedDate < toManilaDate()) invalid('The expected finish date cannot be in the past.');
+  const result = await repository.withLockedWorkOrder(id, async (client, current) => {
+    assertCurrentTeamAccess(user, current);
+    assertAssignedTo(user, current);
+    if (current.status !== 'In Progress') invalid('Only work in progress can be marked not finished.', 409);
+    await repository.insertHistory(client, {
+      requestId: id,
+      previousStatus: current.status,
+      status: 'In Progress',
+      note: `Not finished yet. Reason: ${reason}. Expected finish: ${expectedDate}.`,
+      changedByUserId: user.id,
+    });
+  });
+  const workOrder = presentWorkOrder(result.workOrder);
+  await notifyRequester(workOrder, 'Work is still in progress', `The team is still working on your request. Reason: ${reason}. Expected to finish by ${expectedDate}.`, `service-not-finished:${id}:${Date.now()}`);
+  await writeAudit(workOrder, user, { reason: `Service work not finished yet. Reason: ${reason}. Expected finish: ${expectedDate}.`, oldValues: { status: result.current.status } });
+  return workOrder;
+}
+
 async function takeOverWorkOrder(idValue, input, user) {
   const id = requestId(idValue);
   const note = validateNote(input, 'Takeover note', 1000, { required: true });
@@ -646,6 +674,7 @@ module.exports = {
   forwardWorkOrder,
   startWork,
   completeWork,
+  notFinishWork,
   takeOverWorkOrder,
   rejectWorkOrder,
   confirmService,

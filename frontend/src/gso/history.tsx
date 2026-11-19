@@ -107,11 +107,17 @@ async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
     return [...facilityRows, ...borrowRows]
   }
   if (tab === 'service') {
-    // Closed jobs of the GSO Service Workboard and the ITSS Support Queue. A queue the user cannot open is skipped.
-    const results = await Promise.allSettled((['GSO', 'ITSS'] as const).map((team) => listServiceWorkOrders({ team, queue: 'closed' })))
+    // Every job on the GSO Service Workboard and the ITSS Support Queue, with who claimed it and when it closed.
+    // A queue the user cannot open is skipped. The status filter narrows the list.
+    const results = await Promise.allSettled((['GSO', 'ITSS'] as const).map((team) => listServiceWorkOrders({ team, limit: 200 })))
     return results
       .flatMap((result) => (result.status === 'fulfilled' ? result.value.workOrders : []))
-      .map((order) => ({ id: `svc-${order.id}`, date: order.completedAt || order.updatedAt || null, reference: order.referenceNo, detail: `${order.title} · ${order.routeTeam}`, person: order.requester?.name || '—', status: order.status }))
+      .map((order) => {
+        const claimed = typeof order.claimedBy === 'string' ? order.claimedBy : order.claimedBy?.name
+        const closed = order.closedAt ? `Closed ${formatDateTime(order.closedAt)}` : ''
+        const detail = [order.title, order.routeTeam, claimed ? `Claimed by ${claimed}` : 'Not claimed', closed].filter(Boolean).join(' · ')
+        return { id: `svc-${order.id}`, date: order.closedAt || order.completedAt || order.updatedAt || null, reference: order.referenceNo, detail, person: order.requester?.name || '—', status: order.status }
+      })
   }
   if (tab === 'unserviceable') {
     // Every facility item that could not be repaired, whether it came back Unserviceable or was checked as Unserviceable.
@@ -123,7 +129,9 @@ async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
         const money = value > 0 ? ` · ₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : ''
         // A waived write-off shows the GSO staff who checked it, taken from the reason ("... Checked by: <name>").
         const checkedBy = writeOffStatus(row) === 'Waived' ? ` · Checked by ${(row.writeOffReason || '').match(/Checked by: (.+)$/)?.[1] || 'not recorded'}` : ''
-        return facilityHistoryRow(row, 'uns', index, `${unserviceableCount(row)} unserviceable${money}${checkedBy}`, writeOffStatus(row))
+        // Only the unserviceable units are charged; the damaged units that were repaired are not.
+        const breakdown = row.damagedQuantity > 0 ? ` (of ${row.damagedQuantity} damaged, ${row.repairedQuantity} repaired)` : ''
+        return facilityHistoryRow(row, 'uns', index, `${unserviceableCount(row)} unserviceable${breakdown}${money}${checkedBy}`, writeOffStatus(row))
       })
   }
   if (tab === 'repair') {

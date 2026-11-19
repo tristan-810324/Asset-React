@@ -79,7 +79,6 @@ const stepStyles: Record<StepStatus, { badge: string; label: string; suffix: str
 }
 
 const primaryButton = 'rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50'
-const successButton = 'rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50'
 const quietButton = 'rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-50'
 const inputClass = 'h-10 w-full rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-900 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100'
 // Pop-up styles shared with the Item Master Data pop-ups, so every GSO pop-up looks the same.
@@ -1004,13 +1003,6 @@ function ReviewPanel({ request, clashing, stockById, scanned, entryMethod, now, 
       </section>
     </>}
 
-    {request.status === 'Approved' && !hasItems(request) && <section className="mt-5 border-t border-slate-200 pt-5">
-      <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title="Close the request" description="No items to release. Mark it completed after the activity." />
-      <ActionBar error={error}>
-        <button type="button" disabled={busy} onClick={() => void changeStatus('Completed', `${reference} completed.`)} className={successButton}>{busy ? 'Saving…' : 'Mark as completed'}</button>
-      </ActionBar>
-    </section>}
-
     {request.status === 'Approved' && hasItems(request) && !request.slipPrintedAt && <section className="mt-5 border-t border-slate-200 pt-5">
       <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title="Print the slip" description="Print the 50 × 30 mm slip and attach it to the items." />
       <div className="mt-4 flex flex-wrap items-start gap-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3.5">
@@ -1055,15 +1047,12 @@ function ReviewPanel({ request, clashing, stockById, scanned, entryMethod, now, 
     {request.status === 'Returned' && <section className="mt-5 border-t border-slate-200 pt-5">
       {pending.length > 0
         ? <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title={pendingDamage.length > 0 ? 'Resolve returned item issues' : 'Settle missing items'} description={pendingDamage.length > 0 ? 'Resolve any unserviceable returned item, then settle missing items.' : 'Choose how each missing item was settled.'} />
-        : <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title="Close the request" description="Everything is back or settled. Mark the request completed." />}
+        : <StepHeader step={2} total={2} status="current" titleId={`facility-step-${request.id}`} title="Everything is back or settled" description="The request closes by itself." />}
       {pendingDamage.length > 0 && <div className="mt-4"><DamageSettlementRow request={request} assets={pendingDamage} onSettled={onSaved} /></div>}
       {pendingMissingAssets(request).length > 0 && <div className="mt-4 space-y-3">
         {pendingMissingAssets(request).map((asset) => <SettleRow key={asset.id} request={request} asset={asset} onSettled={onSaved} />)}
       </div>}
       <div className="mt-4"><ReturnedList assets={request.assets} /></div>
-      <ActionBar error={error}>
-        <button type="button" disabled={busy} onClick={() => void changeStatus('Completed', `${reference} completed.`)} className={successButton}>{busy ? 'Saving…' : 'Mark as completed'}</button>
-      </ActionBar>
     </section>}
   </>
 }
@@ -1225,7 +1214,9 @@ function ReturnedList({ assets }: { assets: RequestAsset[] }) {
       const lost = Number(asset.lostQuantity || 0)
       const damaged = Number(asset.damagedQuantity || 0)
       return <li key={asset.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
-        <span className="min-w-0"><span className="block truncate text-xs font-extrabold text-slate-900">{asset.itemName}</span><span className="block text-[0.68rem] text-slate-500">{asset.itemCode} · Returned {asset.returnedQuantity ?? 0} of {asset.quantity}</span></span>
+        <span className="min-w-0"><span className="block truncate text-xs font-extrabold text-slate-900">{asset.itemName}</span><span className="block text-[0.68rem] text-slate-500">{asset.itemCode} · Returned {asset.returnedQuantity ?? 0} of {asset.quantity}</span>
+          {damaged > 0 && <span className="mt-0.5 block text-[0.68rem] font-semibold text-slate-600">{damaged} damaged · {Number(asset.repairedQuantity || 0)} repaired · {Number(asset.unserviceableQuantity || 0)} unserviceable · {Math.max(0, damaged - Number(asset.repairedQuantity || 0) - Number(asset.unserviceableQuantity || 0))} still waiting{asset.repairOwner ? ` · repair by ${asset.repairOwner}` : ''}</span>}
+        </span>
         <span className="flex flex-wrap gap-1.5">
           {damaged > 0 && <span className={`rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${asset.settlementStatus === 'Pending' ? 'bg-amber-50 text-amber-800' : 'bg-slate-100 text-slate-700'}`}>{damaged} damaged · {asset.conditionIn}{asset.settlementStatus ? ` · ${asset.settlementStatus}` : ''}</span>}
           {lost > 0 && <span className={`rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${asset.settlementStatus === 'Pending' ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-700'}`}>

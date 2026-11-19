@@ -18,6 +18,10 @@ export type RequestAsset = {
   returnedQuantity?: number
   // How many of the returned units are damaged; conditionIn holds the damage type when this is above 0.
   damagedQuantity?: number
+  // Repair outcome of the damaged units: repaired + unserviceable + still waiting = damagedQuantity.
+  repairedQuantity?: number
+  unserviceableQuantity?: number
+  repairOwner?: 'GSO' | 'ITSS' | null
   lostQuantity?: number
   returnedByUserId?: string | null
   settlementStatus?: FacilitySettlement | 'Pending' | null

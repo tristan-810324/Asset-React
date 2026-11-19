@@ -244,6 +244,11 @@ export function completeServiceWorkOrder(
   return workOrderAction(id, 'complete', payload)
 }
 
+// The job is not finished yet: the reason is recorded and the job stays In Progress.
+export function notFinishServiceWorkOrder(id: string, reason: string, expectedDate: string) {
+  return workOrderAction(id, 'not-finished', { reason, expectedDate })
+}
+
 export function rejectServiceWorkOrder(id: string, reason: string) {
   return workOrderAction(id, 'reject', { reason: reason.trim() })
 }

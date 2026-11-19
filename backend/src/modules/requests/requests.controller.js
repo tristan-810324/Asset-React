@@ -151,13 +151,15 @@ const reopenMyService = asyncHandler(async (req, res) => {
 });
 
 const settleFacilityItem = asyncHandler(async (req, res) => {
-  const request = await facilityFlowService.settleFacilityItem(req.params.id, req.params.assetId, req.body, req.user);
+  const settled = await facilityFlowService.settleFacilityItem(req.params.id, req.params.assetId, req.body, req.user);
+  const request = await requestsService.completeFacilityIfSettled(settled, req.user);
   res.json({ success: true, data: { request } });
 });
 
 const saveFacilityDamageDecision = asyncHandler(async (req, res) => {
   const result = await facilityFlowService.saveFacilityDamageDecision(req.params.id, req.body, req.user);
-  res.json({ success: true, data: result });
+  const request = await requestsService.completeFacilityIfSettled(result.request, req.user);
+  res.json({ success: true, data: { ...result, request } });
 });
 
 const resolveFacilityRepair = asyncHandler(async (req, res) => {

@@ -5,6 +5,7 @@ import { SERVICE_CATEGORY_LABELS } from '../requesters/serviceWorkflow'
 import {
   claimServiceWorkOrder,
   completeServiceWorkOrder,
+  notFinishServiceWorkOrder,
   forwardServiceWorkOrder,
   getServiceWorkOrder,
   listServiceWorkOrders,
@@ -17,6 +18,7 @@ import {
   type ServiceWorkTeam,
   type WorkOrderAssignee,
   type WorkOrderChecklistItem,
+  type WorkOrderHistoryItem,
 } from './serviceWorkboardApi'
 
 type IconName = 'arrow' | 'calendar' | 'check' | 'clock' | 'close' | 'document' | 'info' | 'location' | 'search' | 'tool' | 'transfer' | 'user' | 'warning'
@@ -222,7 +224,7 @@ function dialogCopy(kind: DialogKind, otherLabel: string) {
   switch (kind) {
     case 'forward': return { heading: `Forward to ${otherLabel}`, description: 'Use this when the job belongs to the other team. It returns to the New Jobs queue there.', label: 'Handoff note (optional)', placeholder: 'What the other team should know.', required: false, submit: `Forward to ${otherLabel}` }
     case 'start': return { heading: 'Start work', description: 'The job moves to In Progress and the requester is told that work has started.', label: 'Start note (optional)', placeholder: 'e.g. Materials are on the way.', required: false, submit: 'Start work' }
-    case 'complete': return { heading: 'Mark work completed', description: 'Check each task you finished. The requester is then asked to confirm the result.', label: 'Completion note', placeholder: 'Describe what was done and what was tested.', required: true, submit: 'Mark completed' }
+    case 'complete': return { heading: 'Mark work completed', description: 'Confirm the job is finished. The requester is then asked to confirm the result.', label: '', placeholder: '', required: false, submit: 'Yes, mark completed' }
     case 'takeover': return { heading: 'Take over this job', description: 'The job moves to you. The reason stays in the job history.', label: 'Reason for taking over', placeholder: 'e.g. The assigned staff member is on leave.', required: true, submit: 'Take over job' }
     case 'reject': return { heading: 'Reject this job', description: 'Use this when the job is not for this team or cannot be done. The requester receives the reason.', label: 'Reason for rejection', placeholder: 'Explain why this job cannot be handled.', required: true, submit: 'Reject job' }
   }
@@ -244,12 +246,69 @@ function MetricCard({ label, value, note, icon }: { label: string; value: number
   )
 }
 
+// Activity entries are read into a short Taglish title, a colour, and the reason or expected date when there is one.
+type ActivityView = { title: string; tone: 'blue' | 'amber' | 'emerald' | 'rose' | 'slate'; icon: IconName; reason?: string; expected?: string; detail?: string }
+const TONE_DOT: Record<ActivityView['tone'], string> = { blue: 'bg-blue-600', amber: 'bg-amber-500', emerald: 'bg-emerald-600', rose: 'bg-rose-600', slate: 'bg-slate-400' }
+const STATUS_ACTIVITY: Record<string, ActivityView & { keepNote?: boolean }> = {
+  Submitted: { title: 'Submitted by requester', tone: 'slate', icon: 'document' },
+  'Under Review': { title: 'Under review by team', tone: 'blue', icon: 'document' },
+  'Needs Information': { title: 'Requested more information', tone: 'amber', icon: 'warning', keepNote: true },
+  'In Progress': { title: 'Work started', tone: 'blue', icon: 'check' },
+  'Awaiting Requester Confirmation': { title: 'Done, waiting for requester confirmation', tone: 'emerald', icon: 'check' },
+  Closed: { title: 'Job closed', tone: 'emerald', icon: 'check' },
+  Completed: { title: 'Job completed', tone: 'emerald', icon: 'check' },
+  Rejected: { title: 'Job declined', tone: 'rose', icon: 'close', keepNote: true },
+  Cancelled: { title: 'Cancelled by requester', tone: 'rose', icon: 'close', keepNote: true },
+}
+
+function activityOf(entry: WorkOrderHistoryItem): ActivityView {
+  const note = (entry.note || '').trim()
+  const pending = note.match(/^Not finished yet\. Reason: (.*?)(?:\. Expected finish: (\d{4}-\d{2}-\d{2}))?\.?$/)
+  if (pending) return { title: 'Not finished yet', tone: 'amber', icon: 'clock', reason: pending[1], expected: pending[2] }
+  if (/^Claimed by /i.test(note)) return { title: 'Claimed by staff', tone: 'blue', icon: 'user', detail: note.replace(/\.$/, '') }
+  const mapped = STATUS_ACTIVITY[entry.status ?? '']
+  if (mapped) return { ...mapped, detail: mapped.keepNote && note ? note : undefined }
+  return { title: 'Job updated', tone: 'slate', icon: 'clock', detail: note || undefined }
+}
+
+// The newest "not finished yet" entry, shown at the top of the job while the job is still In Progress.
+function PendingBanner({ order }: { order: ServiceWorkOrder }) {
+  if (order.status !== 'In Progress') return null
+  const latest = (order.history ?? []).slice().reverse().map(activityOf).find((view) => view.reason !== undefined)
+  if (!latest) return null
+  return (
+    <section className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4">
+      <p className="text-[0.62rem] font-extrabold uppercase tracking-widest text-amber-700">Not finished yet</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <DetailValue label="Reason" value={latest.reason} icon="warning" />
+        <DetailValue label="Expected finish" value={latest.expected ? dateText(latest.expected) : null} icon="calendar" />
+      </div>
+    </section>
+  )
+}
+
 function DetailValue({ label, value, icon }: { label: string; value?: string | null; icon: IconName }) {
   return (
     <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-slate-400"><Icon name={icon} className="h-3.5 w-3.5" /><span className="text-[0.58rem] font-extrabold uppercase tracking-widest">{label}</span></div>
       <p className="mt-1 truncate text-xs font-bold text-slate-800" title={value || undefined}>{value || 'Not set'}</p>
     </div>
+  )
+}
+
+function ActivityItem({ entry, latest }: { entry: WorkOrderHistoryItem; latest: boolean }) {
+  const view = activityOf(entry)
+  return (
+    <li className="relative flex gap-3">
+      <span className={`mt-3 h-3 w-3 shrink-0 rounded-full ring-4 ring-white ${latest ? 'bg-blue-600' : TONE_DOT[view.tone]}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1 rounded-xl border border-slate-100 bg-slate-50/70 px-3 py-2.5">
+        <p className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900"><Icon name={view.icon} className="h-3.5 w-3.5 text-slate-500" />{view.title}</p>
+        {view.reason && <div className="mt-2 rounded-lg border border-amber-200 bg-white px-2.5 py-2"><p className="text-[0.56rem] font-extrabold uppercase tracking-widest text-amber-700">Reason</p><p className="mt-0.5 text-xs font-semibold text-slate-800">{view.reason}</p></div>}
+        {view.expected && <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[0.62rem] font-extrabold text-amber-800 shadow-sm"><Icon name="calendar" className="h-3 w-3" />Expected finish {dateText(view.expected)}</p>}
+        {view.detail && <p className="mt-1.5 text-xs font-medium text-slate-600">{view.detail}</p>}
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 text-[0.62rem] font-semibold text-slate-400"><span>{entry.actorName || entry.changedBy || 'System'}</span><span aria-hidden="true">·</span><span>{dateText(entry.changedAt, true)}</span></p>
+      </div>
+    </li>
   )
 }
 
@@ -301,6 +360,17 @@ function JobCard({ order, viewerId, otherLabel, busy, onOpen, onButton }: {
   )
 }
 
+// Preset reasons for a complete job that is not finished yet. "Others" opens a text box.
+const OTHER_REASON = 'Others'
+const NOT_FINISHED_REASONS = [
+  'Waiting for spare parts',
+  'Waiting for materials or supplies',
+  'Waiting for approval or budget',
+  'Waiting for the requester (access or schedule)',
+  'Needs a special tool or outside service',
+  'The problem is bigger than expected',
+]
+
 function ActionDialogPanel({
   kind,
   order,
@@ -314,22 +384,33 @@ function ActionDialogPanel({
   order: ServiceWorkOrder
   otherLabel: string
   onDismiss: () => void
-  onSubmit: (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string }) => void
+  onSubmit: (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished: boolean; expectedDate: string }) => void
   busy: boolean
   error: string
 }) {
   const [note, setNote] = useState('')
   const [incompleteReason, setIncompleteReason] = useState('')
   const [tasks, setTasks] = useState(() => (order.checklist ?? []).map((task) => ({ ...task })))
+  // Complete dialog only: finished (send to the requester) or not finished yet (the reason is kept in the job history).
+  const [finished, setFinished] = useState(true)
+  const [reasonChoice, setReasonChoice] = useState('')
+  const [expectedDate, setExpectedDate] = useState('')
   const copy = dialogCopy(kind, otherLabel)
   const isComplete = kind === 'complete'
+  const notFinished = isComplete && !finished
   const allTasksDone = tasks.every((task) => task.completed)
-  const canSubmit = (!copy.required || Boolean(note.trim())) && (!isComplete || allTasksDone || Boolean(incompleteReason.trim()))
+  const otherReason = reasonChoice === OTHER_REASON
+  const reasonText = otherReason ? incompleteReason.trim() : reasonChoice
+  const todayKey = new Date().toLocaleDateString('en-CA')
+  const canSubmit = notFinished
+    ? Boolean(reasonText) && Boolean(expectedDate) && expectedDate >= todayKey
+    : (!copy.required || Boolean(note.trim())) && (!isComplete || allTasksDone || Boolean(incompleteReason.trim()))
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (!canSubmit || busy) return
-    onSubmit({ note: note.trim(), tasks, incompleteReason: incompleteReason.trim() })
+    // The completion note field was replaced by a yes/no confirmation; the backend still needs a note, so a fixed one is sent.
+    onSubmit({ note: isComplete && !notFinished ? 'Work finished.' : note.trim(), tasks, incompleteReason: notFinished ? reasonText : incompleteReason.trim(), finished: !notFinished, expectedDate })
   }
 
   return (
@@ -344,7 +425,15 @@ function ActionDialogPanel({
           <button type="button" disabled={busy} onClick={onDismiss} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700" aria-label="Close dialog"><Icon name="close" /></button>
         </div>
 
-        {isComplete && tasks.length > 0 && (
+        {isComplete && (
+          <div role="radiogroup" aria-label="Is the job finished?" className="mt-4 grid grid-cols-2 gap-2">
+            {[{ value: true, label: 'Finished' }, { value: false, label: 'Not finished yet' }].map((choice) => (
+              <button key={choice.label} type="button" role="radio" aria-checked={finished === choice.value} disabled={busy} onClick={() => setFinished(choice.value)} className={`rounded-xl border px-3 py-2.5 text-xs font-extrabold transition ${finished === choice.value ? (choice.value ? 'border-emerald-500 bg-emerald-50 text-emerald-800' : 'border-amber-500 bg-amber-50 text-amber-800') : 'border-slate-300 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50'}`}>{choice.label}</button>
+            ))}
+          </div>
+        )}
+
+        {isComplete && !notFinished && tasks.length > 0 && (
           <fieldset disabled={busy} className="mt-4">
             <legend className="text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Task checklist</legend>
             <div className="mt-2 space-y-2">
@@ -364,16 +453,41 @@ function ActionDialogPanel({
           </fieldset>
         )}
 
-        <label className="mt-4 block">
-          <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">{copy.label}</span>
-          <textarea autoFocus={copy.required} value={note} onChange={(event) => setNote(event.target.value)} rows={4} maxLength={1000} placeholder={copy.placeholder} className={fieldClass} />
-        </label>
+        {notFinished
+          ? <div className="mt-4 space-y-3">
+            <label className="block">
+              <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Why is the job not finished yet?</span>
+              <select value={reasonChoice} onChange={(event) => { setReasonChoice(event.target.value); setIncompleteReason('') }} className={fieldClass}>
+                <option value="">Choose a reason</option>
+                {NOT_FINISHED_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+                <option value={OTHER_REASON}>{OTHER_REASON}</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Expected finish date</span>
+              <input type="date" min={todayKey} value={expectedDate} onChange={(event) => setExpectedDate(event.target.value)} className={fieldClass} />
+            </label>
+            {otherReason && <label className="block">
+              <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Describe the reason</span>
+              <textarea autoFocus value={incompleteReason} onChange={(event) => setIncompleteReason(event.target.value)} rows={3} maxLength={2000} placeholder="Explain what is holding the job and the next step." className={fieldClass} />
+            </label>}
+            <span className="block text-[0.65rem] text-slate-500">The job stays pending In Progress. The reason is saved in the job history and the requester is notified.</span>
+          </div>
+          : isComplete
+          ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3.5 py-3.5">
+            <p className="text-sm font-extrabold text-slate-900">Are you sure this job is finished?</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-600">Once you confirm, the job moves to the requester to check the result.</p>
+          </div>
+          : <label className="mt-4 block">
+            <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">{copy.label}</span>
+            <textarea autoFocus={copy.required} value={note} onChange={(event) => setNote(event.target.value)} rows={4} maxLength={1000} placeholder={copy.placeholder} className={fieldClass} />
+          </label>}
 
         {error && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">{error}</p>}
 
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" disabled={busy} onClick={onDismiss} className={quietButton}>Cancel</button>
-          <button type="submit" disabled={busy || !canSubmit} className={kind === 'reject' ? dangerButton : primaryButton}>{busy ? 'Saving...' : copy.submit}</button>
+          <button type="submit" disabled={busy || !canSubmit} className={kind === 'reject' ? dangerButton : primaryButton}>{busy ? 'Saving...' : notFinished ? 'Save reason' : copy.submit}</button>
         </div>
       </form>
     </div>
@@ -492,7 +606,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
     }
   }
 
-  const submitDialog = async (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string }) => {
+  const submitDialog = async (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished?: boolean; expectedDate?: string }) => {
     if (!selected || !dialog) return
     setBusyId(selected.id)
     setActionError('')
@@ -505,6 +619,9 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
       } else if (dialog === 'start') {
         updated = await startServiceWorkOrder(selected.id, input.note)
         message = 'Work started.'
+      } else if (dialog === 'complete' && input.finished === false) {
+        updated = await notFinishServiceWorkOrder(selected.id, input.incompleteReason, input.expectedDate ?? '')
+        message = 'Saved. The requester has been told the job is still in progress.'
       } else if (dialog === 'complete') {
         updated = await completeServiceWorkOrder(selected.id, {
           completionNote: input.note,
@@ -619,6 +736,8 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
               {detailError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">{detailError}</div>}
               {actionError && !dialog && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">{actionError}</div>}
 
+              <PendingBanner order={selected} />
+
               <section className={`${boxClass} p-4 shadow-slate-300/20`}>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <DetailValue label="Location" value={selected.location} icon="location" />
@@ -646,7 +765,9 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
 
               <section className={`${boxClass} p-4 shadow-slate-300/20`}>
                 <h3 className="text-sm font-black text-slate-900">Activity</h3>
-                {selected.history?.length ? <ol className="mt-3 space-y-3">{selected.history.slice().reverse().map((entry, index) => <li key={entry.id} className="relative flex gap-3"><span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full text-white ${index === 0 ? 'bg-blue-600' : 'bg-slate-300'}`}><Icon name={index === 0 ? 'clock' : 'check'} className="h-2.5 w-2.5" /></span><div className="min-w-0 pb-1"><p className="text-xs font-bold text-slate-800">{entry.note || entry.status || 'Job updated'}</p><p className="mt-0.5 text-[0.62rem] font-medium text-slate-400">{entry.actorName || entry.changedBy || 'System'} · {dateText(entry.changedAt, true)}</p></div></li>)}</ol> : <p className="mt-2 text-xs font-medium text-slate-500">No activity recorded yet.</p>}
+                {selected.history?.length
+                  ? <ol className="mt-3 space-y-3 border-l-2 border-slate-200 pl-1">{selected.history.slice().reverse().map((entry, index) => <ActivityItem key={entry.id} entry={entry} latest={index === 0} />)}</ol>
+                  : <p className="mt-2 text-xs font-medium text-slate-500">No activity recorded yet.</p>}
               </section>
             </div>
 

@@ -12,6 +12,7 @@ const ACTIONS = Object.freeze({
   forward: (id, body, user) => serviceWorkOrdersService.forwardWorkOrder(id, body, user),
   start: (id, body, user) => serviceWorkOrdersService.startWork(id, body, user),
   complete: (id, body, user) => serviceWorkOrdersService.completeWork(id, body, user),
+  'not-finished': (id, body, user) => serviceWorkOrdersService.notFinishWork(id, body, user),
   takeover: (id, body, user) => serviceWorkOrdersService.takeOverWorkOrder(id, body, user),
   reject: (id, body, user) => serviceWorkOrdersService.rejectWorkOrder(id, body, user),
 });

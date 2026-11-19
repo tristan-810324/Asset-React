@@ -39,10 +39,13 @@ function displayValue(value: unknown): string {
 function facilityItemStatus(asset: ServiceRequest['assets'][number]) {
   const missing = Number(asset.lostQuantity || 0)
   const damaged = Number(asset.damagedQuantity || 0)
+  const repaired = Number(asset.repairedQuantity || 0)
+  const unserviceable = Number(asset.unserviceableQuantity || 0)
   if (asset.returnedAt) {
+    // Only the unserviceable units are charged; repaired units cost nothing.
     return [
       `Returned ${asset.returnedQuantity ?? 0} of ${asset.quantity}`,
-      damaged > 0 ? `${damaged} damaged${asset.conditionIn ? ` · ${asset.conditionIn}` : ''}` : '',
+      damaged > 0 ? `${damaged} damaged · ${repaired} repaired · ${unserviceable} unserviceable` : '',
       missing > 0 ? `${missing} missing · ${asset.settlementStatus === 'Pending' ? 'Not settled' : asset.settlementStatus}` : '',
     ].filter(Boolean).join(' · ')
   }

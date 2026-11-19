@@ -1031,7 +1031,17 @@ async function updateStatus(idValue, input, user) {
     newValues: { dueDate: dueDate || null, conditionOut, conditionIn, conditionsIn, ...(typedSlip ? { entryMethod: 'typed', typedReason } : {}) },
     flag: typedSlip ? 'MANUAL_ENTRY' : undefined,
   });
-  return updated;
+  return completeFacilityIfSettled(updated, user);
+}
+
+// A facility request closes itself once nothing is left to return or settle (user's rule, 2026-11-19).
+// Approved without items closes at approval; Returned closes when no missing or damaged item is still Pending.
+async function completeFacilityIfSettled(request, user) {
+  if (request?.requestType !== 'FACILITY_USE') return request;
+  if (request.status === 'Approved' && request.assets.length > 0) return request;
+  if (!['Approved', 'Returned'].includes(request.status)) return request;
+  if (request.assets.some((asset) => asset.settlementStatus === 'Pending')) return request;
+  return updateStatus(request.id, { status: 'Completed' }, user);
 }
 
 // The GSO check on a Needs Repair facility item. Repaired or Unserviceable is recorded once per item. When the last
@@ -1082,8 +1092,8 @@ async function resolveFacilityRepair(assetIdValue, input, user) {
   }
   if ((await facilityRepository.countOpenRepairs(row.requestId)) === 0) {
     const note = 'GSO finished the repair check for the returned items.';
+    // Returned closes the request by itself when nothing is left pending (completeFacilityIfSettled).
     await updateStatus(row.requestId, { status: 'Returned', note }, user);
-    await updateStatus(row.requestId, { status: 'Completed', note }, user);
   }
   return requestsRepository.getById(null, row.requestId);
 }
@@ -1118,4 +1128,5 @@ module.exports = {
   logFinancePdfReprint,
   getForGso,
   updateStatus,
+  completeFacilityIfSettled,
 };

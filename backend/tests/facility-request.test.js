@@ -179,14 +179,14 @@ test('approval reserves the items, release keeps them out, and the return gives 
   await requestsService.updateStatus(request.id, { status: 'Returned', returns: [{ assetId: asset.id, returned: 5, condition: 'Good' }] }, gso);
   assert.equal(await stockOf('AST-OE-0001'), 20);
   assert.equal(await itemMasterAvailable('AST-OE-0001'), 20);
-  await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'Completed', 'everything is back, so it closes by itself');
 });
 
-test('a request without items goes from Approved straight to Completed and has nothing to release', async () => {
+test('a request without items is Completed at approval and has nothing to release', async () => {
   const request = await submit([]);
   await requestsService.updateStatus(request.id, { status: 'Approved' }, gso);
-  await rejects(requestsService.updateStatus(request.id, { status: 'Issued' }, gso), /no items to release/, 409);
-  await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'Completed');
+  await rejects(requestsService.updateStatus(request.id, { status: 'Issued' }, gso), /cannot change/, 409);
 });
 
 test('a damaged return is saved as For Repair and keeps the items out until it is fixed', async () => {
@@ -198,7 +198,7 @@ test('a damaged return is saved as For Repair and keeps the items out until it i
   assert.equal(await stockOf('AST-OE-0001'), 18);
   await requestsService.updateStatus(request.id, { status: 'Returned' }, gso);
   assert.equal(await stockOf('AST-OE-0001'), 20);
-  await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'Completed');
 });
 
 test('a return records how many came back, how many are damaged, and how many are missing', async () => {
@@ -241,7 +241,9 @@ test('a missing item leaves the stock, blocks equipment requests, and any GSO st
   await facilityFlow.settleFacilityItem(request.id, asset.id, { status: 'Replaced', note: 'Same model returned' }, gso);
   assert.equal(await itemMasterAvailable('AST-OE-0001'), 20);
   await rejects(facilityFlow.settleFacilityItem(request.id, asset.id, { status: 'Paid' }, otherGso), /already settled/, 409);
-  await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+  // The last settlement closes the request (the controller calls this after each settlement).
+  await requestsService.completeFacilityIfSettled(await requestsService.getForGso(request.id), gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'Completed');
 });
 
 test('a released item past its end time gets one reminder a day until it is returned', async () => {
@@ -274,7 +276,7 @@ test('a slip is recorded once when printed, and a reprint needs a reason', async
   await requestsService.updateStatus(request.id, { status: 'Issued' }, gso);
   const [asset] = await assetsOf(request.id);
   await requestsService.updateStatus(request.id, { status: 'Returned', returns: [{ assetId: asset.id, returned: 1, condition: 'Good' }] }, gso);
-  await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'Completed');
 });
 
 test('a slip number typed instead of scanned needs a reason and is flagged in the audit log', async () => {
@@ -289,7 +291,7 @@ test('a slip number typed instead of scanned needs a reason and is flagged in th
   const [asset] = await assetsOf(request.id);
   await requestsService.updateStatus(request.id, { status: 'Returned', entryMethod: 'scan', returns: [{ assetId: asset.id, returned: 1, damaged: 0, condition: 'Good' }] }, gso);
   assert.equal((await one("SELECT COUNT(*)::INTEGER AS n FROM inventory_change_logs WHERE flag = 'MANUAL_ENTRY' AND request_id = $1", [request.id])).n, 1, 'a scanned return is not flagged');
-  await requestsService.updateStatus(request.id, { status: 'Completed' }, gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [request.id])).status, 'Completed');
 });
 
 test('a released venue stays booked, so the same slot cannot be approved twice', async () => {
@@ -298,7 +300,7 @@ test('a released venue stays booked, so the same slot cannot be approved twice',
   const second = await submit([]);
   await rejects(requestsService.updateStatus(second.id, { status: 'Approved' }, gso), /naka-approve/, 409);
   await requestsService.updateStatus(first.id, { status: 'Returned', returns: [{ assetId: asset.id, returned: 1, condition: 'Good' }] }, gso);
-  await requestsService.updateStatus(first.id, { status: 'Completed' }, gso);
+  assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [first.id])).status, 'Completed');
 });
 
 test('a request for more than the stock is refused when it is sent, and at approval if the stock dropped since', async () => {
