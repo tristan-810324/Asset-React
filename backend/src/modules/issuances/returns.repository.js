@@ -1720,7 +1720,49 @@ async function claimOverdueReminders(limit = 10) {
   return [...byBatch.values()];
 }
 
+// Every unit that went to Repair & Maintenance: who repairs it, what was decided, and the write-off if any.
+// caseReference names the Loss / Damage report that sent it there, when there is one.
+async function listRepairHistory({ limit = 1000 } = {}) {
+  const result = await pool.query(
+    `SELECT ret.id::TEXT AS id,
+            COALESCE(ret.tag_snapshot->>'tagCode', tag.tag_code) AS "tagCode",
+            item.item_code AS "itemCode",
+            item.description AS "itemName",
+            ret.return_condition AS condition,
+            ret.reason AS reason,
+            ret.repair_owner AS owner,
+            ret.repair_outcome AS outcome,
+            ret.repair_resolved_at AS "resolvedAt",
+            COALESCE(ret.decided_at, ret.requested_at) AS "decidedAt",
+            ret.write_off_decision AS "writeOffDecision",
+            ret.write_off_reason AS "writeOffReason",
+            ret.write_off_estimated_value AS "estimatedValue",
+            ret.settlement_status AS "settlementStatus",
+            employee.first_name || ' ' || employee.last_name AS "employeeName",
+            (SELECT report.reference_no
+               FROM service_requests AS report
+              WHERE report.request_type = 'LOSS_DAMAGE_REPORT'
+                AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(report.form_data->'items') AS reported
+                   WHERE reported->>'issuanceId' = issue.id::TEXT
+                )
+              ORDER BY report.id DESC
+              LIMIT 1) AS "caseReference"
+       FROM employee_issuance_returns AS ret
+       JOIN employee_issuances AS issue ON issue.id = ret.issuance_id
+       JOIN item_catalog AS item ON item.id = issue.item_id
+       JOIN employees AS employee ON employee.id = issue.employee_id
+       LEFT JOIN asset_unit_tags AS tag ON tag.id = ret.asset_unit_tag_id
+      WHERE ret.repair_owner IS NOT NULL OR ret.repair_outcome IS NOT NULL
+      ORDER BY COALESCE(ret.repair_resolved_at, ret.decided_at, ret.requested_at) DESC, ret.id DESC
+      LIMIT $1`,
+    [limit],
+  );
+  return result.rows;
+}
+
 module.exports = {
+  listRepairHistory,
   resolveReturnRepair,
   findAccountIdByEmail,
   updateReturnSettlement,

@@ -66,7 +66,7 @@ function recipientSheetHtml(batch: EmployeeIssuanceBatchDetails, requisitionRefe
   ].join('')
   const rows = batch.items.flatMap((item) => {
     const tags = item.tags.length > 0 ? item.tags : [{ tagCode: `Quantity · ${item.quantity} ${item.unitOfMeasure}`, unitNumber: 0 }]
-    return tags.map((tag) => '<tr><td><strong>' + escapePrintText(item.itemName) + '</strong><br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Unit ' + tag.unitNumber : ' · ' + item.quantity + ' ' + escapePrintText(item.unitOfMeasure)) + '</small></td>'
+    return tags.map((tag) => '<tr><td><strong>' + escapePrintText(item.itemName) + '</strong><br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Item ' + tag.unitNumber : ' · ' + item.quantity + ' ' + escapePrintText(item.unitOfMeasure)) + '</small></td>'
       + '<td>' + escapePrintText(tag.tagCode) + '</td>'
       + '<td>' + escapePrintText(item.recipientEmployeeName) + '<br><small>' + escapePrintText(item.recipientEmployeeCode) + '</small></td>'
       + '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td>'
@@ -451,13 +451,13 @@ export default function AssetLabels() {
                             {group.labels.map((label) => <div key={label.tagCode} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
                               <div className="min-w-0">
                                 <p className="break-all font-mono text-sm font-extrabold text-slate-900">{label.tagCode}</p>
-                                <p className="mt-0.5 text-sm font-semibold text-slate-800">{label.itemName} · {label.itemCode} · Unit {label.unitNumber}</p>
+                                <p className="mt-0.5 text-sm font-semibold text-slate-800">{label.itemName} · {label.itemCode} · Item {label.unitNumber}</p>
                                 <p className="mt-0.5 text-sm text-slate-700">Assigned to: <span className="font-bold">{label.holderName}</span> · {label.holderCode}</p>
-                                {label.isReturned && <p className="mt-1 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-900">Returned. Do not reprint.</p>}
+                                {label.isReturned && <p className="mt-1 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-900">{label.returnCondition === 'Lost' ? 'Lost. Do not reprint.' : 'Returned. Do not reprint.'}</p>}
                               </div>
                               <div className="flex shrink-0 items-center gap-2">
                                 <span className={`rounded-full px-2.5 py-1 text-xs font-extrabold ${label.isReturned ? 'bg-amber-100 text-amber-900 ring-1 ring-amber-300' : label.needsPrinting ? 'bg-blue-600 text-white' : 'bg-emerald-100 text-emerald-800'}`}>
-                                  {label.isReturned ? 'Returned' : label.needsPrinting ? 'To print' : 'Printed'}
+                                  {label.isReturned ? (label.returnCondition === 'Lost' ? 'Lost' : 'Returned') : label.needsPrinting ? 'To print' : 'Printed'}
                                 </span>
                                 {!label.isReturned && !label.needsPrinting && <button type="button" disabled={isReprinting || labelsToPrint.length > 0} onClick={() => { setReprintTarget(label); setReprintReason(''); setReprintDetails(''); setReprintError('') }} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">Reprint</button>}
                               </div>
@@ -502,7 +502,7 @@ export default function AssetLabels() {
           <form onSubmit={(event) => void handleReprintSubmit(event)}>
             <p className="text-[0.62rem] font-black uppercase tracking-[0.14em] text-blue-700">Replace barcode label</p>
             <h2 id="reprint-label-title" className="mt-1 text-base font-black text-slate-900">Reprint this label?</h2>
-            <p className="mt-1 text-xs text-slate-600">{reprintTarget.itemName} · {reprintTarget.itemCode} · Unit {reprintTarget.unitNumber}</p>
+            <p className="mt-1 text-xs text-slate-600">{reprintTarget.itemName} · {reprintTarget.itemCode} · Item {reprintTarget.unitNumber}</p>
             <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5">
               <p className="font-mono text-xs font-extrabold text-slate-900">{reprintTarget.tagCode}</p>
               <p className="mt-1 text-xs text-slate-700">Assigned to: <strong>{reprintTarget.holderName}</strong> · {reprintTarget.holderCode}</p>
@@ -540,7 +540,7 @@ export default function AssetLabels() {
               <article className="mx-auto flex h-[30mm] w-[50mm] box-border flex-col items-center justify-start gap-[0.2mm] bg-white px-[0.5mm] pb-0 pt-[0.3mm] text-center shadow-md">
                 <div className="w-[49mm] flex-none"><BarcodeSvg value={label.tagCode} className="mx-auto h-auto w-full max-h-[19mm] max-w-full object-contain" /></div>
                 <p className="max-w-[49mm] flex-none whitespace-nowrap text-[4mm] font-extrabold leading-none text-black">{label.tagCode}</p>
-                <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">PROPERTY OF DYCI-DO NOT REMOVE</p>
+                <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">DYCI · ITEM {label.unitNumber}</p>
                 <p className="label-item-details flex-none whitespace-nowrap text-[1.7mm] font-bold leading-none text-black"><span className="label-item-name inline-block max-w-[32mm] truncate align-bottom">{label.itemName}</span> - {label.itemCode}</p>
               </article>
             </div>)}
@@ -559,7 +559,7 @@ export default function AssetLabels() {
           {labelsToPrint.map((label) => <article key={label.tagCode} className="asset-barcode-label bg-white text-center">
           <div className="barcode-preview"><BarcodeSvg value={label.tagCode} /></div>
           <p className="label-barcode-value">{label.tagCode}</p>
-          <p className="label-removal-warning">PROPERTY OF DYCI-DO NOT REMOVE</p>
+          <p className="label-removal-warning">DYCI · ITEM {label.unitNumber}</p>
           <p className="label-item-details"><span className="label-item-name">{label.itemName}</span> - {label.itemCode}</p>
         </article>)}
       </div>, document.body)}

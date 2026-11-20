@@ -2887,7 +2887,7 @@ export default function ItemsMasterData() {
                   <ul className="inventory-list-scrollbar max-h-64 space-y-2 overflow-y-auto">
                     {selectedItem.assetTags.map((tag) => <li key={tag.tagCode} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
                       <div className="min-w-0">
-                        <p className="text-xs font-extrabold text-slate-900">{tag.tagCode} <span className="font-semibold text-slate-500">· Unit {tag.unitNumber}</span></p>
+                        <p className="text-xs font-extrabold text-slate-900">{tag.tagCode} <span className="font-semibold text-slate-500">· Item {tag.unitNumber}</span></p>
                         <p className="mt-1 text-[0.68rem] text-slate-600">{tag.location || 'Location not recorded'}{tag.serialNumber ? ` · Serial ${tag.serialNumber}` : ''}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">

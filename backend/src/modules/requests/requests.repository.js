@@ -1257,7 +1257,7 @@ async function reportedIssuedRows(client, userId, rows) {
     let candidateUnits = [];
     if (row.identityUnknown) {
       if (row.tagCode || issue.tracking_mode !== 'individual') {
-        throw httpError(400, 'Only a barcode-tracked lost unit without a selected asset tag can be marked as unidentified.');
+        throw httpError(400, 'Only a barcode-tracked unit without a selected asset tag can be marked as unidentified.');
       }
       const tags = await client.query(
         `SELECT tag_code FROM asset_unit_tags

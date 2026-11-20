@@ -39,6 +39,11 @@ const listHoldings = asyncHandler(async (req, res) => {
   res.json({ success: true, data: holdings });
 });
 
+const listRepairHistory = asyncHandler(async (req, res) => {
+  const records = await returnsService.listRepairHistory();
+  res.json({ success: true, data: { records } });
+});
+
 const listIssuanceRecords = asyncHandler(async (req, res) => {
   const records = await returnsService.listIssuanceRecords(req.query);
   res.json({ success: true, data: { records } });
@@ -83,6 +88,7 @@ module.exports = {
   listApprovalRequests,
   listHoldings,
   listIssuanceRecords,
+  listRepairHistory,
   sendBulkReturnOtp,
   sendTaggedReturnOtp,
   confirmScannedTagReturn,

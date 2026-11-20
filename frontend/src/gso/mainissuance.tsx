@@ -107,7 +107,7 @@ function availableUnitConditionSummary(item: InventoryItemRecord) {
       && !unavailableConditions.includes(tag.condition))
     .sort((first, second) => first.unitNumber - second.unitNumber)
   if (availableTags.length === 0) return item.condition
-  const unitConditions = availableTags.slice(0, 4).map((tag) => `Unit ${tag.unitNumber}: ${tag.condition}`)
+  const unitConditions = availableTags.slice(0, 4).map((tag) => `Item ${tag.unitNumber}: ${tag.condition}`)
   if (availableTags.length > unitConditions.length) unitConditions.push(`+${availableTags.length - unitConditions.length} more`)
   return `Available unit condition · ${unitConditions.join(' · ')}`
 }
@@ -158,7 +158,7 @@ function printRecipientSheet(batch: SubmittedBatch, requisitionReference: string
   ].join('')
   const rows = batch.items.map((item) => {
     const tags = item.tags.length > 0 ? item.tags : [{ tagCode: 'Quantity allocation', unitNumber: 0 }]
-    return tags.map((tag) => '<tr><td>' + escapePrintText(item.itemName) + '<br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Unit ' + tag.unitNumber : ' · Qty ' + item.quantity) + '</small></td>'
+    return tags.map((tag) => '<tr><td>' + escapePrintText(item.itemName) + '<br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Item ' + tag.unitNumber : ' · Qty ' + item.quantity) + '</small></td>'
       + '<td>' + escapePrintText(tag.tagCode) + '</td>'
       + '<td><strong>' + escapePrintText(item.recipientEmployeeName) + '</strong><br><small>' + escapePrintText(item.recipientEmployeeCode) + '</small></td>'
       + '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td>'
@@ -2089,7 +2089,7 @@ export default function MainIssuance() {
                   <article key={label.tagCode} className="mx-auto flex h-[30mm] w-[50mm] box-border flex-col items-center justify-start gap-[0.2mm] bg-white px-[0.5mm] pb-0 pt-[0.3mm] text-center shadow-md">
                     <div className="w-[49mm] flex-none"><BarcodeSvg value={label.tagCode} height={64} className="mx-auto h-auto w-full max-h-[19mm] max-w-full object-contain" /></div>
                     <p className="max-w-[49mm] flex-none whitespace-nowrap text-[4mm] font-extrabold leading-none text-black">{label.tagCode}</p>
-                    <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">PROPERTY OF DYCI-DO NOT REMOVE</p>
+                    <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">DYCI · ITEM {label.unitNumber}</p>
                     <p className="label-item-details flex-none whitespace-nowrap text-[1.7mm] font-bold leading-none text-black"><span className="label-item-name inline-block max-w-[32mm] truncate align-bottom">{label.itemName}</span> - {label.itemCode}</p>
                   </article>
                 ))}
@@ -2113,7 +2113,7 @@ export default function MainIssuance() {
           <article key={label.tagCode} className="asset-barcode-label bg-white text-center">
             <div className="barcode-preview"><BarcodeSvg value={label.tagCode} height={64} /></div>
             <p className="label-barcode-value">{label.tagCode}</p>
-            <p className="label-removal-warning">PROPERTY OF DYCI-DO NOT REMOVE</p>
+            <p className="label-removal-warning">DYCI · ITEM {label.unitNumber}</p>
             <p className="label-item-details"><span className="label-item-name">{label.itemName}</span> - {label.itemCode}</p>
           </article>
         ))}

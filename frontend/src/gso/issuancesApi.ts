@@ -232,6 +232,31 @@ export async function listApprovalRequests() {
 }
 
 // from/to are YYYY-MM-DD dates on the issued date; leave them empty for the newest 1,000 records.
+// A unit that went to Repair & Maintenance: who repairs it and what was decided.
+export type RepairHistoryRecord = {
+  id: string
+  tagCode: string
+  itemCode: string
+  itemName: string
+  condition: string
+  reason: string | null
+  owner: string | null
+  outcome: string | null
+  resolvedAt: string | null
+  decidedAt: string | null
+  writeOffDecision: string | null
+  writeOffReason: string | null
+  estimatedValue: number | null
+  settlementStatus: string | null
+  employeeName: string | null
+  caseReference: string | null
+}
+
+export async function listRepairHistory() {
+  const result = await apiRequest<{ records: RepairHistoryRecord[] }>('/issuances/repair-history')
+  return result.records
+}
+
 export async function listIssuanceRecords(range: { from: string; to: string }) {
   const query = new URLSearchParams(Object.entries(range).filter(([, value]) => value)).toString()
   const result = await apiRequest<{ records: IssuanceRecord[] }>(`/issuances/records${query ? `?${query}` : ''}`)

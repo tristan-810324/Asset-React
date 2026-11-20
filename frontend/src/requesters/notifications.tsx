@@ -56,7 +56,7 @@ function issuanceActivity(batch: RequesterIssuanceApproval): ActivityEvent {
             : `Issuance status: ${batch.status}`
   const detailParts = [items, batch.decisionNote].filter(Boolean)
   batch.items.filter((item) => item.notes).forEach((item) => detailParts.push(`${item.itemName}: ${item.notes}`))
-  batch.items.flatMap((item) => item.tags || []).forEach((tag) => detailParts.push(`Unit ${tag.unitNumber} barcode ${tag.tagCode}`))
+  batch.items.flatMap((item) => item.tags || []).forEach((tag) => detailParts.push(`Item ${tag.unitNumber} barcode ${tag.tagCode}`))
   if (batch.borrowUseDate) {
     detailParts.push(`Borrow ${formatBorrowSchedule(batch.borrowUseAt || batch.borrowUseDate)} · return by ${formatBorrowSchedule(batch.expectedReturnAt || batch.expectedReturnDate)}`)
     if (batch.usePurpose) detailParts.push(`Event: ${batch.usePurpose}`)

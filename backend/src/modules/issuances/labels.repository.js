@@ -3,11 +3,11 @@ const { createAssetTagCode } = require('./issuances.repository');
 
 // Current labels are printable. Returned labels remain in the list as read-only history.
 async function listUnitLabels({ limit = 2000 } = {}) {
-  const [issuedResult, returnedResult] = await Promise.all([
+  const [issuedResult, returnedResult, lostResult] = await Promise.all([
     pool.query(
       `SELECT tag.tag_code AS "tagCode",
               tag.label_version AS "labelVersion",
-              tag.unit_number AS "unitNumber",
+              COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
               item.item_code AS "itemCode",
               COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
               employee.employee_code AS "holderCode",
@@ -47,7 +47,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
     pool.query(
       `SELECT reprint.old_tag_code AS "tagCode",
               GREATEST(reprint.label_version - 1, 1)::INTEGER AS "labelVersion",
-              tag.unit_number AS "unitNumber",
+              COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
               item.item_code AS "itemCode",
               COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
               employee.employee_code AS "holderCode",
@@ -86,8 +86,47 @@ async function listUnitLabels({ limit = 2000 } = {}) {
         LIMIT $1`,
       [limit],
     ),
+    // A lost unit has no reprint, so it is listed from its return record: read-only, never printed.
+    pool.query(
+      `SELECT tag.tag_code AS "tagCode",
+              tag.label_version AS "labelVersion",
+              COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
+              item.item_code AS "itemCode",
+              COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
+              employee.employee_code AS "holderCode",
+              employee.first_name || ' ' || employee.last_name AS "holderName",
+              batch_employee.first_name || ' ' || batch_employee.last_name AS "batchEmployeeName",
+              batch_employee.email AS "batchEmployeeEmail",
+              batch.email_sent_at IS NOT NULL AS "emailSent",
+              COALESCE(issue.decided_at, issue.requested_at) AS "issuedAt",
+              issue.batch_id::TEXT AS "batchId",
+              requisition.reference_no AS "purchaseRequisitionReference",
+              NULL::TIMESTAMPTZ AS "labelPrintedAt",
+              NULL::TEXT AS "labelPrintedBy",
+              NULL::TIMESTAMPTZ AS "reprintedAt",
+              NULL::TEXT AS "reprintReason",
+              TRUE AS "isReturned",
+              COALESCE(return_record.decided_at, return_record.requested_at) AS "returnedAt",
+              return_record.return_condition AS "returnCondition",
+              return_record.reason AS "returnReason",
+              NULL::TEXT AS "returnedByName",
+              processor.name AS "processedBy"
+         FROM employee_issuance_returns AS return_record
+         JOIN asset_unit_tags AS tag ON tag.id = return_record.asset_unit_tag_id
+         JOIN item_catalog AS item ON item.id = tag.item_id
+         JOIN employee_issuances AS issue ON issue.id = return_record.issuance_id
+         JOIN employees AS employee ON employee.id = issue.employee_id
+         LEFT JOIN employee_issuance_batches AS batch ON batch.id = issue.batch_id
+         LEFT JOIN employees AS batch_employee ON batch_employee.id = batch.employee_id
+         LEFT JOIN service_requests AS requisition ON requisition.id = batch.purchase_requisition_id
+         LEFT JOIN users AS processor ON processor.id = return_record.requested_by_user_id
+        WHERE return_record.status = 'Lost' AND tag.lifecycle_status = 'Disposed'
+        ORDER BY COALESCE(return_record.decided_at, return_record.requested_at) DESC, item.item_code, tag.unit_number
+        LIMIT $1`,
+      [limit],
+    ),
   ]);
-  return [...issuedResult.rows, ...returnedResult.rows];
+  return [...issuedResult.rows, ...returnedResult.rows, ...lostResult.rows];
 }
 
 async function lockCurrentLabel(client, tagCode) {

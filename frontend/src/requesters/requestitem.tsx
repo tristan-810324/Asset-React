@@ -341,7 +341,8 @@ function RequestItemContent() {
   const [issuedError, setIssuedError] = useState('')
   // The group whose units are listed for picking (one at a time).
   const [openGroupKey, setOpenGroupKey] = useState('')
-  const [lossUnitModes, setLossUnitModes] = useState<Record<string, 'known' | 'unknown'>>({})
+  // Groups the held items under the room they are assigned to, or the person they are assigned to.
+  const [lossGroupBy, setLossGroupBy] = useState<'room' | 'person'>('room')
 
   const verifiedEmployeeName = [identity?.firstName, identity?.middleName, identity?.lastName, identity?.suffix]
     .map((part) => part?.trim())
@@ -373,11 +374,13 @@ function RequestItemContent() {
     .flatMap((item) => {
       const outstanding = Number(item.quantity) - Number(item.returnedQuantity || 0)
       if (outstanding <= 0) return []
+      const place = item.recipientLocation || ''
+      const person = item.recipientEmployeeName ? `${item.recipientEmployeeName} · ${item.recipientEmployeeCode}` : item.recipientEmployeeCode || ''
       const units = (item.tags ?? []).filter((tag) => tag.custodyStatus !== 'Available')
       if (item.trackingMode === 'individual' && units.length > 0) {
-        return units.map((tag) => ({ key: `${item.issuanceId}:${tag.tagCode}`, issuanceId: item.issuanceId, tagCode: tag.tagCode, name: item.itemName, code: tag.tagCode, unit: item.unitOfMeasure, outstanding: 1 }))
+        return units.map((tag) => ({ key: `${item.issuanceId}:${tag.tagCode}`, issuanceId: item.issuanceId, tagCode: tag.tagCode, name: item.itemName, code: tag.tagCode, unit: item.unitOfMeasure, outstanding: 1, place, person, itemNumber: Number(tag.unitNumber) || 0 }))
       }
-      return [{ key: item.issuanceId, issuanceId: item.issuanceId, tagCode: '', name: item.itemName, code: item.itemCode, unit: item.unitOfMeasure, outstanding }]
+      return [{ key: item.issuanceId, issuanceId: item.issuanceId, tagCode: '', name: item.itemName, code: item.itemCode, unit: item.unitOfMeasure, outstanding, place, person, itemNumber: 0 }]
     })), [issuedBatches])
   const requestDateLabel = useMemo(() => new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date()), [])
 
@@ -573,11 +576,12 @@ function RequestItemContent() {
   })
   // Units with the same name and unit form one group. Tagged units are chosen one by one; a stock line is one count.
   const heldGroups = useMemo(() => {
-    const groups = new Map<string, { key: string; name: string; unit: string; stock: boolean; units: typeof heldItems; total: number }>()
+    const groups = new Map<string, { key: string; name: string; unit: string; stock: boolean; units: typeof heldItems; total: number; place: string; person: string }>()
     for (const held of heldItems) {
       const stock = !held.tagCode
-      const key = stock ? `stock|${held.issuanceId}` : `units|${held.issuanceId}|${held.name}|${held.unit}`
-      const group = groups.get(key) ?? { key, name: held.name, unit: held.unit, stock, units: [], total: 0 }
+      // One card per item, room, and person, even when several issuances hold it.
+      const key = [stock ? 'stock' : 'units', held.name, held.unit, held.place, held.person].join('|')
+      const group = groups.get(key) ?? { key, name: held.name, unit: held.unit, stock, units: [], total: 0, place: held.place, person: held.person }
       group.units.push(held)
       group.total += held.outstanding
       groups.set(key, group)
@@ -585,30 +589,60 @@ function RequestItemContent() {
     return [...groups.values()]
   }, [heldItems])
   type HeldGroup = (typeof heldGroups)[number]
+  const heldSections = useMemo(() => {
+    const sections = new Map<string, HeldGroup[]>()
+    for (const group of heldGroups) {
+      const label = lossGroupBy === 'room' ? (group.place || 'Location not recorded') : (group.person || 'Not assigned')
+      sections.set(label, [...(sections.get(label) ?? []), group])
+    }
+    return [...sections.entries()]
+  }, [heldGroups, lossGroupBy])
 
   const selectedIn = (groupKey: string) => ((form.items ?? []) as FormRow[]).filter((row) => row.groupKey === groupKey)
   const countIn = (groupKey: string) => selectedIn(groupKey).reduce((sum, row) => sum + Number(row.quantity), 0)
   const selectedTotal = ((form.items ?? []) as FormRow[]).reduce((sum, row) => sum + Number(row.quantity || 0), 0)
-  const lossUnitMode = (groupKey: string) => lossUnitModes[groupKey] ?? 'unknown'
+  // The asset-tag picker opens as a pop-up once "I know the asset tag" is chosen, for lost and damaged items alike.
+  const openTagGroup = heldGroups.find((group) => group.key === openGroupKey && !group.stock) ?? null
+  // "Reported / responsible person" follows the grouping: the requester's own name for rooms,
+  // and the assigned person's name when the selected items all belong to one person.
+  const selectedPersonNames = [...new Set(heldGroups.filter((group) => countIn(group.key) > 0)
+    .map((group) => group.person.split(' · ')[0]))]
+  const responsibleFromSelection = lossGroupBy === 'room'
+    ? verifiedEmployeeName
+    : selectedPersonNames.length === 1 ? selectedPersonNames[0] : ''
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => {
+    if (type !== 'LOSS_DAMAGE_REPORT' || !responsibleFromSelection) return
+    setForm((current) => (current.responsiblePerson === responsibleFromSelection ? current : { ...current, responsiblePerson: responsibleFromSelection }))
+  }, [type, responsibleFromSelection])
   const heldRow = (held: (typeof heldItems)[number], groupKey: string, quantity: number): FormRow => ({
     key: held.key, groupKey, issuanceId: held.issuanceId, tagCode: held.tagCode, quantity,
     maxQuantity: held.outstanding, unit: held.unit, description: held.name, assetCode: held.code, remarks: '',
   })
-  const setLossUnitMode = (group: HeldGroup, mode: 'known' | 'unknown') => {
-    setLossUnitModes((current) => ({ ...current, [group.key]: mode }))
-    setOpenGroupKey(mode === 'known' ? group.key : '')
-    setForm((current) => ({ ...current, items: ((current.items ?? []) as FormRow[]).filter((row) => row.groupKey !== group.key) }))
-  }
   // Sets how many of a group are reported. Units are added in code order and dropped from the end.
   const setGroupCount = (group: HeldGroup, wanted: number) => setForm((current) => {
     const rows = Array.isArray(current.items) ? current.items as FormRow[] : []
     const others = rows.filter((row) => row.groupKey !== group.key)
     const mine = rows.filter((row) => row.groupKey === group.key)
     const count = Math.max(0, Math.min(wanted, group.total))
-    if (group.stock) return { ...current, items: count > 0 ? [...others, heldRow(group.units[0], group.key, count)] : others }
-    if (current.incidentType === 'LOST' && lossUnitMode(group.key) === 'unknown') {
-      const unknownRow = { ...heldRow(group.units[0], group.key, count), key: `unknown:${group.key}`, tagCode: '', assetCode: '', maxQuantity: group.total, identityUnknown: 'true' }
-      return { ...current, items: count > 0 ? [...others, unknownRow] : others }
+    if (group.stock || !mine.some((row) => Boolean(row.tagCode))) {
+      // A merged card splits its count back over the issuances it covers, never above what each still holds.
+      const bySource = new Map<string, { held: (typeof heldItems)[number]; outstanding: number }>()
+      for (const held of group.units) {
+        const entry = bySource.get(held.issuanceId)
+        if (entry) entry.outstanding += held.outstanding
+        else bySource.set(held.issuanceId, { held, outstanding: held.outstanding })
+      }
+      let remaining = count
+      const allocated: FormRow[] = []
+      for (const { held, outstanding } of bySource.values()) {
+        const take = Math.min(remaining, outstanding)
+        if (take <= 0) continue
+        remaining -= take
+        const row = { ...heldRow(held, group.key, take), maxQuantity: outstanding }
+        allocated.push(group.stock ? row : { ...row, key: `unknown:${group.key}:${held.issuanceId}`, tagCode: '', assetCode: '', identityUnknown: 'true' })
+      }
+      return { ...current, items: [...others, ...allocated] }
     }
     const chosen = new Set(mine.map((row) => row.key))
     const added = group.units
@@ -617,11 +651,17 @@ function RequestItemContent() {
       .map((held) => heldRow(held, group.key, 1))
     return { ...current, items: [...others, ...mine.slice(0, count), ...added] }
   })
+  // Select all picks every tag of the group, not the unidentified count.
+  const selectAllUnits = (group: HeldGroup) => setForm((current) => {
+    const rows = Array.isArray(current.items) ? current.items as FormRow[] : []
+    return { ...current, items: [...rows.filter((row) => row.groupKey !== group.key), ...group.units.map((held) => heldRow(held, group.key, 1))] }
+  })
   const toggleUnit = (group: HeldGroup, held: (typeof heldItems)[number]) => setForm((current) => {
     const rows = Array.isArray(current.items) ? current.items as FormRow[] : []
     return rows.some((row) => row.key === held.key)
       ? { ...current, items: rows.filter((row) => row.key !== held.key) }
-      : { ...current, items: [...rows, heldRow(held, group.key, 1)] }
+      // Picking a tag replaces the group's count with the picked tags.
+      : { ...current, items: [...rows.filter((row) => row.groupKey !== group.key || row.tagCode), heldRow(held, group.key, 1)] }
   })
 
   // The venue text sent to GSO is built from the choice; a "specify" venue is only sent once its detail is typed.
@@ -704,10 +744,10 @@ function RequestItemContent() {
       }
       const missingUnitTags = reported.some((row) => {
         const group = heldGroups.find((heldGroup) => heldGroup.key === row.groupKey)
-        return form.incidentType === 'LOST' && group && !group.stock && row.identityUnknown !== 'true' && !row.tagCode
+        return group && !group.stock && row.identityUnknown !== 'true' && !row.tagCode
       })
       if (missingUnitTags) {
-        setError('Choose the exact asset tag, or select “I’m not sure which unit” for each lost item.')
+        setError('Choose the exact asset tag for each affected item, or leave it for GSO to identify.')
         return
       }
       const tooMany = reported.find((row) => Number(row.quantity) > Number(row.maxQuantity))
@@ -1286,14 +1326,6 @@ function RequestItemContent() {
                   <Field label="Incident type"><select className={inputClass} value={form.incidentType} onChange={(event) => {
                     const nextType = event.target.value
                     setField('incidentType', nextType)
-                    if (nextType === 'DAMAGED') {
-                      setForm((current) => ({ ...current, items: ((current.items ?? []) as FormRow[]).filter((row) => row.identityUnknown !== 'true') }))
-                      setLossUnitModes({})
-                    } else {
-                      setLossUnitModes(Object.fromEntries(heldGroups
-                        .filter((group) => !group.stock && selectedIn(group.key).some((row) => Boolean(row.tagCode)))
-                        .map((group) => [group.key, 'known' as const])))
-                    }
                   }}><option value="LOST">Lost</option><option value="DAMAGED">Damaged</option></select></Field>
                   <Field label="Date of incident"><input className={inputClass} type="date" max={today()} value={form.incidentDate} onChange={(event) => setField('incidentDate', event.target.value)} required /></Field>
                   <Field label="Key area / location"><input className={inputClass} value={form.keyArea} onChange={(event) => setField('keyArea', event.target.value)} required /></Field>
@@ -1301,23 +1333,28 @@ function RequestItemContent() {
                 </div>
               </FormGroup>
 
-              <FormGroup title="Affected property" hint="Choose the item and how many were affected. If you do not know the asset tag of a lost unit, do not guess.">
+              <FormGroup title="Affected property" hint="Choose the item and how many were affected. If you do not know the asset tag of a unit, do not guess.">
                 {issuedError && <p role="alert" className="mb-3 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-700">{issuedError}</p>}
+                {heldGroups.length > 0 && <div className="mb-3 flex flex-wrap items-center gap-2 text-xs font-bold text-slate-600">
+                  <span>Group by</span>
+                  {(['room', 'person'] as const).map((mode) => <button key={mode} type="button" aria-pressed={lossGroupBy === mode} onClick={() => setLossGroupBy(mode)} className={`rounded-full px-3 py-1.5 transition ${lossGroupBy === mode ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50'}`}>{mode === 'room' ? 'Assigned room' : 'Assigned person'}</button>)}
+                </div>}
                 {issuedBatches === null && !issuedError
                   ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">Loading your issued items…</p>
                   : heldGroups.length === 0
                     ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">No items are issued to you right now.</p>
-                    : <div className="grid gap-3 sm:grid-cols-2">{heldGroups.map((group) => {
+                    : <div className="space-y-4">{heldSections.map(([label, groups]) => <div key={label}>
+                      <p className="mb-2 text-xs font-extrabold text-slate-700">{label} <span className="font-semibold text-slate-500">· {groups.length} item{groups.length === 1 ? '' : 's'}</span></p>
+                      <div className="grid gap-3 sm:grid-cols-2">{groups.map((group) => {
                       const count = countIn(group.key)
-                      const open = openGroupKey === group.key
                       const lost = form.incidentType === 'LOST'
-                      const unknownMode = lost && !group.stock && lossUnitMode(group.key) === 'unknown'
-                      const knownMode = lost && !group.stock && !unknownMode
+                      // Asset tags are optional: a group with picked tags is counted by those tags; otherwise GSO identifies the units.
+                      const knownMode = !group.stock && selectedIn(group.key).some((row) => Boolean(row.tagCode))
                       return <div key={group.key} className={`rounded-xl border-2 bg-white p-3 transition ${count > 0 ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'}`}>
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-extrabold text-slate-900">{group.name}</p>
-                            <p className="text-xs text-slate-500">{group.total} {group.unit} issued to you</p>
+                            <p className="text-xs text-slate-500">{group.total} {group.unit} issued to you{lossGroupBy === 'room' ? ` · ${group.person || 'no assignee recorded'}` : ` · ${group.place || 'location not recorded'}`}</p>
                           </div>
                           {knownMode
                             ? <span className="shrink-0 text-xs font-bold text-slate-600">{count} selected</span>
@@ -1326,29 +1363,51 @@ function RequestItemContent() {
                               <input type="number" min={0} max={group.total} value={count} onChange={(event) => setGroupCount(group, Number(event.target.value) || 0)} className="h-9 w-20 rounded-lg border border-slate-300 bg-white px-2 text-sm font-bold text-slate-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
                             </label>}
                         </div>
-                        {lost && !group.stock && <fieldset className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-                          <legend className="px-1 text-[0.68rem] font-extrabold text-slate-700">Can you identify the exact unit?</legend>
-                          <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
-                            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700"><input type="radio" name={`loss-unit-${group.key}`} checked={knownMode} onChange={() => setLossUnitMode(group, 'known')} className="accent-blue-600" />I know the asset tag</label>
-                            <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700"><input type="radio" name={`loss-unit-${group.key}`} checked={unknownMode} onChange={() => setLossUnitMode(group, 'unknown')} className="accent-blue-600" />I’m not sure which unit</label>
+                        {!group.stock && <button type="button" onClick={() => setOpenGroupKey(group.key)} className="mt-2 text-xs font-extrabold text-blue-700 hover:text-blue-900">{knownMode ? `${countIn(group.key)} of ${group.total} selected · ` : ''}Choose asset tags (if you know them)</button>}
+                        {!group.stock && !knownMode && <p className="mt-1.5 text-[0.68rem] leading-relaxed text-slate-500">GSO identifies the exact unit during review.</p>}
+                      </div>
+                    })}</div>
+                    </div>)}</div>}
+
+                {openTagGroup && <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5" onClick={() => setOpenGroupKey('')}>
+                  <section role="dialog" aria-modal="true" aria-labelledby="asset-tag-picker-title" onClick={(event) => event.stopPropagation()} className="flex max-h-[94vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30">
+                    <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+                      <div className="min-w-0">
+                        <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Asset tags</p>
+                        <h2 id="asset-tag-picker-title" className="mt-0.5 truncate text-base font-black text-slate-900 sm:text-lg">{openTagGroup.name}</h2>
+                        <p className="mt-1 text-xs text-slate-600">Select the exact unit(s) by asset tag.</p>
+                      </div>
+                      <button type="button" onClick={() => setOpenGroupKey('')} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">Close</button>
+                    </header>
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-8 sm:py-6">
+                      <div className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
+                        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                          <h3 className="text-sm font-extrabold text-slate-900">{countIn(openTagGroup.key)} of {openTagGroup.total} selected</h3>
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => selectAllUnits(openTagGroup)} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50">Select all</button>
+                            <button type="button" onClick={() => setGroupCount(openTagGroup, 0)} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 transition hover:bg-rose-50">Clear</button>
                           </div>
-                          {unknownMode && <p className="mt-2 text-[0.68rem] leading-relaxed text-slate-500">GSO will identify the exact unit during review. You do not need to guess.</p>}
-                        </fieldset>}
-                        {!group.stock && !lost && <button type="button" onClick={() => setOpenGroupKey(open ? '' : group.key)} aria-expanded={open} className="mt-2 text-xs font-extrabold text-blue-700 hover:text-blue-900">{open ? 'Hide units' : 'Choose asset tags'}</button>}
-                        {(knownMode || (open && !group.stock && !lost)) && <div className="mt-2">
-                          {knownMode && <p className="mb-2 text-[0.68rem] font-semibold text-slate-600">Select the exact lost unit(s) by asset tag.</p>}
-                          <div className="grid max-h-44 grid-cols-2 gap-1.5 overflow-y-auto rounded-lg bg-slate-50 p-2 sm:grid-cols-3">
-                          {group.units.map((held) => {
-                            const checked = selectedIn(group.key).some((row) => row.key === held.key)
-                            return <label key={held.key} className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-[0.7rem] font-bold transition ${checked ? 'bg-blue-100 text-blue-900' : 'bg-white text-slate-700 hover:bg-slate-100'}`}>
-                              <input type="checkbox" checked={checked} onChange={() => toggleUnit(group, held)} className="h-3.5 w-3.5 shrink-0 accent-blue-600" />
-                              <span className="truncate" title={held.code}>{held.code}</span>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {[...openTagGroup.units].sort((a, b) => a.itemNumber - b.itemNumber || a.code.localeCompare(b.code)).map((held) => {
+                            const checked = selectedIn(openTagGroup.key).some((row) => row.key === held.key)
+                            return <label key={held.key} className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 p-3 transition ${checked ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleUnit(openTagGroup, held)} className="h-4 w-4 shrink-0 accent-blue-600" />
+                              <span className="min-w-0">
+                        <span className="block text-[0.65rem] font-extrabold text-blue-700">ITEM {held.itemNumber}</span>
+                        <span className="block break-all font-mono text-xs font-bold text-slate-900">{held.code}</span>
+                      </span>
                             </label>
                           })}
-                          </div>
-                        </div>}
+                        </div>
                       </div>
-                    })}</div>}
+                    </div>
+                    <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:px-8">
+                      <p className="text-xs font-semibold text-slate-500">Unselected units are not reported.</p>
+                      <button type="button" onClick={() => setOpenGroupKey('')} className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700">Done</button>
+                    </footer>
+                  </section>
+                </div>}
 
                 {selectedTotal > 0 && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs font-extrabold uppercase tracking-wide text-slate-500">In this report · {selectedTotal} selected</p>

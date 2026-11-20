@@ -589,7 +589,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
               </button>
             )}
             <span className="rounded-lg bg-blue-50 px-3 py-1.5 text-[0.65rem] font-extrabold text-blue-700">
-              {filteredRepairs.length + taggedChecks.length + facilityRepairs.length} to check
+              {repairSource !== 'tagged' && `${facilityRepairs.length} facility`}{repairSource === 'all' && ' · '}{repairSource !== 'facility' && `${taggedChecks.length} tagged`}
             </span>
           </div>
         </div>
@@ -597,7 +597,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
 
         {repairSource !== 'tagged' && facilityRepairs.length > 0 && <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
           <div className="flex items-center justify-between gap-3 bg-amber-50/60 px-5 py-3 sm:px-6">
-            <p className="text-xs font-extrabold text-amber-900">Facility items to check</p>
+            <p className="text-xs font-extrabold text-amber-900">Facility items <span className="font-semibold text-amber-800">· counted by quantity</span></p>
             <span className="text-[0.62rem] font-extrabold text-amber-800">{facilityRepairs.length} to check</span>
           </div>
           {facilityRepairError && <p role="alert" className="px-5 pt-3 text-xs font-bold text-rose-700 sm:px-6">{facilityRepairError}</p>}
@@ -643,7 +643,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
         </section>}
         {repairSource !== 'facility' && taggedChecks.length > 0 && <section className="overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
           <div className="flex items-center justify-between gap-3 bg-amber-50/60 px-5 py-3 sm:px-6">
-            <p className="text-xs font-extrabold text-amber-900">Tagged units to check</p>
+            <p className="text-xs font-extrabold text-amber-900">Tagged units <span className="font-semibold text-amber-800">· one barcode each</span></p>
             <span className="text-[0.62rem] font-extrabold text-amber-800">{taggedChecks.length} to check</span>
           </div>
           <div className="overflow-auto">

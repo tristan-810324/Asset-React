@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { listFacilityFinanceReport, listGsoRequests, type FacilityFinanceRow } from '../requesters/requesterApi'
 import { formatDateTime } from '../requesters/requesterrequestutils'
-import { listIssuanceRecords } from './issuancesApi'
+import { listIssuanceRecords, listRepairHistory, type RepairHistoryRecord } from './issuancesApi'
 import { listServiceWorkOrders } from './serviceWorkboardApi'
 import { listAuditLogs } from '../admin/auditLogsApi'
 import { listEmployees } from './employeesApi'
@@ -37,6 +37,8 @@ const serviceStatusTone = (status: string) => {
 const FACILITY_DONE = ['Completed', 'Closed', 'Rejected']
 const BORROW_DONE = ['Returned', 'Closed', 'Rejected']
 const LOSS_DONE = ['Completed', 'Closed']
+// Charged reports read "To pay" until Finance settles them, the same as an unserviceable write-off.
+const LOSS_STATUS: Record<string, string> = { CHARGED: 'To pay', NO_CHARGE: 'Waived', FOR_REPAIR: 'For repair', RESOLVED: 'Resolved' }
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000
 const isoDay = (date: Date) => date.toISOString().slice(0, 10)
 // Units that could not be repaired: those the GSO check marked Unserviceable, or an item that came back Unserviceable.
@@ -50,6 +52,20 @@ const writeOffStatus = (row: FacilityFinanceRow) => {
   if (row.writeOffDecision !== 'CHARGED') return 'No decision'
   return row.settlementStatus === 'Paid' || row.settlementStatus === 'Replaced' ? 'Paid' : 'To pay'
 }
+// What a unit's repair ended with: repaired and back in stock, written off (waived or to pay), or still being repaired.
+const repairStatusOf = (record: RepairHistoryRecord) => {
+  if (record.outcome === 'Repaired') return 'Repaired'
+  if (record.outcome === 'Written Off') return record.writeOffDecision === 'CHARGED' ? 'To pay' : 'Waived'
+  return 'In repair'
+}
+const repairTone = (status: string) => ({
+  Repaired: 'bg-emerald-50 text-emerald-700',
+  Done: 'bg-emerald-50 text-emerald-700',
+  'To pay': 'bg-rose-50 text-rose-700',
+  Waived: 'bg-slate-100 text-slate-700',
+  'In repair': 'bg-amber-50 text-amber-800',
+  'Needs Repair': 'bg-amber-50 text-amber-800',
+} as Record<string, string>)[status] ?? 'bg-slate-100 text-slate-700'
 const writeOffTone = (status: string) => status === 'To pay'
   ? 'bg-rose-50 text-rose-700'
   : status === 'Paid' ? 'bg-emerald-50 text-emerald-700'
@@ -182,21 +198,32 @@ async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
       })
   }
   if (tab === 'repair') {
-    // Facility items checked as Needs Repair, with how many were repaired or found unserviceable.
-    const rows = await listFacilityFinanceReport()
-    return rows
+    // Every unit sent to Repair & Maintenance (tagged units and Loss / Damage cases), then facility items checked as Needs Repair.
+    const [repairRecords, facilityRows] = await Promise.all([listRepairHistory(), listFacilityFinanceReport()])
+    const unitRows = repairRecords.map((record) => {
+      const money = record.writeOffDecision === 'CHARGED' && record.estimatedValue ? ` · ₱${Number(record.estimatedValue).toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : ''
+      const where = record.caseReference ? ` · from ${record.caseReference}` : ''
+      return { id: `rep-${record.id}`, date: record.resolvedAt || record.decidedAt, reference: record.tagCode, detail: `${record.itemName} · ${record.owner ?? 'Not assigned'}${money}${where}`, person: record.employeeName ?? '', status: repairStatusOf(record) }
+    })
+    const facilityRepairs = facilityRows
       .filter((row) => row.condition === 'Needs Repair' && row.damagedQuantity > 0)
       .map((row, index) => {
         const pending = row.damagedQuantity - row.repairedQuantity - row.unserviceableQuantity
         return facilityHistoryRow(row, 'rep', index, `${row.damagedQuantity} damaged · ${row.repairedQuantity} repaired · ${row.unserviceableQuantity} unserviceable`, pending > 0 ? 'Needs Repair' : 'Done')
       })
+    return [...unitRows, ...facilityRepairs]
   }
   if (tab === 'loss') {
     // Loss & Damage cases, plus facility items that came back missing.
     const { cases } = await listLossDamageCases()
     const caseRows = cases
-      .filter((item) => LOSS_DONE.includes(item.status))
-      .map((item) => ({ id: `loss-${item.id}`, date: item.updatedAt, reference: item.referenceNo, detail: `${item.title} · ${item.settlement?.resolution ?? 'No decision'}`, person: item.requesterName, status: item.status }))
+      .filter((item) => LOSS_DONE.includes(item.status) || (item.settlement?.status === 'FOR_REPAIR' && Boolean(item.settlement.custodyResolvedAt)))
+      .map((item) => {
+        const amount = item.settlement?.chargeAmount
+        const money = amount ? ` · ₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}` : ''
+        const incident = String(item.formData.incidentType ?? '') === 'DAMAGED' ? 'Damaged' : 'Lost'
+        return { id: `loss-${item.id}`, date: item.updatedAt, reference: item.referenceNo, detail: `${incident}${money}`, person: item.requesterName, status: LOSS_STATUS[item.settlement?.resolution ?? ''] ?? 'Closed' }
+      })
     const missing = (await listFacilityFinanceReport())
       .filter((row) => row.lostQuantity > 0)
       .map((row, index) => facilityHistoryRow(row, 'lost', index, `${row.lostQuantity} missing`, 'Missing'))
@@ -228,6 +255,40 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'reference', label: 'Reference A–Z' },
   { value: 'person', label: 'Person A–Z' },
 ]
+
+// The styled report used by both exports, the same look as the Item Master Data reports.
+// Column widths by name, so each tab exports the same columns it shows on screen.
+const HISTORY_WIDTHS: Record<string, number> = { Person: 170, Date: 150, Reference: 150, Details: 260, 'Items borrowed': 200, 'Reviewed by': 170, Status: 130 }
+const ATTENTION_STATUSES = ['To pay', 'Missing', 'Damaged', 'Rejected', 'Needs Repair', 'In repair', 'Unserviceable']
+const historyStatusStyle = (status: string) => ATTENTION_STATUSES.includes(status)
+  ? 'background:#fff1f2;color:#be123c;'
+  : ['Repaired', 'Paid', 'Done', 'Returned', 'Completed', 'Closed', 'Verified', 'Available'].includes(status)
+    ? 'background:#ecfdf5;color:#047857;'
+    : status === 'Waived' ? 'background:#f1f5f9;color:#334155;' : 'background:#eff6ff;color:#1d4ed8;'
+
+function historyReportParts({ title, note, generatedAt, headers, rows }: { title: string; note: string; generatedAt: string; headers: string[]; rows: string[][] }) {
+  const statusIndex = headers.length - 1
+  const widths = headers.map((label) => HISTORY_WIDTHS[label] ?? 160)
+  const attention = rows.filter((cells) => ATTENTION_STATUSES.includes(cells[statusIndex])).length
+  const header = `<table style="width:100%;margin-bottom:14px;border-collapse:collapse;"><tr><td colspan="${headers.length}" style="padding:18px 20px;background:#09244a;color:#ffffff;">
+    <div style="font-size:9pt;font-weight:bold;letter-spacing:1.2px;color:#bfdbfe;">ASSET CUSTODY &amp; TRACKING</div>
+    <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">${escapeHtml(title)}</h1>
+    <div style="font-size:9pt;color:#dbeafe;">Generated ${escapeHtml(generatedAt)} · ${escapeHtml(note)}</div>
+  </td></tr></table>`
+  // The two tiles split the table's width between them, so they line up with the columns in Excel and Word.
+  const firstSpan = Math.ceil(headers.length / 2)
+  const tile = (label: string, value: number, background: string, color: string, span: number) => `<td colspan="${span}" style="padding:10px 12px;border:1px solid #dbe3ef;background:${background};"><div style="font-size:8pt;color:${color};text-transform:uppercase;">${label}</div><strong style="font-size:16pt;color:${color};">${value}</strong></td>`
+  const summary = `<table style="width:100%;margin-bottom:16px;border-collapse:collapse;"><tr>${tile('Records in this report', rows.length, '#f8fafc', '#09244a', firstSpan)}${tile('Needs attention', attention, '#fff1f2', '#be123c', headers.length - firstSpan)}</tr></table>`
+  // Columns take their share of the full table width, so Word and Excel fill the same space as the banner.
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0)
+  const columns = widths.map((width) => `<col style="width:${((width / totalWidth) * 100).toFixed(1)}%;">`).join('')
+  const head = headers.map((label) =>`<th style="padding:9px 10px;background:#09244a;color:#ffffff;border:1px solid #09244a;text-align:left;">${label}</th>`).join('')
+  const body = rows.map((cells, index) => `<tr style="background:${index % 2 ? '#f8fafc' : '#ffffff'};">${cells.map((cell, column) => column === statusIndex
+    ? `<td style="padding:8px 10px;border:1px solid #dbe3ef;vertical-align:top;"><span style="${historyStatusStyle(cell)}display:inline-block;padding:4px 7px;font-weight:bold;">${escapeHtml(cell)}</span></td>`
+    : `<td style="padding:8px 10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')
+  const table = `<table style="width:100%;border-collapse:collapse;font-size:9pt;table-layout:fixed;"><colgroup>${columns}</colgroup><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
+  return { header, summary, table }
+}
 
 export default function GsoHistory() {
   const [tab, setTab] = useState<TabKey>(() => {
@@ -293,16 +354,23 @@ export default function GsoHistory() {
 
   const reportName = current.label.replace(/[^a-z0-9]+/gi, '_')
   const today = new Date().toISOString().slice(0, 10)
-  const reportCells = (row: HistoryRow) => [dateText(row.date), row.reference, row.detail, row.items || '', row.person, row.status]
+  // Same columns and order as the table on screen: Person, Date, Reference, Details, then the tab's extra column, then Status.
+  const reportHeaders = ['Person', 'Date', 'Reference', 'Details', ...(tab === 'facilities' ? ['Items borrowed'] : []), ...(tab === 'employees' ? ['Reviewed by'] : []), 'Status']
+  const reportCells = (row: HistoryRow) => [personName(row), dateText(row.date), row.reference, row.detail, ...(tab === 'facilities' ? [row.items || 'No items listed'] : []), ...(tab === 'employees' ? [reviewerName(row)] : []), row.status]
+  const reportTitle = `${current.label} History`
+  const reportNote = dateFilter ? `Filtered by date: ${dateFilter}` : 'Includes the records matching the selected filters'
+  const reportGeneratedAt = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())
+  const reportRows = visible.map((row) => reportCells(row).map((cell) => String(cell)))
+  // CSV opens as a styled spreadsheet, like the Item Master Data report.
   const exportCsv = () => {
-    const lines = [['Date', 'Reference', 'Details', 'Items', 'Person', 'Status'], ...visible.map(reportCells)]
-      .map((cells) => cells.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    downloadHistoryFile(`GSO_${reportName}_History_${today}.csv`, ['﻿', lines.join('\r\n')], 'text/csv;charset=utf-8')
+    const report = historyReportParts({ title: reportTitle, note: reportNote, generatedAt: reportGeneratedAt, headers: reportHeaders, rows: reportRows })
+    const workbook = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><meta name="ProgId" content="Excel.Sheet"><title>${escapeHtml(reportTitle)}</title><style>body { font-family: Calibri, Arial, sans-serif; color: #1e293b; } table { border-collapse: collapse; }</style></head><body>${report.header}${report.summary}${report.table}</body></html>`
+    downloadHistoryFile(`GSO_${reportName}_Styled_Report_${today}.xls`, ['﻿', workbook], 'application/vnd.ms-excel;charset=utf-8')
   }
   const exportWord = () => {
-    const body = visible.map((row) => `<tr>${reportCells(row).map((cell) => `<td>${escapeHtml(String(cell))}</td>`).join('')}</tr>`).join('')
-    const html = `<html><head><meta charset="utf-8"><title>${escapeHtml(current.label)} history</title></head><body><h2>${escapeHtml(current.label)} history</h2><p>${visible.length} record(s) · exported ${today}</p><table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;font-family:Arial;font-size:10pt"><thead><tr><th>Date</th><th>Reference</th><th>Details</th><th>Items</th><th>Person</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></body></html>`
-    downloadHistoryFile(`GSO_${reportName}_History_${today}.doc`, ['﻿', html], 'application/msword;charset=utf-8')
+    const report = historyReportParts({ title: reportTitle, note: reportNote, generatedAt: reportGeneratedAt, headers: reportHeaders, rows: reportRows })
+    const wordDocument = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>${escapeHtml(reportTitle)}</title><style>@page Section1 { size: 11in 8.5in; mso-page-orientation: landscape; margin: 0.45in; } div.Section1 { page: Section1; } body { font-family: Arial, sans-serif; color: #1e293b; font-size: 10pt; } table { border-collapse: collapse; } thead { display: table-header-group; } tr { page-break-inside: avoid; }</style></head><body><div class="Section1">${report.header}${report.summary}${report.table}</div></body></html>`
+    downloadHistoryFile(`GSO_${reportName}_Styled_Report_${today}.doc`, ['﻿', wordDocument], 'application/msword;charset=utf-8')
   }
 
   return <GsoPageFrame activePage="History" searchPlaceholder="Search history...">
@@ -425,7 +493,7 @@ export default function GsoHistory() {
                   : <td className="max-w-md px-5 py-4 text-slate-600">{row.detail}</td>}
                 {tab === 'facilities' && <td className="max-w-md px-5 py-4 text-slate-700">{row.items || <span className="text-slate-400">No items listed</span>}</td>}
                 {tab === 'employees' && <td className="px-5 py-4 font-semibold text-slate-800">{reviewerName(row)}</td>}
-                <td className="px-5 py-4 sm:px-6"><span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${tab === 'unserviceable' ? writeOffTone(row.status) : tab === 'service' ? serviceStatusTone(row.status) : tab === 'employees' ? (row.status === 'Verified' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700') : 'bg-slate-100 text-slate-700'}`}>{row.status}</span></td>
+                <td className="px-5 py-4 sm:px-6"><span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${tab === 'unserviceable' || tab === 'loss' ? writeOffTone(row.status) : tab === 'repair' ? repairTone(row.status) : tab === 'service' ? serviceStatusTone(row.status) : tab === 'employees' ? (row.status === 'Verified' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700') : 'bg-slate-100 text-slate-700'}`}>{row.status}</span></td>
               </tr>)}
             </tbody>
           </table>

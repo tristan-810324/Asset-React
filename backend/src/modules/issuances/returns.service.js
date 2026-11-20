@@ -12,7 +12,8 @@ async function notifyReturnRecorded({ employeeCode, requesterTitle, requesterMes
     if (requesterUserId) {
       await notificationsRepository.createUserNotification({
         userId: requesterUserId, type: 'RETURN', title: requesterTitle, message: requesterMessage,
-        href: '/requester/issued-items', dedupeKey: requesterKey,
+        // The returned item leaves My Issued Items, so the notice opens the return record instead.
+        href: '/requester/return-items#return-records', dedupeKey: requesterKey,
       });
     }
     // The department head who handed the item out is told about every return, not only lost or typed ones.
@@ -652,6 +653,11 @@ function issuanceRecordStatus({ issuanceStatus, issueBehavior, outQuantity, acco
   return lostQuantity > 0 && returnedQuantity === 0 ? 'Lost' : 'Returned';
 }
 
+// Repair & Maintenance history for the GSO History page.
+async function listRepairHistory() {
+  return returnsRepository.listRepairHistory({ limit: 1000 });
+}
+
 async function listIssuanceRecords(query) {
   const from = readOptionalDate(query.from, '"From"');
   const to = readOptionalDate(query.to, '"To"');
@@ -765,6 +771,7 @@ async function expirePendingReturns() {
 }
 
 module.exports = {
+  listRepairHistory,
   createEmployeeReturn,
   sendBulkReturnOtp,
   sendTaggedReturnOtp,

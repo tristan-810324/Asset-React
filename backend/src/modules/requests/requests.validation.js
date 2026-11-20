@@ -320,7 +320,8 @@ function validateCreateRequest(input) {
         if (row.identityUnknown !== undefined && typeof row.identityUnknown !== 'boolean') invalid('Choose whether you know the exact unit.');
         const identityUnknown = row.identityUnknown === true;
         const tagCode = text(row.tagCode, 'unit barcode', 100, { optional: true });
-        if (identityUnknown && (incidentType !== 'LOST' || tagCode)) invalid('Only a lost item without a selected asset tag can be marked as unidentified.');
+        // A lost or damaged unit without a picked asset tag is left for GSO to identify.
+        if (identityUnknown && tagCode) invalid('A unit with a selected asset tag cannot be marked as unidentified.');
         return {
           issuanceId,
           tagCode,

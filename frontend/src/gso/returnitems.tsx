@@ -473,7 +473,7 @@ export default function ReturnItems() {
 
                     <dl className="grid grid-cols-2 gap-2">
                       {([
-                        { label: 'Item code', value: `${scannedTag.itemCode} · Unit ${scannedTag.unitNumber}`, note: '' },
+                        { label: 'Item code', value: <>{scannedTag.itemCode} · <span className="font-black text-blue-700">Item {scannedTag.unitNumber}</span></>, note: '' },
                         { label: 'Issued by', value: issuerName, note: [issuerCode, scannedTag.issuedByDepartment].filter(Boolean).join(' · ') },
                         holderIsIssuer && roomDesignated
                           ? { label: 'Used by', value: 'Not assigned to a person', note: `Designated to the room. Under ${issuerName}.` }

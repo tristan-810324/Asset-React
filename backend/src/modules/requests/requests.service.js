@@ -160,6 +160,7 @@ const gsoRequestPages = {
   PURCHASE_REQUISITION: '/gso/purchase-requisitions',
   BORROWING: '/gso/borrowing-requests',
   FACILITY_USE: '/gso/facility-requests',
+  LOSS_DAMAGE_REPORT: '/gso/loss-damage-cases',
 };
 
 // Notifications and audit entries run after the request change is saved, so a failure is

@@ -13,7 +13,7 @@ const itemColumns = `
   COALESCE((
     SELECT json_agg(json_build_object(
       'tagCode', tag.tag_code,
-      'unitNumber', tag.unit_number,
+      'unitNumber', COALESCE(tag.batch_item_number, tag.unit_number),
       'serialNumber', tag.serial_number,
       'location', tag.location,
       'condition', tag.condition,

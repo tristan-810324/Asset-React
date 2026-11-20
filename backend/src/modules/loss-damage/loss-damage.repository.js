@@ -20,7 +20,9 @@ const SETTLEMENT_SELECT = `
          settlement.custody_resolved_at AS "custodyResolvedAt",
          settlement.custody_resolution_summary AS "custodyResolutionSummary",
          settlement.updated_at AS "updatedAt",
-         settlement.facility_asset_ids AS "facilityAssetIds"
+         settlement.facility_asset_ids AS "facilityAssetIds",
+         settlement.charge_amount AS "chargeAmount",
+         settlement.repair_owner AS "repairOwner"
     FROM loss_damage_settlements AS settlement`;
 
 async function withTransaction(work) {
@@ -57,7 +59,7 @@ async function lockCase(client, id) {
   )).rows[0];
   if (!request || request.request_type !== 'LOSS_DAMAGE_REPORT') throw httpError(404, 'Loss / damage case not found.');
   const settlement = (await client.query(
-    `SELECT id, status, resolution, custody_resolved_at, custody_resolution_summary
+    `SELECT id, status, resolution, custody_resolved_at, custody_resolution_summary, repair_owner
        FROM loss_damage_settlements
       WHERE request_id = $1
       FOR UPDATE`,
@@ -107,9 +109,35 @@ async function startReview({ id, userId }) {
 // Reports decided before this workspace existed can still be Approved or In Progress without a settlement.
 const DECIDABLE_STATUSES = ['Under Review', 'Approved', 'In Progress'];
 
-// Saves a GSO decision. No charge resolves custody atomically and closes the report. For repair stays open
-// until closeCase confirms the physical follow-up.
-async function saveDecision({ id, userId, resolution, reason, summary, resolvedUnits }) {
+// The amount GSO charges is the reported quantity times each item's unit cost on the issuance. A row with no
+// issuance on record adds nothing, so GSO must check it. Used for the preview and for the saved charge.
+async function estimateCharge(queryable, reportedItems) {
+  const lines = [];
+  for (const row of Array.isArray(reportedItems) ? reportedItems : []) {
+    const issuanceId = String(row?.issuanceId ?? '');
+    const quantity = Number(row?.quantity) || 0;
+    if (!/^\d{1,20}$/.test(issuanceId) || quantity < 1) continue;
+    const found = (await (queryable || pool).query(
+      `SELECT item.unit_cost, item.description
+         FROM employee_issuances AS issue
+         JOIN item_catalog AS item ON item.id = issue.item_id
+        WHERE issue.id = $1`,
+      [issuanceId],
+    )).rows[0];
+    const unitCost = Number(found?.unit_cost || 0);
+    lines.push({
+      description: row.description || found?.description || 'Item',
+      quantity,
+      unitCost,
+      amount: Math.round(unitCost * quantity * 100) / 100,
+    });
+  }
+  return { total: Math.round(lines.reduce((sum, line) => sum + line.amount, 0) * 100) / 100, lines };
+}
+
+// Saves a GSO decision. No charge resolves custody atomically and closes the report. For repair and charged
+// stay open until closeCase confirms the physical follow-up.
+async function saveDecision({ id, userId, resolution, reason, summary, resolvedUnits, repairOwner }) {
   return withTransaction(async (client) => {
     const { request, settlement } = await lockCase(client, id);
     if (!settlement && !DECIDABLE_STATUSES.includes(request.status)) {
@@ -117,7 +145,7 @@ async function saveDecision({ id, userId, resolution, reason, summary, resolvedU
         ? 'Start the review before you decide.'
         : `This case is ${request.status.toLowerCase()} and cannot be decided.`);
     }
-    if (settlement && !(request.status === 'In Progress' && settlement.status === 'FOR_REPAIR' && !settlement.custody_resolved_at)) {
+    if (settlement && !(request.status === 'In Progress' && ['FOR_REPAIR', 'CHARGED'].includes(settlement.status) && !settlement.custody_resolved_at)) {
       throw httpError(409, 'This decision can no longer be changed.');
     }
 
@@ -131,23 +159,34 @@ async function saveDecision({ id, userId, resolution, reason, summary, resolvedU
       );
     }
 
+    let chargeAmount = null;
+    if (resolution === 'CHARGED') {
+      const items = Array.isArray(request.form_data?.items) ? request.form_data.items : [];
+      chargeAmount = (await estimateCharge(client, resolvedItems || items)).total;
+      if (chargeAmount <= 0) throw httpError(409, 'These items have no cost on record, so there is nothing to charge. Waive the report instead.');
+    }
+
     const changed = Boolean(settlement);
+    const savedOwner = resolution === 'FOR_REPAIR' ? repairOwner : null;
     const saved = (await client.query(
-      `INSERT INTO loss_damage_settlements (request_id, resolution, reason, status, assessed_by_user_id)
-       VALUES ($1, $2, $3, $2, $4)
+      `INSERT INTO loss_damage_settlements (request_id, resolution, reason, status, assessed_by_user_id, charge_amount, repair_owner)
+       VALUES ($1, $2, $3, $2, $4, $5, $6)
        ON CONFLICT (request_id) DO UPDATE SET
          resolution = EXCLUDED.resolution,
          reason = EXCLUDED.reason,
          status = EXCLUDED.status,
          assessed_by_user_id = EXCLUDED.assessed_by_user_id,
+         charge_amount = EXCLUDED.charge_amount,
+         repair_owner = EXCLUDED.repair_owner,
          assessed_at = NOW(),
          updated_at = NOW()
        RETURNING id, custody_resolved_at, custody_resolution_summary`,
-      [id, resolution, reason, userId],
+      [id, resolution, reason, userId, chargeAmount, savedOwner],
     )).rows[0];
 
+    // Waived and damaged-for-repair items leave the requester's holdings now; a charged item waits for the follow-up.
     let inventory = null;
-    if (resolution === 'NO_CHARGE') {
+    if (['NO_CHARGE', 'CHARGED', 'FOR_REPAIR'].includes(resolution)) {
       inventory = await resolveCaseCustody(client, {
         settlement: saved,
         requestId: id,
@@ -156,10 +195,13 @@ async function saveDecision({ id, userId, resolution, reason, summary, resolvedU
         reportedItems: resolvedItems || (Array.isArray(request.form_data?.items) ? request.form_data.items : []),
         resolution,
         userId,
+        repairOwner: savedOwner,
+        charged: resolution === 'CHARGED',
       });
     }
 
-    const requestStatus = resolution === 'NO_CHARGE' ? 'Closed' : 'In Progress';
+    // Once the item has left the holdings, GSO's part is done: the repair itself is tracked in Repair & Maintenance.
+    const requestStatus = ['NO_CHARGE', 'CHARGED', 'FOR_REPAIR'].includes(resolution) ? 'Closed' : 'In Progress';
     await setRequestStatus(client, id, requestStatus);
     await addHistory(client, {
       id,
@@ -168,7 +210,7 @@ async function saveDecision({ id, userId, resolution, reason, summary, resolvedU
       note: `${changed ? 'Decision changed' : 'Decision'}: ${summary}. Reason: ${reason}`,
       userId,
     });
-    return { request: await requestsRepository.getById(client, id), changed, inventory };
+    return { request: await requestsRepository.getById(client, id), changed, inventory, chargeAmount };
   });
 }
 
@@ -229,7 +271,7 @@ async function resolveUnidentifiedUnits(client, formData, resolvedUnits) {
 // Resolving custody is explicitly tied to a GSO decision/closure. The settlement row is locked by the caller;
 // the timestamp makes a repeated close attempt a no-op instead of creating duplicate return records.
 async function resolveCaseCustody(client, {
-  settlement, requestId, referenceNo, incidentType, reportedItems, resolution, userId,
+  settlement, requestId, referenceNo, incidentType, reportedItems, resolution, userId, repairOwner, charged,
 }) {
   if (settlement.custody_resolved_at) {
     return {
@@ -245,6 +287,8 @@ async function resolveCaseCustody(client, {
     reportedItems,
     resolution,
     userId,
+    repairOwner,
+    charged,
   });
   await client.query(
     `UPDATE loss_damage_settlements
@@ -264,7 +308,7 @@ async function closeCase({ id, userId, note }) {
   return withTransaction(async (client) => {
     const { request, settlement } = await lockCase(client, id);
     if (request.status === 'Closed') throw httpError(409, 'This case is already closed.');
-    if (request.status !== 'In Progress' || !settlement || !['FOR_REPAIR', 'RESOLVED'].includes(settlement.status)) {
+    if (request.status !== 'In Progress' || !settlement || !['FOR_REPAIR', 'CHARGED', 'RESOLVED'].includes(settlement.status)) {
       throw httpError(409, 'This case cannot be closed yet. Refresh the page.');
     }
     const inventory = await resolveCaseCustody(client, {
@@ -272,6 +316,7 @@ async function closeCase({ id, userId, note }) {
       requestId: id,
       referenceNo: request.reference_no,
       incidentType: request.form_data?.incidentType,
+      repairOwner: settlement.repair_owner,
       reportedItems: Array.isArray(request.form_data?.items) ? request.form_data.items : [],
       resolution: settlement.resolution,
       userId,
@@ -287,9 +332,9 @@ async function closeCase({ id, userId, note }) {
 //   Damaged -> the unit is set aside in To Be Repaired as Unserviceable, where GSO repairs it or writes it off.
 // The rules match the issuance returns workflow. An item that no longer matches its issuance is left as-is and
 // named in the timeline for GSO to check.
-async function moveReportedItems(client, { requestId, referenceNo, incidentType, reportedItems, resolution, userId }) {
+async function moveReportedItems(client, { requestId, referenceNo, incidentType, reportedItems, resolution, userId, repairOwner, charged }) {
   const lost = incidentType === 'LOST';
-  const action = resolution === 'NO_CHARGE' ? 'no-charge decision' : 'for-repair closure';
+  const action = resolution === 'NO_CHARGE' ? 'no-charge decision' : resolution === 'CHARGED' ? 'charge decision' : 'for-repair closure';
   const reason = `Loss & Damage case ${referenceNo}: ${lost ? 'lost' : 'damaged'} item resolved by GSO (${action}).`;
   const moved = [];
   const skipped = [];
@@ -311,8 +356,8 @@ async function moveReportedItems(client, { requestId, referenceNo, incidentType,
       [row.assetCode, issuanceId],
     )).rows[0];
     const result = tag
-      ? await moveUnit(client, { tag, lost, reason, requestId, userId })
-      : await moveQuantity(client, { issuanceId, quantity: Number(row.quantity), lost, reason, requestId, userId });
+      ? await moveUnit(client, { tag, lost, reason, requestId, userId, repairOwner, charged })
+      : await moveQuantity(client, { issuanceId, quantity: Number(row.quantity), lost, reason, requestId, userId, repairOwner, charged });
     if (result.text) moved.push(result.text);
     else skipped.push(`${label} (${result.why})`);
   }
@@ -322,7 +367,7 @@ async function moveReportedItems(client, { requestId, referenceNo, incidentType,
   return { moved, skipped, summary: parts.join(' ') || 'No reported item needed to move.' };
 }
 
-async function moveUnit(client, { tag, lost, reason, requestId, userId }) {
+async function moveUnit(client, { tag, lost, reason, requestId, userId, repairOwner, charged }) {
   if (tag.custody_status !== 'Issued' || tag.lifecycle_status !== 'Active') return { why: 'no longer issued to the requester' };
   const issue = (await client.query(
     `SELECT id, employee_id, item_id, quantity, returned_quantity, status, unit_of_measure
@@ -341,6 +386,8 @@ async function moveUnit(client, { tag, lost, reason, requestId, userId }) {
     lost,
     quantity: 1,
     reason,
+    repairOwner,
+    charged,
     snapshot: {
       tagCode: tag.tag_code,
       condition: tag.current_condition,
@@ -407,7 +454,7 @@ async function moveUnit(client, { tag, lost, reason, requestId, userId }) {
 }
 
 // Quantity-tracked stock keeps one shared condition, so damaged units are counted in repair_quantity and lost units leave the stock.
-async function moveQuantity(client, { issuanceId, quantity, lost, reason, requestId, userId }) {
+async function moveQuantity(client, { issuanceId, quantity, lost, reason, requestId, userId, repairOwner, charged }) {
   const issue = (await client.query(
     `SELECT issue.id, issue.employee_id, issue.item_id, issue.quantity, issue.returned_quantity, issue.status,
             issue.unit_of_measure, item.item_code, item.description, item.tracking_mode
@@ -425,7 +472,7 @@ async function moveQuantity(client, { issuanceId, quantity, lost, reason, reques
   }
 
   await expirePendingReturns(client, issue.id);
-  await insertReturnRecord(client, { issuanceId: issue.id, tagId: null, lost, quantity, reason, snapshot: null });
+  await insertReturnRecord(client, { issuanceId: issue.id, tagId: null, lost, quantity, reason, snapshot: null, repairOwner, charged });
   await client.query(
     `UPDATE employee_issuances
         SET returned_quantity = returned_quantity + $2,
@@ -464,21 +511,24 @@ async function moveQuantity(client, { issuanceId, quantity, lost, reason, reques
 
 // A decided return row in the shape the returns module writes. Lost reports have no collection flow, so their
 // settlement is recorded as waived; damaged items remain open in the repair queue.
-async function insertReturnRecord(client, { issuanceId, tagId, lost, quantity, reason, snapshot }) {
+async function insertReturnRecord(client, { issuanceId, tagId, lost, quantity, reason, snapshot, repairOwner, charged }) {
   await client.query(
     `INSERT INTO employee_issuance_returns (
        issuance_id, asset_unit_tag_id, requested_by_user_id, status, token_hash, token_expires_at,
        return_condition, reason, decision_note, decided_at, quantity, tag_snapshot,
-       settlement_status, settlement_note, settled_at
-     ) VALUES ($1, $2, NULL, $3, $4, NOW(), $5, $6, $7, NOW(), $8, $9::JSONB, $10, $11, $12)`,
+       settlement_status, settlement_note, settled_at, repair_owner
+     ) VALUES ($1, $2, NULL, $3, $4, NOW(), $5, $6, $7, NOW(), $8, $9::JSONB, $10, $11, $12, $13)`,
     [
       issuanceId, tagId, lost ? 'Lost' : 'Returned', crypto.randomBytes(32).toString('hex'),
       lost ? 'Lost' : 'Unserviceable', reason,
       'Recorded when GSO resolved this Loss & Damage case.', quantity,
       snapshot ? JSON.stringify(snapshot) : null,
-      lost ? 'Waived' : null,
-      lost ? 'Resolved through a GSO Loss & Damage decision.' : null,
-      lost ? new Date() : null,
+      // A charged loss is reported to Finance and stays Pending until Finance settles it; a waived one is settled now.
+      lost ? (charged ? 'Pending' : 'Waived') : null,
+      lost ? (charged ? 'Reported to Finance for payment.' : 'Resolved through a GSO Loss & Damage decision.') : null,
+      lost && !charged ? new Date() : null,
+      // A damaged unit is repaired by the owner GSO picked; a lost unit has no repair.
+      lost ? null : (repairOwner === 'ITSS' ? 'ITSS' : 'GSO'),
     ],
   );
 }
@@ -493,10 +543,33 @@ async function expirePendingReturns(client, issuanceId) {
   );
 }
 
+// What Repair & Maintenance did with each unit of this report, read from the return record that moved it out.
+// Only the units of this report's issuances count, and the latest record per barcode is used.
+async function repairOutcomesFor({ tagCodes, issuanceIds }) {
+  if (!tagCodes.length || !issuanceIds.length) return [];
+  const result = await pool.query(
+    `SELECT DISTINCT ON (return_record.tag_snapshot->>'tagCode')
+            return_record.tag_snapshot->>'tagCode' AS "tagCode",
+            return_record.repair_outcome AS outcome,
+            return_record.repair_owner AS owner,
+            return_record.write_off_decision AS "writeOffDecision",
+            return_record.write_off_estimated_value AS "estimatedValue"
+       FROM employee_issuance_returns AS return_record
+      WHERE return_record.tag_snapshot->>'tagCode' = ANY($1::TEXT[])
+        AND return_record.issuance_id = ANY($2::BIGINT[])
+        AND return_record.status = 'Returned'
+      ORDER BY return_record.tag_snapshot->>'tagCode', return_record.id DESC`,
+    [tagCodes, issuanceIds],
+  );
+  return result.rows;
+}
+
 module.exports = {
   listSettlements,
   getSettlement,
   startReview,
   saveDecision,
   closeCase,
+  estimateCharge,
+  repairOutcomesFor,
 };

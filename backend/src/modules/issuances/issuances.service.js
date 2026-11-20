@@ -254,11 +254,9 @@ async function createIssuanceBatch(input, user) {
     blockers: await issuancesRepository.getEmployeeReturnBlockers(recipientCode),
   })));
   for (const { employeeCode: recipientCode, blockers } of recipientBlockers) {
-    if (!blockers.overdue && !blockers.unsettled) continue
-    const problems = [
-      blockers.overdue ? `${blockers.overdue} overdue na hiniram na hindi pa naisasauli` : '',
-      blockers.unsettled ? `${blockers.unsettled} nawalang item na hindi pa naaayos ang settlement` : '',
-    ].filter(Boolean).join(' at ');
+    // Unsettled lost items no longer block a new issuance; Finance settles them on its own.
+    if (!blockers.overdue) continue
+    const problems = `${blockers.overdue} overdue na hiniram na hindi pa naisasauli`;
     throw httpError(409, `Hindi muna ma-issue-han si ${recipientCode}: may ${problems}. Ayusin muna ito sa Return Items.`);
   }
   const token = crypto.randomBytes(32).toString('base64url');
@@ -465,8 +463,8 @@ async function getAssetTag(tagCodeValue) {
   if (tag.retiredLabel) {
     const retiredOn = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date(tag.replacedAt));
     throw httpError(409, tag.kind === 'return'
-      ? `Hindi na gumagana ang label na ito. Naibalik na ang ${tag.itemName} (${tag.itemCode}, unit ${tag.unitNumber}) noong ${retiredOn}. Tanggalin ang lumang label; bagong label ang ipi-print kapag na-issue ulit ang unit.`
-      : `Luma na ang label na ito. Pinalitan ito noong ${retiredOn} ng label #${tag.labelVersion} para sa ${tag.itemName} (${tag.itemCode}, unit ${tag.unitNumber}). I-scan ang bagong label na nasa unit, at itapon ang lumang label.`);
+      ? `Hindi na gumagana ang label na ito. Naibalik na ang ${tag.itemName} (${tag.itemCode}, item ${tag.unitNumber}) noong ${retiredOn}. Tanggalin ang lumang label; bagong label ang ipi-print kapag na-issue ulit ang unit.`
+      : `Luma na ang label na ito. Pinalitan ito noong ${retiredOn} ng label #${tag.labelVersion} para sa ${tag.itemName} (${tag.itemCode}, item ${tag.unitNumber}). I-scan ang bagong label na nasa unit, at itapon ang lumang label.`);
   }
   if (tag.barcodeNotGenerated) {
     throw httpError(409, `Wala pang unit barcode ang ${tag.itemCode}. Hintayin munang maaprubahan ang issuance.`);

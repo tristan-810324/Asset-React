@@ -59,6 +59,20 @@ async function createUnitTags(client, issuance, assignedUserId) {
     unitNumber: tag.unitNumber,
   }));
 
+  // Item numbers restart for each transaction: this issuance takes the next numbers after those already given out.
+  const batchOf = await client.query('SELECT batch_id FROM employee_issuances WHERE id = $1', [issuance.id]);
+  const batchId = batchOf.rows[0]?.batch_id;
+  const reserved = batchId
+    ? await client.query(
+      `UPDATE employee_issuance_batches
+          SET numbered_items = numbered_items + $2
+        WHERE id = $1
+        RETURNING numbered_items - $2::INTEGER AS before_count`,
+      [batchId, Number(issuance.quantity)],
+    )
+    : null;
+  const firstItemNumber = reserved ? Number(reserved.rows[0].before_count) + 1 : null;
+
   if (tags.length > 0) {
     await client.query(
       `UPDATE asset_unit_tags
@@ -70,6 +84,12 @@ async function createUnitTags(client, issuance, assignedUserId) {
         WHERE id = ANY($1::BIGINT[])`,
       [tags.map((tag) => tag.id), issuance.id, issuance.employee_id, assignedUserId],
     );
+    if (firstItemNumber !== null) {
+      for (const [index, tag] of tags.entries()) {
+        await client.query('UPDATE asset_unit_tags SET batch_item_number = $2 WHERE id = $1', [tag.id, firstItemNumber + index]);
+        tag.unitNumber = firstItemNumber + index;
+      }
+    }
   }
 
   const remainingQuantity = Number(issuance.quantity) - tags.length;
@@ -85,14 +105,15 @@ async function createUnitTags(client, issuance, assignedUserId) {
     const createdTags = await client.query(
       `INSERT INTO asset_unit_tags (
          tag_code, item_id, issuance_id, unit_number, serial_number, location, condition, lifecycle_status,
-         custody_status, assigned_employee_id, assigned_user_id
+         custody_status, assigned_employee_id, assigned_user_id, batch_item_number
        )
        SELECT generated_tag.tag_code, $1, $2,
               $3 + generated_tag.unit_offset::INTEGER - 1,
               CASE WHEN generated_tag.unit_offset = 1 THEN NULLIF($8::TEXT, '') ELSE NULL END,
-              COALESCE(NULLIF($9::TEXT, ''), 'GSO Storage'), $4, 'Active', 'Issued', $5, $6
+              COALESCE(NULLIF($9::TEXT, ''), 'GSO Storage'), $4, 'Active', 'Issued', $5, $6,
+              $10::INTEGER + generated_tag.unit_offset::INTEGER - 1
          FROM UNNEST($7::TEXT[]) WITH ORDINALITY AS generated_tag(tag_code, unit_offset)
-       RETURNING id::TEXT AS id, tag_code AS "tagCode", unit_number AS "unitNumber"`,
+       RETURNING id::TEXT AS id, tag_code AS "tagCode", COALESCE(batch_item_number, unit_number) AS "unitNumber"`,
       [
         issuance.item_id,
         issuance.id,
@@ -103,6 +124,7 @@ async function createUnitTags(client, issuance, assignedUserId) {
         generatedTagCodes,
         asset.serialNumber || '',
         asset.location || 'GSO Storage',
+        firstItemNumber === null ? null : firstItemNumber + tags.length,
       ],
     );
     tags.push(...createdTags.rows);
@@ -882,8 +904,8 @@ async function listMyPendingIssuanceBatches(userId) {
                 'tags', COALESCE((
                   SELECT json_agg(json_build_object(
                     'tagCode', unit_tag.tag_code,
-                    'unitNumber', unit_tag.unit_number
-                  ) ORDER BY unit_tag.unit_number)
+                    'unitNumber', COALESCE(unit_tag.batch_item_number, unit_tag.unit_number)
+                  ) ORDER BY COALESCE(unit_tag.batch_item_number, unit_tag.unit_number))
                     FROM asset_unit_tags AS unit_tag
                    WHERE unit_tag.issuance_id = issue.id
                 ), '[]'::JSON)
@@ -966,10 +988,10 @@ async function listMyIssuanceActivity(userId) {
                 'tags', COALESCE((
                   SELECT json_agg(json_build_object(
                     'tagCode', unit_tag.tag_code,
-                    'unitNumber', unit_tag.unit_number,
+                    'unitNumber', COALESCE(unit_tag.batch_item_number, unit_tag.unit_number),
                     -- Available means the unit is back with GSO; the Loss / Damage Report lists only units still out.
                     'custodyStatus', unit_tag.custody_status
-                  ) ORDER BY unit_tag.unit_number)
+                  ) ORDER BY COALESCE(unit_tag.batch_item_number, unit_tag.unit_number))
                     FROM asset_unit_tags AS unit_tag
                    WHERE unit_tag.issuance_id = issue.id
                 ), '[]'::JSON)
@@ -1173,11 +1195,11 @@ async function getIssuanceBatch(batchId) {
                    'returned', tag_set.returned
                  ) ORDER BY tag_set.unit_number)
                    FROM (
-                     SELECT tag.tag_code, tag.unit_number, tag.label_printed_at, FALSE AS returned
+                     SELECT tag.tag_code, COALESCE(tag.batch_item_number, tag.unit_number) AS unit_number, tag.label_printed_at, FALSE AS returned
                        FROM asset_unit_tags AS tag
                       WHERE tag.issuance_id = issue.id
                      UNION
-                     SELECT COALESCE(return_record.tag_snapshot->>'tagCode', tag.tag_code), tag.unit_number, NULL::TIMESTAMPTZ, TRUE
+                     SELECT COALESCE(return_record.tag_snapshot->>'tagCode', tag.tag_code), COALESCE(tag.batch_item_number, tag.unit_number), NULL::TIMESTAMPTZ, TRUE
                        FROM employee_issuance_returns AS return_record
                        JOIN asset_unit_tags AS tag ON tag.id = return_record.asset_unit_tag_id
                       WHERE return_record.issuance_id = issue.id
@@ -1250,11 +1272,11 @@ async function listApprovedIssuanceBatches() {
                                'unitNumber', tag_set.unit_number
                              ) ORDER BY tag_set.unit_number)
                         FROM (
-                          SELECT tag.id, tag.tag_code, tag.unit_number
+                          SELECT tag.id, tag.tag_code, COALESCE(tag.batch_item_number, tag.unit_number) AS unit_number
                             FROM asset_unit_tags AS tag
                            WHERE tag.issuance_id = issue.id
                           UNION
-                          SELECT tag.id, tag.tag_code, tag.unit_number
+                          SELECT tag.id, tag.tag_code, COALESCE(tag.batch_item_number, tag.unit_number) AS unit_number
                             FROM employee_issuance_returns AS return_record
                             JOIN asset_unit_tags AS tag ON tag.id = return_record.asset_unit_tag_id
                            WHERE return_record.issuance_id = issue.id
@@ -1277,7 +1299,7 @@ async function getAssetTagByCode(tagCode) {
   const result = await pool.query(
     `SELECT tag.id::TEXT AS id,
             tag.tag_code AS "tagCode",
-            tag.unit_number AS "unitNumber",
+            COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
             COALESCE(NULLIF(btrim(tag.serial_number), ''), NULLIF(btrim(item.serial_number), '')) AS "serialNumber",
             tag.condition,
             tag.lifecycle_status AS "lifecycleStatus",
@@ -1359,7 +1381,7 @@ async function getAssetTagByCode(tagCode) {
     `SELECT reprint.created_at AS "replacedAt",
             reprint.kind,
             reprint.label_version AS "labelVersion",
-            tag.unit_number AS "unitNumber",
+            COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
             item.item_code AS "itemCode",
             COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName"
        FROM asset_label_reprints AS reprint

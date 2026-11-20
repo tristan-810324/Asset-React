@@ -8,7 +8,8 @@ const auditRepository = require('../audit/audit.repository');
 const { validateRequestId } = require('../requests/requests.validation');
 const repository = require('./loss-damage.repository');
 
-const RESOLUTION_LABELS = { NO_CHARGE: 'No charge', FOR_REPAIR: 'For repair' };
+// Waive (NO_CHARGE) closes the report. Charge (CHARGED) keeps it open until the follow-up, and the requester pays Finance.
+const RESOLUTION_LABELS = { NO_CHARGE: 'Waived', CHARGED: 'Charged', FOR_REPAIR: 'For repair' };
 const GSO_PAGE = '/gso/loss-damage-cases';
 
 const fail = (message, status = 400) => Object.assign(new Error(message), { status, expose: true });
@@ -91,7 +92,13 @@ function audit(request, userId, reason, values = {}) {
 async function loadCase(id) {
   const request = await requestsRepository.getById(null, id);
   if (!request || request.requestType !== 'LOSS_DAMAGE_REPORT') throw fail('Loss / damage case not found.', 404);
-  return { ...request, settlement: await repository.getSettlement(null, id) };
+  const items = Array.isArray(request.formData?.items) ? request.formData.items : [];
+  return {
+    ...request,
+    settlement: await repository.getSettlement(null, id),
+    // Calculated from the item costs, shown to GSO before they choose Waive or Charge.
+    chargeEstimate: await repository.estimateCharge(null, items),
+  };
 }
 
 async function caseResult(id) {
@@ -101,7 +108,16 @@ async function caseResult(id) {
 async function listCases() {
   const requests = await requestsRepository.listAll({ requestType: 'LOSS_DAMAGE_REPORT', status: '', search: '' });
   const settlements = await repository.listSettlements(requests.map((request) => String(request.id)));
-  return { cases: requests.map((request) => ({ ...request, settlement: settlements.get(String(request.id)) || null })) };
+  const cases = [];
+  for (const request of requests) {
+    const items = Array.isArray(request.formData?.items) ? request.formData.items : [];
+    cases.push({
+      ...request,
+      settlement: settlements.get(String(request.id)) || null,
+      chargeEstimate: await repository.estimateCharge(null, items),
+    });
+  }
+  return { cases };
 }
 
 async function getCase(idValue) {
@@ -120,17 +136,21 @@ async function startReview(idValue, user) {
 async function decide(idValue, input, user) {
   const id = validateRequestId(idValue);
   const resolution = typeof input?.resolution === 'string' ? input.resolution : '';
-  if (!RESOLUTION_LABELS[resolution]) throw fail('Choose No charge or For repair.');
+  // FOR_REPAIR is the damaged route: the item goes to To Be Repaired under the owner GSO picks.
+  if (!RESOLUTION_LABELS[resolution]) throw fail('Choose Waive, Charge, or Send to repair.');
+  const repairOwner = resolution === 'FOR_REPAIR' ? String(input?.repairOwner ?? '') : '';
+  if (resolution === 'FOR_REPAIR' && !['GSO', 'ITSS'].includes(repairOwner)) throw fail('Choose GSO or ITSS to repair the item.');
   const reason = requiredText(input.reason, 'reason for the decision', 1000);
-  const summary = RESOLUTION_LABELS[resolution];
+  const summary = resolution === 'FOR_REPAIR' ? `To be repaired by ${repairOwner}` : RESOLUTION_LABELS[resolution];
 
-  const { request, changed, inventory } = await repository.saveDecision({
+  const { request, changed, inventory, chargeAmount } = await repository.saveDecision({
     id,
     userId: user.id,
     resolution,
     reason,
     summary,
     resolvedUnits: input?.resolvedUnits,
+    repairOwner: repairOwner || null,
   });
   await resolveNotices(`staff-new:${id}:`, `staff-reply:${id}:`);
   await audit(request, user.id, `${changed ? 'Decision changed' : 'Decision'}: ${summary}. Reason: ${reason}`, {
@@ -143,8 +163,27 @@ async function decide(idValue, input, user) {
     await notifyRequester(request, 'decision', 'No charge for your report', `GSO decided there is no charge and closed the case. Reason: ${reason}${custodyMessage}`);
     await notifyStaff(request, 'closed', 'Loss / damage case closed', `No charge was recorded and the case was closed.${custodyMessage}`);
     await notifyHead(request, 'closed', 'Loss / damage case closed', `GSO recorded no charge and closed ${request.referenceNo}.${custodyMessage}`);
+  } else if (resolution === 'CHARGED') {
+    // GSO only reports the amount; Finance collects it. The case closes here, like a repair write-off.
+    const amount = Number(chargeAmount).toLocaleString('en-PH', { minimumFractionDigits: 2 });
+    const custodyMessage = inventory?.summary ? ` ${inventory.summary}` : '';
+    await notifyRequester(request, 'decision', 'Payment needed for your report', `Pay ₱${amount} at the Finance office in person. Reason: ${reason}`);
+    await notifyStaff(request, 'closed', 'Loss / damage reported to Finance', `Reported ₱${amount} to Finance. The case is closed.${custodyMessage}`);
+    await notifyHead(request, 'closed', 'Loss / damage reported to Finance', `${request.referenceNo}: ₱${amount} reported to Finance.${custodyMessage}`);
   } else {
-    await notifyRequester(request, 'decision', 'GSO will repair the item', `No charge is needed. GSO will complete the physical follow-up before closing the case. Reason: ${reason}`);
+    const ownerLabel = repairOwner === 'ITSS' ? 'ITSS' : 'GSO';
+    await notifyRequester(request, 'decision', 'Your item is being repaired', `GSO sent the damaged item to ${ownerLabel} for repair. Reason: ${reason}`);
+    if (repairOwner === 'ITSS') {
+      await sideEffect('ITSS repair notice', () => notificationsRepository.createRoleNotification({
+        roleKey: 'IT_ADMIN',
+        type: 'REQUEST',
+        title: 'Damaged item sent to ITSS for repair',
+        message: `${request.referenceNo}: a damaged item was sent to ITSS for repair. Reason: ${reason}`,
+        href: '/admin/repair',
+        dedupeKey: `loss-damage-itss:${id}:${Date.now()}`,
+      }));
+    }
+    await notifyStaff(request, 'closed', 'Damaged item sent to repair', `Sent to ${ownerLabel} for repair. The case is closed; the repair is tracked in Repair & Maintenance.`);
   }
   return caseResult(id);
 }
@@ -174,13 +213,21 @@ async function getMine(idValue, user) {
   const request = await requestsRepository.getMineById(id, user.id);
   if (!request || request.requestType !== 'LOSS_DAMAGE_REPORT') throw fail('Request not found.', 404);
   const settlement = await repository.getSettlement(null, id);
+  const rows = Array.isArray(request.formData?.items) ? request.formData.items : [];
+  const repairs = await repository.repairOutcomesFor({
+    tagCodes: rows.map((row) => String(row?.assetCode || '')).filter(Boolean),
+    issuanceIds: rows.map((row) => String(row?.issuanceId || '')).filter((value) => /^\d{1,20}$/.test(value)),
+  });
   return {
+    repairs,
     requestStatus: request.status,
     settlement: settlement ? {
       resolution: settlement.resolution,
       reason: settlement.reason,
       status: settlement.status,
       decidedAt: settlement.assessedAt,
+      chargeAmount: settlement.chargeAmount ?? null,
+      repairOwner: settlement.repairOwner ?? null,
       assessedBy: settlement.assessedBy,
       custodyResolvedAt: settlement.custodyResolvedAt,
       custodyResolutionSummary: settlement.custodyResolutionSummary,
