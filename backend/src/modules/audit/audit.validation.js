@@ -43,11 +43,15 @@ function validateAuditLogFilters(query) {
   const search = query.search === undefined ? '' : String(query.search).trim();
   if (search.length > 200) invalid('Hindi dapat lumampas sa 200 characters ang search.');
 
+  // 'requisitions' = purchase requisition and main issuance entries only (see audit.repository.js).
+  const module = query.module === undefined || query.module === '' ? 'all' : query.module;
+  if (module !== 'all' && module !== 'requisitions') invalid('Hindi valid ang audit log module filter.');
+
   const from = parseDate(query.from, 'Petsa mula');
   const to = parseDate(query.to, 'Petsa hanggang');
   if (from && to && from > to) invalid('Hindi puwedeng mas huli ang petsa mula kaysa petsa hanggang.');
 
-  return { limit: limitValue, offset: offsetValue, action, entityType, flag, search, from, to };
+  return { limit: limitValue, offset: offsetValue, action, entityType, flag, search, from, to, module };
 }
 
 module.exports = { validateAuditLogFilters };

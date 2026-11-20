@@ -4,6 +4,7 @@ import { listFacilityFinanceReport, listGsoRequests, type FacilityFinanceRow } f
 import { formatDateTime } from '../requesters/requesterrequestutils'
 import { listIssuanceRecords } from './issuancesApi'
 import { listServiceWorkOrders } from './serviceWorkboardApi'
+import { listAuditLogs } from '../admin/auditLogsApi'
 import { listEmployees } from './employeesApi'
 import { listLossDamageCases } from './lossDamageCasesApi'
 
@@ -17,11 +18,21 @@ const TABS: { key: TabKey; label: string; ready: boolean }[] = [
   { key: 'loss', label: 'Loss & Damage', ready: true },
   { key: 'repair', label: 'Repair & Maintenance', ready: true },
   { key: 'unserviceable', label: 'Unserviceable', ready: true },
-  { key: 'employees', label: 'Employees', ready: false },
-  { key: 'requisitions', label: 'Requisitions & Issuances', ready: false },
+  { key: 'employees', label: 'Employees', ready: true },
+  { key: 'requisitions', label: 'Requisitions & Issuances', ready: true },
 ]
 
-type HistoryRow = { id: string; date: string | null; reference: string; detail: string; items?: string; person: string; personEmail?: string; status: string }
+type HistoryRow = { id: string; date: string | null; reference: string; detail: string; items?: string; person: string; personEmail?: string; status: string; service?: { title: string; team: string; claimedBy: string | null; closedAt: string | null }; actorName?: string; actorEmail?: string }
+
+// Service Workboard job statuses, coloured the way the workboard cards are.
+const serviceStatusTone = (status: string) => {
+  if (status === 'In Progress') return 'bg-blue-50 text-blue-700'
+  if (status === 'Awaiting Requester Confirmation') return 'bg-violet-50 text-violet-700'
+  if (['Closed', 'Completed'].includes(status)) return 'bg-emerald-50 text-emerald-700'
+  if (['Rejected', 'Cancelled'].includes(status)) return 'bg-rose-50 text-rose-700'
+  if (status === 'Needs Information') return 'bg-amber-50 text-amber-700'
+  return 'bg-slate-100 text-slate-700'
+}
 
 const FACILITY_DONE = ['Completed', 'Closed', 'Rejected']
 const BORROW_DONE = ['Returned', 'Closed', 'Rejected']
@@ -109,15 +120,51 @@ async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
   if (tab === 'service') {
     // Every job on the GSO Service Workboard and the ITSS Support Queue, with who claimed it and when it closed.
     // A queue the user cannot open is skipped. The status filter narrows the list.
-    const results = await Promise.allSettled((['GSO', 'ITSS'] as const).map((team) => listServiceWorkOrders({ team, limit: 200 })))
+    // The backend caps one page at 100 jobs per team.
+    const results = await Promise.allSettled((['GSO', 'ITSS'] as const).map((team) => listServiceWorkOrders({ team, limit: 100 })))
+    // Only fail the whole tab when no team could be read; one team the user cannot open is still skipped.
+    if (results.every((result) => result.status === 'rejected')) throw (results[0] as PromiseRejectedResult).reason
     return results
       .flatMap((result) => (result.status === 'fulfilled' ? result.value.workOrders : []))
       .map((order) => {
         const claimed = typeof order.claimedBy === 'string' ? order.claimedBy : order.claimedBy?.name
         const closed = order.closedAt ? `Closed ${formatDateTime(order.closedAt)}` : ''
         const detail = [order.title, order.routeTeam, claimed ? `Claimed by ${claimed}` : 'Not claimed', closed].filter(Boolean).join(' · ')
-        return { id: `svc-${order.id}`, date: order.closedAt || order.completedAt || order.updatedAt || null, reference: order.referenceNo, detail, person: order.requester?.name || '—', status: order.status }
+        return {
+          id: `svc-${order.id}`, date: order.closedAt || order.completedAt || order.updatedAt || null, reference: order.referenceNo, detail, person: order.requester?.name || '—', status: order.status,
+          service: { title: order.title, team: order.routeTeam, claimedBy: claimed || null, closedAt: order.closedAt || null },
+        }
       })
+  }
+  if (tab === 'requisitions') {
+    // Every purchase requisition step and main issuance entry from the audit log, newest first.
+    // shortcut: only the newest 100 entries are read, add paging when the list gets long.
+    const requisitionActionLabel: Record<string, string> = { requested: 'Requested', issued: 'Issued', approved: 'Approved', rejected: 'Declined', cancelled: 'Cancelled', updated: 'Updated', received: 'Delivery linked' }
+    const page = await listAuditLogs({ limit: 100, offset: 0, action: 'all', entityType: 'all', flag: 'all', search: '', from: '', to: '', module: 'requisitions' })
+    return page.logs.map((log) => ({
+      id: `req-${log.id}`,
+      date: log.changedAt,
+      reference: log.entityId,
+      detail: log.reason,
+      person: log.changedBy || 'System',
+      status: requisitionActionLabel[log.action] ?? log.action,
+    }))
+  }
+  if (tab === 'employees') {
+    // Requester accounts verified or sent back for correction in Requester Verification.
+    const page = await listAuditLogs({ limit: 100, offset: 0, action: 'all', entityType: 'employee', flag: 'all', search: '', from: '', to: '' })
+    return page.logs
+      .filter((log) => log.newValues?.requesterVerification === true)
+      .map((log) => ({
+        id: `emp-${log.id}`,
+        date: log.changedAt,
+        reference: `ACC-${log.entityId}`,
+        detail: log.reason,
+        person: log.entityName,
+        status: log.newValues.status === 'Verified' ? 'Verified' : 'Needs Correction',
+        actorName: typeof log.newValues.reviewerName === 'string' ? log.newValues.reviewerName : (log.changedBy || 'GSO'),
+        actorEmail: typeof log.newValues.reviewerEmail === 'string' ? log.newValues.reviewerEmail : undefined,
+      }))
   }
   if (tab === 'unserviceable') {
     // Every facility item that could not be repaired, whether it came back Unserviceable or was checked as Unserviceable.
@@ -202,6 +249,8 @@ export default function GsoHistory() {
       .catch(() => setEmployeeNames({}))
   }, [])
   const personName = (row: HistoryRow) => (row.personEmail && employeeNames[row.personEmail.toLowerCase()]) || row.person
+  // The GSO staff member who reviewed a requester account, shown by full name when the employee record has it.
+  const reviewerName = (row: HistoryRow) => (row.actorEmail && employeeNames[row.actorEmail.toLowerCase()]) || row.actorName || '—'
   const current = TABS.find((item) => item.key === tab) ?? TABS[0]
 
   const selectModule = (key: TabKey) => {
@@ -350,6 +399,7 @@ export default function GsoHistory() {
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Reference</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Details</th>
                 {tab === 'facilities' && <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Items borrowed</th>}
+                {tab === 'employees' && <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Reviewed by</th>}
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Status</th>
               </tr>
             </thead>
@@ -363,9 +413,19 @@ export default function GsoHistory() {
                 </td>
                 <td className="whitespace-nowrap px-5 py-4 font-semibold">{dateText(row.date)}</td>
                 <td className="px-5 py-4 font-extrabold text-slate-900">{row.reference}</td>
-                <td className="max-w-md px-5 py-4 text-slate-600">{row.detail}</td>
+                {row.service
+                  ? <td className="max-w-md px-5 py-4">
+                    <p className="truncate font-bold text-slate-900" title={row.service.title}>{row.service.title || 'Service request'}</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      <span className={`rounded-full px-2 py-0.5 text-[0.6rem] font-extrabold ${row.service.team === 'ITSS' ? 'bg-indigo-50 text-indigo-700' : 'bg-blue-50 text-blue-700'}`}>{row.service.team === 'ITSS' ? 'ITSS Support' : 'GSO Facilities'}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">{row.service.claimedBy ? `Claimed by ${row.service.claimedBy}` : 'Not claimed'}</span>
+                      {row.service.closedAt && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">Closed {dateText(row.service.closedAt)}</span>}
+                    </div>
+                  </td>
+                  : <td className="max-w-md px-5 py-4 text-slate-600">{row.detail}</td>}
                 {tab === 'facilities' && <td className="max-w-md px-5 py-4 text-slate-700">{row.items || <span className="text-slate-400">No items listed</span>}</td>}
-                <td className="px-5 py-4 sm:px-6"><span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${tab === 'unserviceable' ? writeOffTone(row.status) : 'bg-slate-100 text-slate-700'}`}>{row.status}</span></td>
+                {tab === 'employees' && <td className="px-5 py-4 font-semibold text-slate-800">{reviewerName(row)}</td>}
+                <td className="px-5 py-4 sm:px-6"><span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${tab === 'unserviceable' ? writeOffTone(row.status) : tab === 'service' ? serviceStatusTone(row.status) : tab === 'employees' ? (row.status === 'Verified' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700') : 'bg-slate-100 text-slate-700'}`}>{row.status}</span></td>
               </tr>)}
             </tbody>
           </table>

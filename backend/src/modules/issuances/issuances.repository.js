@@ -1972,6 +1972,9 @@ async function listEmployeeIssuances(employeeCode) {
               inventory.tracking_mode AS "trackingMode",
               inventory.issue_behavior AS "issueBehavior",
               issue.item_condition AS condition,
+              issue.recipient_location AS location,
+              issue.recipient_purpose AS purpose,
+              issuer.name AS "issuedByName",
               CASE WHEN inventory.tracking_mode = 'individual' THEN COALESCE((
                 SELECT COUNT(tag.id)::INTEGER
                   FROM asset_unit_tags AS tag
@@ -1992,7 +1995,16 @@ async function listEmployeeIssuances(employeeCode) {
               ), '[]'::JSON) AS "assetTagCodes"
          FROM employee_issuances AS issue
          JOIN item_catalog AS inventory ON inventory.id = issue.item_id
+         LEFT JOIN users AS issuer ON issuer.id = issue.requested_by_user_id
          WHERE issue.employee_id = $1 AND issue.status = 'Issued'
+           -- Only units still with the employee: a returned unit must not stay listed, even if its issuance is still open.
+           AND (inventory.tracking_mode <> 'quantity' OR issue.quantity > issue.returned_quantity)
+           AND (inventory.tracking_mode <> 'individual' OR EXISTS (
+                SELECT 1 FROM asset_unit_tags AS tag
+                 WHERE tag.issuance_id = issue.id
+                   AND tag.assigned_employee_id = $1
+                   AND tag.custody_status = 'Issued'
+                   AND tag.lifecycle_status = 'Active'))
          ORDER BY issue.decided_at DESC, issue.id DESC`,
       [employee.id],
     ),
@@ -2086,7 +2098,24 @@ async function listEmployeeIssuances(employeeCode) {
     ),
   ]);
 
-  return { assignedItems: itemsResult.rows, history: historyResult.rows };
+  // The department head of the employee's department: the verified requester whose position is Head.
+  const headResult = await pool.query(
+    `SELECT head_user.name
+       FROM employees AS staff
+       JOIN employees AS head
+         ON lower(trim(head.department)) = lower(trim(staff.department)) AND head.status = 'Active'
+       JOIN requester_identity_profiles AS profile
+         ON lower(trim(profile.employee_code)) = lower(trim(head.employee_code))
+            AND profile.verification_status = 'Verified'
+       JOIN users AS head_user ON head_user.id = profile.user_id
+      WHERE lower(trim(staff.employee_code)) = lower(trim($1))
+        AND lower(trim(profile.position)) = 'head'
+      ORDER BY profile.reviewed_at DESC NULLS LAST, profile.user_id
+      LIMIT 1`,
+    [employeeCode],
+  );
+
+  return { assignedItems: itemsResult.rows, history: historyResult.rows, departmentHead: headResult.rows[0]?.name || null };
 }
 
 // Unfinished returns that stop new issuances to an employee until GSO sorts them out.

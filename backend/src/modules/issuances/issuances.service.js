@@ -514,6 +514,15 @@ async function decideMyIssuanceBatch(batchIdValue, input, user) {
   if (result.notFound) throw httpError(404, 'Hindi makita ang pending issuance para sa verified employee account na ito.');
   if (result.expired) throw httpError(410, 'Nag-expire na ang issuance request at naibalik na sa available stock.');
   await notificationsRepository.resolveByPrefix(`requester-issue:${batchId}:`).catch(() => undefined);
+  // GSO Staff should know the requester received the items, so the batch is closed on their side too.
+  await notificationsRepository.createRoleNotification({
+    roleKey: 'GSO_STAFF',
+    type: 'ISSUANCE',
+    title: 'Requester confirmed receipt',
+    message: `Issuance request #${batchId} was confirmed as received by the requester.`,
+    href: '/gso/main-issuance',
+    dedupeKey: `staff-issue-ack:${batchId}:${Date.now()}`,
+  }).catch((error) => console.error('GSO Staff notice for requester receipt could not be saved.', { code: error.code }));
   return result;
 }
 

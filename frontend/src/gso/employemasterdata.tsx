@@ -84,6 +84,7 @@ interface EmployeeRecord {
   emailLocked?: boolean
   status: string
   statusTone: string
+  departmentHead?: string | null
   assignedItems: Array<{
     id: string
     code: string
@@ -94,9 +95,43 @@ interface EmployeeRecord {
     unitOfMeasure: string
     assignedOn: string
     assetTagCodes: string[]
+    location: string | null
+    purpose: string | null
+    issuedByName: string | null
   }>
   history: EmployeeHistoryLog[]
   changeHistory?: ChangeHistoryRecord[]
+}
+
+// Where an issued item is kept and who answers for it. A room is answered for by the department head (or the GSO staff
+// who issued it when no head is set). An item kept by the employee is answered for by that employee.
+function AssignmentCell({ item, holder, departmentHead }: { item: EmployeeRecord['assignedItems'][number]; holder: string; departmentHead?: string | null }) {
+  const issuedBy = item.issuedByName || 'GSO staff'
+  return (
+    <div className="min-w-44 space-y-1">
+      {item.location ? (
+        <>
+          <p className="text-sm font-extrabold text-slate-900">Room: {item.location}</p>
+          <p className="text-xs font-semibold text-slate-700">Accountable: {departmentHead ? `Head, ${departmentHead}` : 'Department head not set'}</p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm font-extrabold text-slate-900">{holder}</p>
+          <p className="text-xs font-semibold text-slate-700">Accountable: {holder}</p>
+        </>
+      )}
+      {item.purpose && <p className="text-xs text-slate-600">Purpose: {item.purpose}</p>}
+      <p className="text-xs text-slate-500">Issued by {issuedBy}</p>
+    </div>
+  )
+}
+
+// Colour of a history event: issued and returned are green, pending is blue, refused or expired is red, the rest amber.
+function historyEventTone(event: string) {
+  if (event === 'Issued' || event === 'Returned') return 'bg-emerald-50 text-emerald-700'
+  if (event === 'Pending Approval' || event === 'Return Pending Approval') return 'bg-blue-50 text-blue-700'
+  if (['Rejected', 'Expired', 'Email Failed', 'Return Rejected', 'Return Expired', 'Return Email Failed'].includes(event)) return 'bg-rose-50 text-rose-700'
+  return 'bg-amber-50 text-amber-700'
 }
 
 function employeeRecordFromProfile(profile: EmployeeProfile, existing?: EmployeeRecord): EmployeeRecord {
@@ -133,6 +168,7 @@ function employeeRecordWithIssuance(
   return {
     ...employee,
     assigned: issuance.assignedItems.reduce((total, item) => total + item.quantity, 0),
+    departmentHead: issuance.departmentHead,
     assignedItems: issuance.assignedItems.map((item) => ({
       ...item,
       assetTagCodes: item.assetTagCodes ?? [],
@@ -191,13 +227,15 @@ export default function EmployeeMasterData() {
   const [persistedEmployeeIds, setPersistedEmployeeIds] = useState<Set<string>>(() => new Set())
   const [isLoadingEmployees, setIsLoadingEmployees] = useState(true)
   const [employeeDataError, setEmployeeDataError] = useState('')
-  const [showAllIssuedItems, setShowAllIssuedItems] = useState(false)
   const [showEmployeeHistoryModal, setShowEmployeeHistoryModal] = useState(false)
   const [historyDialogTab, setHistoryDialogTab] = useState<'issuance' | 'profile'>('issuance')
+  const [historyFilter, setHistoryFilter] = useState<'issued' | 'returned'>('issued')
   const [employeeIssuanceLoadError, setEmployeeIssuanceLoadError] = useState('')
 
   // Selected employee modal state
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRecord | null>(null)
+  const issuedHistoryRows = selectedEmployee?.history.filter((log) => !log.returnId) ?? []
+  const returnedHistoryRows = selectedEmployee?.history.filter((log) => log.returnId) ?? []
   const [openEmployeeMenuId, setOpenEmployeeMenuId] = useState<string | null>(null)
 
   // Edit Employee Modal state
@@ -534,7 +572,6 @@ export default function EmployeeMasterData() {
 
   const handleOpenEmployeeProfile = (employee: EmployeeRecord) => {
     setSelectedEmployee(employee)
-    setShowAllIssuedItems(false)
     setShowEmployeeHistoryModal(false)
     setHistoryDialogTab('issuance')
     setEmployeeIssuanceLoadError('')
@@ -1038,6 +1075,18 @@ export default function EmployeeMasterData() {
                   </div>
                 </div>
 
+                <div className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">Employee details</span>
+                  <dl className="mt-3 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                    <div><dt className="text-xs font-semibold text-slate-500">Employee code</dt><dd className="font-bold text-slate-900">{selectedEmployee.id}</dd></div>
+                    <div><dt className="text-xs font-semibold text-slate-500">Department</dt><dd className="font-bold text-slate-900">{selectedEmployee.department || 'Not set'}</dd></div>
+                    <div><dt className="text-xs font-semibold text-slate-500">Position</dt><dd className="font-bold text-slate-900">{selectedEmployee.position || 'Not set'}</dd></div>
+                    <div><dt className="text-xs font-semibold text-slate-500">Department head</dt><dd className="font-bold text-slate-900">{selectedEmployee.departmentHead || 'Not set'}</dd></div>
+                    <div><dt className="text-xs font-semibold text-slate-500">Items in a room</dt><dd className="font-bold text-slate-900">{selectedEmployee.assignedItems.filter((item) => item.location).length}</dd></div>
+                    <div><dt className="text-xs font-semibold text-slate-500">Items kept by employee</dt><dd className="font-bold text-slate-900">{selectedEmployee.assignedItems.filter((item) => !item.location).length}</dd></div>
+                  </dl>
+                </div>
+
                 {employeeIssuanceLoadError && (
                   <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
                     {employeeIssuanceLoadError}
@@ -1057,7 +1106,7 @@ export default function EmployeeMasterData() {
                       <button
                         type="button"
                         aria-haspopup="dialog"
-                        onClick={() => setShowAllIssuedItems(true)}
+                        onClick={() => { setHistoryDialogTab('issuance'); setHistoryFilter('issued'); setShowEmployeeHistoryModal(true) }}
                         className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-extrabold text-blue-800 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
                       >
                         View All Issued Items
@@ -1078,6 +1127,7 @@ export default function EmployeeMasterData() {
                         <tr className="divide-x divide-slate-300 border-b-2 border-slate-300">
                           <th className="whitespace-nowrap px-4 py-3.5">Asset code</th>
                           <th className="px-4 py-3.5">Item name</th>
+                          <th className="px-4 py-3.5">Assigned to</th>
                           <th className="whitespace-nowrap px-4 py-3.5">Quantity</th>
                           <th className="whitespace-nowrap px-4 py-3.5">Condition</th>
                           <th className="whitespace-nowrap px-4 py-3.5">Assigned date</th>
@@ -1088,6 +1138,7 @@ export default function EmployeeMasterData() {
                           <tr key={item.id} className="divide-x divide-slate-200 bg-white transition-colors hover:bg-blue-50/50">
                             <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-600">{item.code}</td>
                             <td className="px-4 py-3 font-extrabold text-slate-900">{item.name}</td>
+                            <td className="px-4 py-3 align-top"><AssignmentCell item={item} holder={`${selectedEmployee.firstName} ${selectedEmployee.lastName}`} departmentHead={selectedEmployee.departmentHead} /></td>
                             <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{item.quantity} {item.unitOfMeasure}</td>
                             <td className="whitespace-nowrap px-4 py-3 align-middle">
                               <span className={`inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-extrabold ${item.tone}`}>
@@ -1099,7 +1150,7 @@ export default function EmployeeMasterData() {
                         ))}
                         {selectedEmployee.assignedItems.length === 0 && (
                           <tr>
-                            <td colSpan={5} className="bg-slate-50 px-4 py-8 text-center text-sm font-medium text-slate-600">
+                            <td colSpan={6} className="bg-slate-50 px-4 py-8 text-center text-sm font-medium text-slate-600">
                               No items currently issued to this employee.
                             </td>
                           </tr>
@@ -1120,6 +1171,7 @@ export default function EmployeeMasterData() {
                       aria-haspopup="dialog"
                       onClick={() => {
                         setHistoryDialogTab('issuance')
+                        setHistoryFilter('issued')
                         setShowEmployeeHistoryModal(true)
                       }}
                       className="shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
@@ -1206,110 +1258,6 @@ export default function EmployeeMasterData() {
         </div>
       )}
 
-      {showAllIssuedItems && selectedEmployee && (
-        <div className="fixed inset-0 z-70 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="issued-items-dialog-title"
-            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
-          >
-            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
-              <div className="min-w-0">
-                <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee inventory</p>
-                <h2 id="issued-items-dialog-title" className="mt-1 text-xl font-black text-slate-950 sm:text-2xl">
-                  Issued Items
-                </h2>
-                <p className="mt-2 text-base font-bold text-slate-800">
-                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
-                </p>
-                <p className="mt-1 text-sm font-medium text-slate-700">
-                  {selectedEmployee.assigned} active unit(s) assigned to this employee.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAllIssuedItems(false)}
-                className="shrink-0 rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-800 transition hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
-              >
-                Close
-              </button>
-            </header>
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
-              {selectedEmployee.assignedItems.length > 0 ? (
-                <div className="overflow-x-auto rounded-xl border-2 border-slate-400 bg-white shadow-md">
-                  <table className="w-full min-w-200 text-left text-base">
-                    <thead className="bg-slate-100 text-sm font-extrabold uppercase tracking-wide text-slate-800">
-                      <tr className="divide-x divide-slate-300 border-b-2 border-slate-300">
-                        <th className="whitespace-nowrap px-5 py-4">Asset code</th>
-                        <th className="px-5 py-4">Item name</th>
-                        <th className="whitespace-nowrap px-5 py-4">Quantity</th>
-                        <th className="whitespace-nowrap px-5 py-4">Condition</th>
-                        <th className="whitespace-nowrap px-5 py-4">Assigned date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200">
-                      {selectedEmployee.assignedItems.map((item) => (
-                        <tr key={item.id} className="divide-x divide-slate-200 bg-white transition-colors hover:bg-blue-50/50">
-                          <td className="whitespace-nowrap px-5 py-4 font-bold text-slate-800">
-                            {item.code}
-                            {item.assetTagCodes.length > 0 && (
-                              <span className="mt-1 block whitespace-normal text-[0.65rem] font-semibold leading-relaxed text-blue-700">
-                                {item.assetTagCodes.join(' · ')}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-5 py-4 font-extrabold text-slate-950">{item.name}</td>
-                          <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-800">{item.quantity} {item.unitOfMeasure}</td>
-                          <td className="whitespace-nowrap px-5 py-4 align-middle">
-                            <span className={`inline-flex items-center whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-extrabold ${item.tone}`}>
-                              {item.condition}
-                            </span>
-                          </td>
-                          <td className="whitespace-nowrap px-5 py-4 font-medium text-slate-800">{item.assignedOn}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
-                  No items currently issued to this employee.
-                </p>
-              )}
-              {selectedEmployee.history.some((log) => log.event === 'Returned' || log.event === 'Reported Lost') && (
-                <section className="mt-5 rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="issued-item-return-history-title">
-                  <div className="border-b border-slate-200 pb-3">
-                    <h3 id="issued-item-return-history-title" className="text-base font-black text-slate-900">Returned Item History</h3>
-                    <p className="mt-1 text-sm text-slate-600">Returned or lost units are no longer listed as active assignments.</p>
-                  </div>
-                  <div className="mt-3 space-y-3">
-                    {selectedEmployee.history.filter((log) => log.event === 'Returned' || log.event === 'Reported Lost').map((log, index) => (
-                      <article key={log.returnId || `${log.code}-${log.date}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold ${log.event === 'Reported Lost' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>{log.event}</span>
-                            <h4 className="mt-2 text-sm font-extrabold text-slate-900">{log.item} <span className="font-semibold text-slate-600">({log.code})</span></h4>
-                            {log.assetTagCode && <p className="mt-1 font-mono text-xs font-bold text-blue-700">Unit barcode: {log.assetTagCode}</p>}
-                          </div>
-                          <span className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-700">{log.date}</span>
-                        </div>
-                        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-                          {log.returnCondition && <p><span className="font-bold text-slate-500">Condition:</span> <span className="font-extrabold text-slate-800">{log.returnCondition}</span></p>}
-                          {log.returnedByName && <p><span className="font-bold text-slate-500">Brought in by:</span> <span className="font-semibold text-slate-800">{log.returnedByName}</span></p>}
-                          {log.confirmationMethod && <p><span className="font-bold text-slate-500">Verified by:</span> <span className="font-semibold text-slate-800">{log.confirmationMethod.replaceAll('_', ' ')}</span></p>}
-                        </div>
-                        <p className="mt-3 wrap-break-word text-sm leading-relaxed text-slate-700">{log.note}</p>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
 
       {showEmployeeHistoryModal && selectedEmployee && (
         <div className="fixed inset-0 z-80 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5">
@@ -1359,46 +1307,66 @@ export default function EmployeeMasterData() {
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
               {historyDialogTab === 'issuance' ? (
-                selectedEmployee.history.length > 0 ? (
-                  <div className="space-y-3">
-                    {selectedEmployee.history.map((log, idx) => (
-                      <div key={`${log.code}-${log.date}-${idx}`} className="flex flex-col items-start justify-between gap-3 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:flex-row sm:gap-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full px-3 py-1.5 text-sm font-extrabold ${
-                              log.event === 'Issued' || log.event === 'Returned'
-                                ? 'bg-emerald-50 text-emerald-700'
-                                : log.event === 'Pending Approval' || log.event === 'Return Pending Approval'
-                                  ? 'bg-blue-50 text-blue-700'
-                                  : log.event === 'Rejected' || log.event === 'Expired' || log.event === 'Email Failed' || log.event === 'Return Rejected' || log.event === 'Return Expired' || log.event === 'Return Email Failed'
-                                    ? 'bg-rose-50 text-rose-700'
-                                    : 'bg-amber-50 text-amber-700'
-                            }`}>
-                              {log.event}
-                            </span>
-                            <span className="text-base font-extrabold text-slate-950">{log.item}</span>
-                            <span className="text-sm font-semibold text-slate-700">({log.code})</span>
-                            <span className="rounded-full bg-slate-200 px-3 py-1.5 text-sm font-bold text-slate-800">{log.quantity} {log.unitOfMeasure}</span>
-                          </div>
-                          {log.assetTagCode && <p className="mt-2 font-mono text-sm font-extrabold text-blue-700">Unit barcode: {log.assetTagCode}</p>}
-                          {(log.returnCondition || log.returnedByName || log.confirmationMethod) && (
-                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-700">
-                              {log.returnCondition && <span><strong>Return condition:</strong> {log.returnCondition}</span>}
-                              {log.returnedByName && <span><strong>Brought in by:</strong> {log.returnedByName}</span>}
-                              {log.confirmationMethod && <span><strong>Verified by:</strong> {log.confirmationMethod.replaceAll('_', ' ')}</span>}
-                            </div>
-                          )}
-                          <p className="mt-3 text-base leading-relaxed text-slate-800">{log.note}</p>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-slate-200 px-3 py-1.5 text-sm font-bold text-slate-800">{log.date}</span>
-                      </div>
-                    ))}
+                <>
+                <div role="tablist" aria-label="History view" className="mb-5 inline-flex rounded-xl border-2 border-slate-300 bg-white p-1">
+                  {([['issued', `Issued (${issuedHistoryRows.length})`], ['returned', `Returned (${returnedHistoryRows.length})`]] as const).map(([view, label]) => (
+                    <button key={view} type="button" role="tab" aria-selected={historyFilter === view} onClick={() => setHistoryFilter(view)} className={`rounded-lg px-4 py-2.5 text-sm font-extrabold transition ${historyFilter === view ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-800'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {(historyFilter === 'issued' ? issuedHistoryRows : returnedHistoryRows).length > 0 ? (
+                  <div className="overflow-x-auto rounded-xl border-2 border-slate-400 bg-white shadow-md">
+                    <table className="w-full min-w-200 text-left text-base">
+                      <thead className="bg-slate-100 text-sm font-extrabold uppercase tracking-wide text-slate-800">
+                        <tr className="divide-x divide-slate-300 border-b-2 border-slate-300">
+                          <th className="whitespace-nowrap px-5 py-4">Asset code</th>
+                          <th className="px-5 py-4">Item name</th>
+                          <th className="whitespace-nowrap px-5 py-4">Quantity</th>
+                          <th className="px-5 py-4">Status</th>
+                          <th className="whitespace-nowrap px-5 py-4">Date</th>
+                          <th className="px-5 py-4">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {(historyFilter === 'issued' ? issuedHistoryRows : returnedHistoryRows).map((log, idx) => (
+                          <tr key={`${log.returnId || `${log.code}-${log.date}`}-${idx}`} className="divide-x divide-slate-200 bg-white align-top transition-colors hover:bg-blue-50/50">
+                            <td className="whitespace-nowrap px-5 py-4 font-bold text-slate-800">
+                              {log.code}
+                              {log.assetTagCode && <span className="mt-1 block font-mono text-[0.65rem] font-semibold text-blue-700">{log.assetTagCode}</span>}
+                            </td>
+                            <td className="px-5 py-4 font-extrabold text-slate-950">{log.item}</td>
+                            <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-800">{log.quantity} {log.unitOfMeasure}</td>
+                            <td className="whitespace-nowrap px-5 py-4">
+                              <span className={`inline-flex rounded-full px-3 py-1.5 text-sm font-extrabold ${historyEventTone(log.event)}`}>{log.event}</span>
+                            </td>
+                            <td className="whitespace-nowrap px-5 py-4 font-medium text-slate-800">{log.date}</td>
+                            <td className="min-w-72 px-5 py-4">
+                              {(log.returnCondition || log.returnedByName || log.confirmationMethod || log.note) ? (
+                                <details className="text-xs">
+                                  <summary className="inline-flex cursor-pointer list-none items-center gap-1 whitespace-nowrap rounded-full bg-blue-50 px-2.5 py-1 font-bold text-blue-700 transition hover:bg-blue-100">View details</summary>
+                                  <dl className="mt-2 space-y-1.5 rounded-lg bg-slate-50 p-3 text-xs">
+                                    {log.returnCondition && <div><dt className="font-bold text-slate-500">Condition</dt><dd className="mt-0.5 font-semibold text-slate-800">{log.returnCondition}</dd></div>}
+                                    {log.returnedByName && <div><dt className="font-bold text-slate-500">Brought in by</dt><dd className="mt-0.5 font-semibold text-slate-800">{log.returnedByName}</dd></div>}
+                                    {log.confirmationMethod && <div><dt className="font-bold text-slate-500">Verified by</dt><dd className="mt-0.5 font-semibold text-slate-800">{log.confirmationMethod.replaceAll('_', ' ')}</dd></div>}
+                                    {log.note && <div><dt className="font-bold text-slate-500">Note</dt><dd className="mt-0.5 leading-relaxed text-slate-700">{log.note}</dd></div>}
+                                  </dl>
+                                </details>
+                              ) : (
+                                <span className="text-slate-400">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 ) : (
                   <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
-                    No transaction history recorded yet.
+                    {historyFilter === 'issued' ? 'No issued items recorded yet.' : 'No returned items recorded yet.'}
                   </p>
-                )
+                )}
+                </>
               ) : selectedEmployee.changeHistory && selectedEmployee.changeHistory.length > 0 ? (
                 <div className="space-y-3">
                   {selectedEmployee.changeHistory.map((change, idx) => (

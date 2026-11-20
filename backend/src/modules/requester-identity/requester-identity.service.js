@@ -1,5 +1,6 @@
 const repository = require('./requester-identity.repository');
 const notificationsRepository = require('../notifications/notifications.repository');
+const auditRepository = require('../audit/audit.repository');
 
 function invalid(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -118,6 +119,17 @@ async function review(userIdValue, input, reviewer) {
     reviewedByUserId: reviewer.id,
   });
   if (!profile) invalid('Hindi makita ang requester identity na rerepasuhin.', 404);
+
+  // Shown in History > Employees (user's request, 2026-11-20). The flag in newValues tells it apart from other employee logs.
+  await auditRepository.writeLog(null, {
+    entityType: 'employee',
+    entityKey: String(userId),
+    entityName: profile.accountName || String(userId),
+    action: status === 'Verified' ? 'approved' : 'rejected',
+    reason: status === 'Verified' ? 'Requester account verified by GSO.' : `Requester account sent back for correction. Note: ${note}`,
+    newValues: { requesterVerification: true, status, note: note || null, reviewerName: reviewer.name || null, reviewerEmail: reviewer.email || null },
+    changedByUserId: reviewer.id,
+  });
 
   // Resolve the pending verification notification since the review is complete
   await notificationsRepository.resolveByPrefix(`requester-verification-pending:${userId}`);

@@ -1,6 +1,6 @@
 const pool = require('../../config/db');
 
-async function listLogs({ limit, offset, action, entityType, flag = 'all', search, from, to }) {
+async function listLogs({ limit, offset, action, entityType, flag = 'all', search, from, to, module = 'all' }) {
   const conditions = [];
   const values = [];
   const addValue = (value) => {
@@ -10,6 +10,11 @@ async function listLogs({ limit, offset, action, entityType, flag = 'all', searc
 
   if (action !== 'all') conditions.push(`log.action = ${addValue(action)}`);
   if (entityType !== 'all') conditions.push(`log.entity_type = ${addValue(entityType)}`);
+  // shortcut: the requisition history reads only the newest 100 entries (no paging yet), add paging when the list gets long.
+  if (module === 'requisitions') {
+    conditions.push(`((log.entity_type = 'request' AND log.request_id IN (SELECT id FROM service_requests WHERE request_type = 'PURCHASE_REQUISITION'))
+      OR (log.entity_type = 'item' AND log.action IN ('requested', 'issued', 'rejected', 'cancelled')))`);
+  }
   if (flag === 'any') conditions.push('log.flag IS NOT NULL');
   else if (flag !== 'all') conditions.push(`log.flag = ${addValue(flag)}`);
   if (from) conditions.push(`log.changed_at >= ${addValue(from)}::DATE`);

@@ -29,6 +29,8 @@ export type AuditLogFilters = {
   search: string
   from: string
   to: string
+  // 'requisitions' = purchase requisition and main issuance entries only. Optional, so other pages need no change.
+  module?: 'all' | 'requisitions'
 }
 
 export type AuditLogPage = {
@@ -49,6 +51,7 @@ export async function listAuditLogs(filters: AuditLogFilters) {
     search: filters.search.trim(),
     from: filters.from,
     to: filters.to,
+    module: filters.module ?? 'all',
   })
   return apiRequest<AuditLogPage>(`/audit/logs?${query.toString()}`)
 }

@@ -4,10 +4,7 @@ import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { ProgressPath } from '../components/requestpath'
 import {
   confirmTaggedAssetReturn,
-  createEmployeeReturn,
   getAssetTagForInspection,
-  listHoldings,
-  sendBulkReturnOtp,
   sendTaggedReturnOtp,
   type AssetTagInspectionRecord,
   type TaggedReturnOtpChallenge,
@@ -32,21 +29,10 @@ const conditionRank = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance
 const repairConditionNames = ['Needs Repair', 'Under Maintenance', 'Unserviceable']
 // Why a unit cannot be used. Required when the unit goes to repair, so the reason is recorded, not just the condition.
 const repairReasons = ['Broken or cracked', 'Beyond repair', 'Missing parts', 'Water or fire damage', 'Electrical fault', 'Other']
-// Only count units physically returned to the GSO counter here.
-const bulkLineConditions = conditionRank
-
-type BulkReturnOption = {
-  id: string
-  employeeCode: string
-  employeeName: string
-  itemCode: string
-  itemName: string
-  quantity: number
-  unitOfMeasure: string
-  conditionAtIssue: string
-  isOverdue: boolean
-  dueAt: string | null
-}
+const conditionGroups = [
+  { title: 'Back to stock', hint: 'Usable right away', conditions: ['New', 'Good', 'Fair'], dot: 'bg-emerald-500' },
+  { title: 'For repair', hint: 'Goes to To Be Repaired', conditions: ['Needs Repair'], dot: 'bg-amber-500' },
+]
 
 type ReturnScanNotice = {
   kind: 'success' | 'alreadyReturned'
@@ -67,22 +53,6 @@ function formatBorrowerHistoryDate(value: string | null) {
 
 const historyDotTones = { blue: 'bg-blue-500', emerald: 'bg-emerald-500', amber: 'bg-amber-500' }
 
-type BulkStep = 'employee' | 'item' | 'details' | 'confirm' | 'done'
-
-const bulkSteps: { key: Exclude<BulkStep, 'done'>; label: string; prompt: string }[] = [
-  { key: 'employee', label: 'Employee', prompt: 'Who is returning the stock?' },
-  { key: 'item', label: 'Item', prompt: 'Which issued item is coming back?' },
-  { key: 'details', label: 'Count', prompt: 'Count the units by the condition they came back in.' },
-  { key: 'confirm', label: 'Confirm', prompt: "Review the return, then confirm it with the employee's code." },
-]
-
-const bulkConditionGroups = [
-  { title: 'Back to stock', hint: 'Usable right away', conditions: ['New', 'Good', 'Fair'], dot: 'bg-emerald-500' },
-  { title: 'For repair', hint: 'Goes to To Be Repaired', conditions: ['Needs Repair'], dot: 'bg-amber-500' },
-]
-
-const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('')
-
 function StepBadge({ number, done }: { number: number; done: boolean }) {
   return (
     <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[0.62rem] font-black ${done ? 'bg-emerald-500 text-white' : 'bg-blue-600 text-white'}`}>
@@ -93,485 +63,7 @@ function StepBadge({ number, done }: { number: number; done: boolean }) {
   )
 }
 
-function ChevronRight() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-blue-500">
-      <path d="m9 6 6 6-6 6" />
-    </svg>
-  )
-}
-
-// Step-by-step return of reusable quantity stock, shown inside the Return Items page: pick the
-// employee, then the item, count the units by condition, and confirm with the emailed code.
-function BulkReturnPanel({ options, onReturned }: { options: BulkReturnOption[]; onReturned: () => void }) {
-  const [step, setStep] = useState<BulkStep>('employee')
-  const [employeeSearch, setEmployeeSearch] = useState('')
-  const [employeeKey, setEmployeeKey] = useState('')
-  const [issuanceId, setIssuanceId] = useState('')
-  // Units per condition, e.g. { Good: '3', 'Needs Repair': '2' }; empty or 0 means none.
-  const [lines, setLines] = useState<Record<string, string>>({})
-  const [reason, setReason] = useState('')
-  const [note, setNote] = useState('')
-  const [broughtBy, setBroughtBy] = useState('')
-  const [otpChallenge, setOtpChallenge] = useState<TaggedReturnOtpChallenge | null>(null)
-  const [otpCode, setOtpCode] = useState('')
-  const [isSendingOtp, setIsSendingOtp] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState('')
-  const [result, setResult] = useState('')
-  const headingRef = useRef<HTMLHeadingElement>(null)
-  const isFirstRender = useRef(true)
-
-  // Move focus to the new step's question so keyboard and screen reader users follow along.
-  useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false
-      return
-    }
-    headingRef.current?.focus()
-  }, [step])
-
-  const employeeGroups = [...options.reduce((groups, option) => {
-    const key = option.employeeCode || option.employeeName
-    const group = groups.get(key) ?? { key, name: option.employeeName, code: option.employeeCode, items: [] as BulkReturnOption[] }
-    group.items.push(option)
-    return groups.set(key, group)
-  }, new Map<string, { key: string; name: string; code: string; items: BulkReturnOption[] }>()).values()]
-    .sort((left, right) => left.name.localeCompare(right.name))
-  const search = employeeSearch.trim().toLowerCase()
-  const visibleEmployees = employeeGroups.filter((group) => !search || `${group.name} ${group.code}`.toLowerCase().includes(search))
-  const employee = employeeGroups.find((group) => group.key === employeeKey)
-  const selected = options.find((option) => option.id === issuanceId)
-  const outstanding = selected?.quantity ?? 0
-  const returnLines = bulkLineConditions
-    .map((condition) => ({ condition, quantity: Number(lines[condition] || 0) }))
-    .filter((line) => Number.isInteger(line.quantity) && line.quantity > 0)
-  const total = returnLines.reduce((sum, line) => sum + line.quantity, 0)
-  const isDamaged = returnLines.some((line) => repairConditionNames.includes(line.condition))
-  const isNoteRequired = reason === 'Iba pa' || isDamaged
-  const breakdown = returnLines.map((line) => `${line.quantity} ${line.condition}`).join(', ')
-  const stepIndex = step === 'done' ? bulkSteps.length : bulkSteps.findIndex((entry) => entry.key === step)
-
-  // The code is bound to the item, quantity, and condition, so changing any of them needs a new code.
-  function resetOtp() {
-    setOtpChallenge(null)
-    setOtpCode('')
-  }
-
-  function goTo(next: BulkStep) {
-    setError('')
-    setStep(next)
-  }
-
-  function chooseEmployee(key: string) {
-    if (key !== employeeKey) {
-      setEmployeeKey(key)
-      setIssuanceId('')
-      resetOtp()
-    }
-    goTo('item')
-  }
-
-  function chooseItem(option: BulkReturnOption) {
-    if (option.id !== issuanceId) {
-      setIssuanceId(option.id)
-      // Most returns bring everything back in good shape; staff adjust from there.
-      setLines({ Good: String(option.quantity) })
-      setReason('')
-      setNote('')
-      setBroughtBy('')
-      resetOtp()
-    }
-    goTo('details')
-  }
-
-  function setLine(condition: string, value: string) {
-    setLines((current) => ({ ...current, [condition]: value }))
-    resetOtp()
-  }
-
-  function handleDetailsSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!selected) return
-    if (total < 1 || total > outstanding) {
-      setError(`The units must add up to 1–${outstanding} ${selected.unitOfMeasure}.`)
-      return
-    }
-    goTo('confirm')
-  }
-
-  async function sendCode() {
-    if (!selected) return
-    setIsSendingOtp(true)
-    setError('')
-    try {
-      setOtpChallenge(await sendBulkReturnOtp({ issuanceId: selected.id, lines: returnLines }))
-      setOtpCode('')
-    } catch (reasonError) {
-      setError(reasonError instanceof Error ? reasonError.message : 'Could not send the code to the employee.')
-    } finally {
-      setIsSendingOtp(false)
-    }
-  }
-
-  async function handleConfirmSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!selected || !otpChallenge) return
-    setIsSubmitting(true)
-    setError('')
-    try {
-      const trimmedNote = note.trim()
-      const request = await createEmployeeReturn({
-        employeeCode: selected.employeeCode,
-        itemCode: selected.itemCode,
-        issuanceId: selected.id,
-        lines: returnLines,
-        reason: trimmedNote ? `${reason} — ${trimmedNote}` : reason,
-        returnedByName: broughtBy.trim(),
-        otp: { challengeId: otpChallenge.challengeId, code: otpCode },
-      })
-      const summary = request.lines.map((line) => `${line.quantity} ${line.condition}`).join(', ')
-      setResult(`${summary} ${request.unitOfMeasure} of ${request.itemName} recorded for ${request.employeeName}. ${request.emailQueued
-        ? `A receipt is being emailed to ${request.employeeName}.`
-        : 'No receipt email could be sent; inform the employee directly.'}`)
-      resetOtp()
-      goTo('done')
-      onReturned()
-    } catch (reasonError) {
-      setError(reasonError instanceof Error ? reasonError.message : 'Unable to record this return.')
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  function startOver() {
-    setEmployeeSearch('')
-    setEmployeeKey('')
-    setIssuanceId('')
-    setLines({})
-    setResult('')
-    resetOtp()
-    goTo('employee')
-  }
-
-  const fieldClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:font-medium placeholder:text-slate-500 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50'
-  const labelClass = 'mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500'
-  const choiceClass = 'group flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-left transition hover:border-blue-300 hover:bg-blue-50/40 focus-visible:border-blue-400 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100'
-  const secondaryButton = 'rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50'
-  const primaryButton = 'rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50'
-
-  if (!options.length && step !== 'done') {
-    return (
-      <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-xs font-semibold text-slate-500">
-        No reusable quantity-tracked stock is out with employees right now.
-      </p>
-    )
-  }
-
-  return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <ol className="flex min-w-0 flex-1 items-center gap-2" aria-label="Bulk return steps">
-          {bulkSteps.map((entry, index) => {
-            const isDone = index < stepIndex
-            const isCurrent = index === stepIndex
-            return (
-              <li key={entry.key} className="flex flex-1 items-center gap-2 last:flex-none" aria-current={isCurrent ? 'step' : undefined}>
-                <button
-                  type="button"
-                  disabled={!isDone || step === 'done' || isSubmitting}
-                  onClick={() => goTo(entry.key)}
-                  className="flex shrink-0 items-center gap-1.5 rounded-lg disabled:cursor-default"
-                >
-                  <span className={`grid h-6 w-6 place-items-center rounded-full text-[0.62rem] font-black ${isDone ? 'bg-emerald-500 text-white' : isCurrent ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                    {isDone ? (
-                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="m5 12 5 5 9-10" /></svg>
-                    ) : index + 1}
-                  </span>
-                  <span className={`hidden text-[0.68rem] font-extrabold sm:inline ${isCurrent ? 'text-slate-900' : isDone ? 'text-slate-600' : 'text-slate-400'}`}>{entry.label}</span>
-                </button>
-                {index < bulkSteps.length - 1 && <span aria-hidden="true" className={`h-px flex-1 ${isDone ? 'bg-emerald-300' : 'bg-slate-200'}`} />}
-              </li>
-            )
-          })}
-        </ol>
-        {step !== 'employee' && step !== 'done' && (
-          <button type="button" onClick={startOver} disabled={isSubmitting} className="text-[0.68rem] font-bold text-slate-500 transition hover:text-blue-700 disabled:opacity-50">
-            Start over
-          </button>
-        )}
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <h3 ref={headingRef} tabIndex={-1} className="mr-auto text-xs font-black text-slate-900 outline-none">
-          {step === 'done' ? 'Return recorded' : bulkSteps[stepIndex].prompt}
-        </h3>
-        {employee && step !== 'employee' && step !== 'done' && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[0.65rem] font-bold text-slate-700">
-            <span className="grid h-4 w-4 place-items-center rounded-full bg-blue-600 text-[0.45rem] font-black text-white">{initialsOf(employee.name)}</span>
-            {employee.name}
-          </span>
-        )}
-        {selected && (step === 'details' || step === 'confirm') && (
-          <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[0.65rem] font-bold text-blue-700">
-            {selected.itemName} · {selected.quantity} {selected.unitOfMeasure} out · issued {selected.conditionAtIssue}
-          </span>
-        )}
-      </div>
-
-      {error && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">{error}</p>}
-
-      {step === 'employee' && (
-        <div className="mt-3">
-          <label className="relative block">
-            <span className="sr-only">Search employees</span>
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-            <input
-              type="search"
-              value={employeeSearch}
-              onChange={(event) => setEmployeeSearch(event.target.value)}
-              placeholder={`Search ${employeeGroups.length} employee${employeeGroups.length === 1 ? '' : 's'} by name or code`}
-              className={`${fieldClass} h-11 pl-10`}
-            />
-          </label>
-          <ul className="mt-3 grid max-h-80 gap-2 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
-            {visibleEmployees.map((group) => {
-              const unitsOut = group.items.reduce((sum, item) => sum + item.quantity, 0)
-              return (
-                <li key={group.key}>
-                  <button type="button" onClick={() => chooseEmployee(group.key)} className={choiceClass}>
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-blue-50 text-[0.65rem] font-black text-blue-700">{initialsOf(group.name)}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-bold text-slate-900">{group.name}</span>
-                      <span className="block truncate text-[0.65rem] text-slate-500">
-                        {group.code || 'No employee code'} · {group.items.length} item{group.items.length === 1 ? '' : 's'} · {unitsOut} out
-                      </span>
-                    </span>
-                    {group.items.some((item) => item.isOverdue) && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[0.58rem] font-extrabold text-rose-700">Overdue</span>}
-                    <ChevronRight />
-                  </button>
-                </li>
-              )
-            })}
-            {!visibleEmployees.length && (
-              <li className="rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-xs font-semibold text-slate-400 sm:col-span-2 xl:col-span-3">
-                No employee matches “{employeeSearch.trim()}”.
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
-
-      {step === 'item' && employee && (
-        <>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-            {employee.items.map((option) => (
-              <li key={option.id}>
-                <button type="button" onClick={() => chooseItem(option)} className={choiceClass}>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate text-xs font-bold text-slate-900">{option.itemName}</span>
-                      {option.isOverdue && <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[0.58rem] font-extrabold text-rose-700">Overdue</span>}
-                    </span>
-                    <span className="block truncate text-[0.65rem] text-slate-500">
-                      {option.itemCode} · issued {option.conditionAtIssue}{option.dueAt ? ` · due ${new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date(option.dueAt))}` : ''}
-                    </span>
-                  </span>
-                  <span className="shrink-0 text-right">
-                    <span className="block text-sm font-black text-slate-900">{option.quantity}</span>
-                    <span className="block text-[0.55rem] font-extrabold uppercase text-slate-400">{option.unitOfMeasure} out</span>
-                  </span>
-                  <ChevronRight />
-                </button>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-4">
-            <button type="button" onClick={() => goTo('employee')} className={secondaryButton}>Back</button>
-          </div>
-        </>
-      )}
-
-      {step === 'details' && selected && (
-        <form onSubmit={handleDetailsSubmit} className="mt-3">
-          <div className="grid gap-3 lg:grid-cols-2">
-            {bulkConditionGroups.map((group) => (
-              <fieldset key={group.title} className="rounded-xl border border-slate-200 p-3">
-                <legend className="sr-only">{group.title}</legend>
-                <p className="flex items-center gap-2 text-[0.68rem] font-extrabold text-slate-800">
-                  <span aria-hidden="true" className={`h-2 w-2 rounded-full ${group.dot}`} />
-                  {group.title}
-                  <span className="truncate font-medium text-slate-400">{group.hint}</span>
-                </p>
-                <div className="mt-2 space-y-1.5">
-                  {group.conditions.map((condition) => {
-                    const value = Number(lines[condition] || 0)
-                    return (
-                      <div key={condition} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 py-1.5 pl-3 pr-1.5">
-                        <span className="text-xs font-semibold text-slate-700">{condition}</span>
-                        <span className="flex shrink-0 items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
-                          <button type="button" onClick={() => setLine(condition, value > 1 ? String(value - 1) : '')} disabled={value <= 0} aria-label={`One less ${condition}`} className="grid h-8 w-8 place-items-center text-sm font-black text-slate-500 hover:bg-slate-50 disabled:text-slate-200">−</button>
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min="0"
-                            max={outstanding}
-                            step="1"
-                            value={lines[condition] || ''}
-                            onChange={(event) => setLine(condition, event.target.value)}
-                            placeholder="0"
-                            aria-label={`Units returned in ${condition} condition`}
-                            className="h-8 w-10 border-x border-slate-200 text-center text-xs font-black text-slate-900 outline-none [appearance:textfield] focus:bg-blue-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                          />
-                          <button type="button" onClick={() => setLine(condition, String(value + 1))} disabled={total >= outstanding} aria-label={`One more ${condition}`} className="grid h-8 w-8 place-items-center text-sm font-black text-slate-500 hover:bg-slate-50 disabled:text-slate-200">+</button>
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </fieldset>
-            ))}
-          </div>
-
-          <div className="mt-3 rounded-xl border border-slate-200 px-3.5 py-3" aria-live="polite">
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="font-bold text-slate-700">Accounted for</span>
-              <span className={`font-black ${total > outstanding ? 'text-rose-700' : 'text-slate-900'}`}>{total} of {outstanding} {selected.unitOfMeasure}</span>
-            </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
-              <div className={`h-full rounded-full transition-all ${total > outstanding ? 'bg-rose-500' : total === outstanding ? 'bg-emerald-500' : 'bg-blue-600'}`} style={{ width: `${Math.min(100, outstanding ? (total / outstanding) * 100 : 0)}%` }} />
-            </div>
-            <p className={`mt-1.5 text-[0.65rem] font-semibold ${total > outstanding || total < 1 ? 'text-rose-700' : 'text-slate-500'}`}>
-              {total > outstanding
-                ? `That is ${total - outstanding} more than the employee has.`
-                : total < 1
-                  ? 'Enter at least one unit.'
-                  : total < outstanding
-                    ? `${outstanding - total} ${selected.unitOfMeasure} will stay with the employee.`
-                    : 'Every unit is accounted for.'}
-            </p>
-          </div>
-
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className={labelClass}>Reason for return</span>
-              <select value={reason} onChange={(event) => setReason(event.target.value)} required className={`${fieldClass} h-11`}>
-                <option value="" disabled>Select a reason</option>
-                {returnReasons.map((option) => <option key={option} value={option}>{returnReasonLabels[option]}</option>)}
-              </select>
-            </label>
-            <label className="block">
-              <span className={labelClass}>Brought in by <span className="normal-case tracking-normal text-slate-400">(if not the borrower)</span></span>
-              <input type="text" maxLength={200} value={broughtBy} onChange={(event) => setBroughtBy(event.target.value)} placeholder="Name of the person at the counter" className={`${fieldClass} h-11`} />
-            </label>
-            <label className="block sm:col-span-2">
-              <span className={labelClass}>Notes {isNoteRequired ? <span className="text-rose-600">(required)</span> : <span className="normal-case tracking-normal text-slate-400">(optional)</span>}</span>
-              {/* 900 leaves room for the reason prefix within the backend's 1000-character limit. */}
-              <textarea
-                maxLength={900}
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                required={isNoteRequired}
-                placeholder={isDamaged ? 'Describe the damage' : 'Anything worth noting about this return'}
-                className={`${fieldClass} min-h-16 py-2.5 font-medium`}
-              />
-            </label>
-          </div>
-
-          <div className="mt-4 flex justify-between gap-2">
-            <button type="button" onClick={() => goTo('item')} className={secondaryButton}>Back</button>
-            <button type="submit" className={primaryButton}>Continue</button>
-          </div>
-        </form>
-      )}
-
-      {step === 'confirm' && selected && (
-        <form onSubmit={(event) => void handleConfirmSubmit(event)} className="mt-3">
-          <dl className="grid gap-2 sm:grid-cols-2">
-            {([
-              ['Employee', `${selected.employeeName}${selected.employeeCode ? ` (${selected.employeeCode})` : ''}`],
-              ['Item', `${selected.itemName} · ${selected.itemCode}`],
-              ['Returning', `${breakdown} ${selected.unitOfMeasure}${total < outstanding ? ` · ${outstanding - total} stay with the employee` : ''}`],
-              ['Reason', note.trim() ? `${reason} — ${note.trim()}` : reason],
-              ...(broughtBy.trim() ? [['Brought in by', broughtBy.trim()]] : []),
-            ] as [string, string][]).map(([label, value]) => (
-              <div key={label} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3">
-                <dt className="text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt>
-                <dd className="mt-1 text-xs font-bold text-slate-800">{value}</dd>
-              </div>
-            ))}
-          </dl>
-          {isDamaged && (
-            <p role="note" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[0.68rem] font-semibold leading-relaxed text-amber-900">
-              Damaged units go to To Be Repaired and are not issued again until fixed.
-            </p>
-          )}
-
-          <section aria-labelledby="bulk-otp-title" className="mt-3 rounded-xl border border-blue-100 bg-blue-50/70 p-4">
-            <h4 id="bulk-otp-title" className="text-xs font-extrabold text-blue-900">Employee confirmation code</h4>
-            {otpChallenge ? (
-              <>
-                <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-600">
-                  Sent to <strong>{otpChallenge.sentTo}</strong>. Ask the employee to read it out; it expires at {new Intl.DateTimeFormat('en-PH', { timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(otpChallenge.expiresAt))}.
-                </p>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    autoFocus
-                    pattern="\d{6}"
-                    maxLength={6}
-                    required
-                    value={otpCode}
-                    onChange={(event) => setOtpCode(event.target.value.replace(/\D/g, ''))}
-                    disabled={isSubmitting}
-                    placeholder="6-digit code"
-                    aria-label="Employee confirmation code"
-                    className="h-11 w-44 rounded-xl border border-blue-200 bg-white px-3 text-center font-mono text-base font-black tracking-[0.35em] text-slate-900 outline-none placeholder:font-sans placeholder:text-xs placeholder:font-semibold placeholder:tracking-normal placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
-                  />
-                  <button type="button" onClick={() => void sendCode()} disabled={isSendingOtp || isSubmitting} className="text-[0.68rem] font-extrabold text-blue-700 hover:underline disabled:opacity-50">
-                    {isSendingOtp ? 'Sending…' : 'Send a new code'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-600">
-                  These exact details and a 6-digit code are emailed to the employee. They give you the code only if everything above is correct.
-                </p>
-                <button type="button" onClick={() => void sendCode()} disabled={isSendingOtp} className={`${primaryButton} mt-3`}>
-                  {isSendingOtp ? 'Sending code…' : 'Send code to employee'}
-                </button>
-              </>
-            )}
-          </section>
-
-          <div className="mt-4 flex justify-between gap-2">
-            <button type="button" onClick={() => goTo('details')} disabled={isSubmitting} className={secondaryButton}>Back</button>
-            <button type="submit" disabled={!otpChallenge || otpCode.length !== 6 || isSubmitting} className={primaryButton}>
-              {isSubmitting ? 'Recording…' : 'Record return'}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {step === 'done' && (
-        <div role="status" className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-          <p className="flex items-start gap-2 text-xs font-semibold leading-relaxed text-emerald-900">
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600"><path d="m5 12 5 5 9-10" /></svg>
-            {result}
-          </p>
-          <button type="button" onClick={startOver} className={primaryButton}>Return another item</button>
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function ReturnItems() {
-  const [returnLoadError, setReturnLoadError] = useState('')
-  const [returnsRefreshToken, setReturnsRefreshToken] = useState(0)
   const [scannerCode, setScannerCode] = useState('')
   const scannerInputRef = useRef<HTMLInputElement>(null)
   const scannerLookupTimerRef = useRef<number | null>(null)
@@ -597,8 +89,6 @@ export default function ReturnItems() {
   // Who checks whether the unit can still be fixed: GSO or ITSS.
   const [repairOwner, setRepairOwner] = useState<'GSO' | 'ITSS' | ''>('')
   const [writeOffConfirmed, setWriteOffConfirmed] = useState(false)
-  const [returnMode, setReturnMode] = useState<'scan' | 'bulk'>('scan')
-  const [bulkReturnOptions, setBulkReturnOptions] = useState<BulkReturnOption[]>([])
   const [returnedByName, setReturnedByName] = useState('')
   const [serialLast4, setSerialLast4] = useState('')
 
@@ -615,39 +105,6 @@ export default function ReturnItems() {
       .catch(() => { /* The popup falls back to a generic label. */ })
     return () => { active = false }
   }, [])
-
-  useEffect(() => {
-    let isMounted = true
-
-    const loadReturnedItems = async () => {
-      setReturnLoadError('')
-
-      try {
-        const holdingsResponse = await listHoldings()
-        if (!isMounted) return
-        const quantityReturnOptions: BulkReturnOption[] = holdingsResponse.items
-          .filter((entry) => entry.source === 'GSO issuance' && entry.trackingMode === 'quantity')
-          .map((entry) => ({
-            id: entry.issuanceId,
-            employeeCode: entry.employeeCode || '',
-            employeeName: entry.employeeName,
-            itemCode: entry.itemCode,
-            itemName: entry.itemName,
-            quantity: entry.quantity,
-            unitOfMeasure: entry.unitOfMeasure,
-            conditionAtIssue: entry.conditionAtIssue || '—',
-            isOverdue: entry.isOverdue,
-            dueAt: entry.dueAt,
-          }))
-        setBulkReturnOptions(quantityReturnOptions)
-      } catch (error) {
-        if (isMounted) setReturnLoadError(error instanceof Error ? error.message : 'Unable to load the items still with employees.')
-      }
-    }
-
-    void loadReturnedItems()
-    return () => { isMounted = false }
-  }, [returnsRefreshToken])
 
   function focusScannerInput(delay = 0) {
     window.setTimeout(() => scannerInputRef.current?.focus(), delay)
@@ -824,7 +281,6 @@ export default function ReturnItems() {
           { employeeCode: result.employeeCode, employeeName: result.employeeName, label: 'View return history' },
         ],
       })
-      setReturnsRefreshToken((current) => current + 1)
       focusScannerInput(50)
     } catch (error) {
       setBarcodeError(error instanceof Error ? error.message : 'Could not confirm this item return.')
@@ -913,44 +369,17 @@ export default function ReturnItems() {
         </nav>
       </section>
 
-      {returnLoadError && <p role="alert" className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">{returnLoadError}</p>}
-
       <section className="mt-6 rounded-2xl border-2 border-slate-300/80 bg-white p-6 sm:p-8 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="return-process-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 id="return-process-title" className="text-lg font-black tracking-tight text-slate-900">Process an item return</h2>
             <p className="mt-1.5 text-sm text-slate-600">
-              {returnMode === 'scan'
-                ? 'Scan the barcode on an individually tagged unit, like a laptop.'
-                : 'Return reusable stock tracked by quantity, like chairs or tools. The employee confirms with an emailed code.'}
+              Scan the barcode on an individually tagged unit, like a laptop.
             </p>
           </div>
-          <div role="tablist" aria-label="Return type" className="inline-flex rounded-xl border-2 border-slate-300 bg-white p-1">
-            {([['scan', 'Tagged unit'], ['bulk', `Quantity-tracked stock (${bulkReturnOptions.length})`]] as const).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                role="tab"
-                id={`return-tab-${mode}`}
-                aria-selected={returnMode === mode}
-                aria-controls={`return-panel-${mode}`}
-                onClick={() => {
-                  setReturnMode(mode)
-                  if (mode === 'scan') focusScannerInput(50)
-                }}
-                className={`rounded-lg px-4 py-2.5 text-sm font-extrabold transition ${returnMode === mode ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-700 hover:bg-blue-50 hover:text-blue-800'}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
 
-        <div role="tabpanel" id="return-panel-bulk" aria-labelledby="return-tab-bulk" hidden={returnMode !== 'bulk'} className="mt-4 border-t border-slate-100 pt-4">
-          <BulkReturnPanel options={bulkReturnOptions} onReturned={() => setReturnsRefreshToken((current) => current + 1)} />
-        </div>
-
-        <div role="tabpanel" id="return-panel-scan" aria-labelledby="return-tab-scan" hidden={returnMode !== 'scan'}>
+        <div>
           <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border-2 border-blue-200 bg-blue-50/70 px-5 py-4">
             <div>
               <p className="flex items-center gap-2.5 text-sm font-extrabold text-blue-900" role="status" aria-live="polite">
@@ -1101,7 +530,7 @@ export default function ReturnItems() {
                       <fieldset className="mt-4" disabled={isConfirmingReturn}>
                         <legend className="mb-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Condition after inspection</legend>
                         <div className="space-y-2">
-                          {bulkConditionGroups.map((group) => (
+                          {conditionGroups.map((group) => (
                             <div key={group.title} className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
                               <span className="flex w-28 shrink-0 items-center gap-1.5 text-[0.65rem] font-bold text-slate-500">
                                 <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${group.dot}`} />

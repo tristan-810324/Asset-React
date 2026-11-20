@@ -1,6 +1,8 @@
 import { apiRequest } from '../auth/authApi'
 
 export type EmployeeIssuanceRecord = {
+  // The department head of the employee's department, who is accountable for items kept in a room.
+  departmentHead: string | null
   assignedItems: Array<{
     id: string
     code: string
@@ -12,6 +14,11 @@ export type EmployeeIssuanceRecord = {
     unitOfMeasure: string
     assignedOn: string
     assetTagCodes: string[]
+    // Where the item is kept (a room or venue). Empty when it is kept by the employee.
+    location: string | null
+    purpose: string | null
+    // The GSO staff member who issued the item.
+    issuedByName: string | null
   }>
   history: Array<{
     date: string
