@@ -114,6 +114,8 @@ function RequestCenterContent() {
     ? 'Your account is waiting for GSO verification. Requests unlock once it is approved.'
     : identity?.status === 'Needs Correction'
       ? 'GSO asked for corrections. Update your details in Profile, then resubmit.'
+      : identity?.status === 'Rejected'
+        ? 'GSO did not approve your account. Update your details in Profile and resubmit to try again.'
       : 'Complete your staff details in Profile and submit them for GSO verification. Requests stay locked until your account is verified.'
   return (
     <div>

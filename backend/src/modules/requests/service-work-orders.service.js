@@ -447,6 +447,8 @@ async function notFinishWork(idValue, input, user) {
       note: `Not finished yet. Reason: ${reason}. Expected finish: ${expectedDate}.`,
       changedByUserId: user.id,
     });
+    // The expected finish becomes the new target date, so Due Today and Overdue follow the real schedule.
+    await repository.updateWorkOrder(client, id, { targetDate: expectedDate });
   });
   const workOrder = presentWorkOrder(result.workOrder);
   await notifyRequester(workOrder, 'Work is still in progress', `The team is still working on your request. Reason: ${reason}. Expected to finish by ${expectedDate}.`, `service-not-finished:${id}:${Date.now()}`);

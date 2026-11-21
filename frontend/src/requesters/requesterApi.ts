@@ -218,7 +218,7 @@ export type PurchaseItemName = {
   staffIssueMaxQuantity: number | null
 }
 
-export type RequesterIdentityStatus = 'Incomplete' | 'Pending' | 'Verified' | 'Needs Correction'
+export type RequesterIdentityStatus = 'Incomplete' | 'Pending' | 'Verified' | 'Needs Correction' | 'Rejected'
 
 export type RequesterIdentity = {
   userId: string | number
@@ -470,7 +470,7 @@ export function getRequesterIdentityPicture(userId: string | number) {
 }
 
 export function reviewRequesterIdentity(userId: string | number, payload: {
-  status: 'Verified' | 'Needs Correction'
+  status: 'Verified' | 'Needs Correction' | 'Rejected'
   note: string
   department?: string
   position?: string

@@ -9,4 +9,9 @@ const listLogs = asyncHandler(async (req, res) => {
   res.json({ success: true, data: result });
 });
 
-module.exports = { listLogs };
+const listMyActivity = asyncHandler(async (req, res) => {
+  const result = await auditService.listMyActivity(req.user.id);
+  res.json({ success: true, data: result });
+});
+
+module.exports = { listLogs, listMyActivity };

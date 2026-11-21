@@ -81,7 +81,7 @@ async function submitMine(input, user) {
 
 async function listReviews(statusValue) {
   const status = typeof statusValue === 'string' ? statusValue.trim() : 'all';
-  if (!['all', 'Pending', 'Verified', 'Needs Correction'].includes(status)) invalid('Hindi valid ang verification status filter.');
+  if (!['all', 'Pending', 'Verified', 'Needs Correction', 'Rejected'].includes(status)) invalid('Hindi valid ang verification status filter.');
   return repository.listReviews(status);
 }
 
@@ -93,10 +93,10 @@ async function review(userIdValue, input, reviewer) {
   const userId = validateUserId(userIdValue);
   if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang verification decision.');
   const status = input.status;
-  if (!['Verified', 'Needs Correction'].includes(status)) invalid('Pumili ng valid na verification decision.');
+  if (!['Verified', 'Needs Correction', 'Rejected'].includes(status)) invalid('Pumili ng valid na verification decision.');
   const note = typeof input.note === 'string' ? input.note.trim() : '';
   if (note.length > 1000) invalid('Ang review note ay hindi dapat lumampas sa 1000 characters.');
-  if (status === 'Needs Correction' && !note) invalid('Maglagay ng note para malaman ng requester kung ano ang dapat ayusin.');
+  if (status !== 'Verified' && !note) invalid('Maglagay ng note para malaman ng requester kung bakit.');
   const department = input.department === undefined ? undefined : requiredText(input.department, 'Department / office', 120);
   const position = input.position === undefined ? undefined : requiredText(input.position, 'Position', 120);
   const addDepartment = input.addDepartment === undefined ? false : input.addDepartment;
@@ -126,7 +126,11 @@ async function review(userIdValue, input, reviewer) {
     entityKey: String(userId),
     entityName: profile.accountName || String(userId),
     action: status === 'Verified' ? 'approved' : 'rejected',
-    reason: status === 'Verified' ? 'Requester account verified by GSO.' : `Requester account sent back for correction. Note: ${note}`,
+    reason: status === 'Verified'
+      ? 'Requester account verified by GSO.'
+      : status === 'Rejected'
+        ? `Requester account rejected by GSO. Note: ${note}`
+        : `Requester account sent back for correction. Note: ${note}`,
     newValues: { requesterVerification: true, status, note: note || null, reviewerName: reviewer.name || null, reviewerEmail: reviewer.email || null },
     changedByUserId: reviewer.id,
   });
@@ -152,6 +156,15 @@ async function review(userIdValue, input, reviewer) {
       message: note || 'GSO Staff has requested corrections to your information. Please update and resubmit.',
       href: '/requester/profile',
       dedupeKey: `requester-needs-correction:${userId}`,
+    });
+  } else if (status === 'Rejected') {
+    await notificationsRepository.createUserNotification({
+      userId: String(userId),
+      type: 'REQUESTER_REJECTED',
+      title: 'Your account was not approved',
+      message: note,
+      href: '/requester/profile',
+      dedupeKey: `requester-rejected:${userId}:${Date.now()}`,
     });
   }
 

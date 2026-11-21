@@ -177,7 +177,7 @@ async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
         reference: `ACC-${log.entityId}`,
         detail: log.reason,
         person: log.entityName,
-        status: log.newValues.status === 'Verified' ? 'Verified' : 'Needs Correction',
+        status: log.newValues.status === 'Verified' ? 'Verified' : log.newValues.status === 'Rejected' ? 'Rejected' : 'Needs Correction',
         actorName: typeof log.newValues.reviewerName === 'string' ? log.newValues.reviewerName : (log.changedBy || 'GSO'),
         actorEmail: typeof log.newValues.reviewerEmail === 'string' ? log.newValues.reviewerEmail : undefined,
       }))

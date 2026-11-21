@@ -30,6 +30,18 @@ export async function listUserPositions() {
   return result.positions
 }
 
+export async function setSystemUserActive(userId: string, isActive: boolean) {
+  const result = await apiRequest<{ user: { id: string; isActive: boolean } }>(`/users/${encodeURIComponent(userId)}/active`, {
+    method: 'PATCH',
+    body: JSON.stringify({ isActive }),
+  })
+  return result.user
+}
+
+export async function deleteSystemUser(userId: string) {
+  await apiRequest<{ user: { id: string } }>(`/users/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+}
+
 export async function createSystemUser(input: CreateSystemUserInput) {
   const result = await apiRequest<{ user: SystemUserAccount }>('/users', {
     method: 'POST',

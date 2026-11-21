@@ -3,9 +3,15 @@ import { clearAuthSession, getCurrentUser, type AuthUser } from '../../auth/auth
 import GsoNotif from '../notifbell/gsonotif'
 
 // Same sidebar, header, and account menu as the GSO pages, so both consoles look like one system.
-type AdminIconName = 'chevron-down' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'shield' | 'user' | 'users' | 'wrench'
+type AdminIconName = 'chevron-down' | 'clock' | 'close' | 'grid' | 'history' | 'logout' | 'menu' | 'shield' | 'user' | 'users' | 'wrench'
 
 const iconPaths: Record<AdminIconName, ReactNode> = {
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </>
+  ),
   'chevron-down': <path d="m7 10 5 5 5-5" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   grid: (
@@ -58,6 +64,7 @@ const navigation: Array<{ name: string; icon: AdminIconName; href: string }> = [
   { name: 'Overview', icon: 'grid', href: '/admin' },
   { name: 'User management', icon: 'users', href: '/admin/users' },
   { name: 'Audit logs', icon: 'history', href: '/admin/audit-logs' },
+  { name: 'History', icon: 'clock', href: '/admin/history' },
   { name: 'Support Queue', icon: 'wrench', href: '/admin/support-queue' },
   { name: 'Repair & Maintenance', icon: 'wrench', href: '/admin/repair' },
 ]

@@ -4,6 +4,7 @@ import UserManagement from './admin/usermanagement'
 import AdminNotifications from './admin/notifications'
 import AdminProfile from './admin/profile'
 import AuditLogs from './admin/auditlogs'
+import AdminHistory from './admin/history'
 import ReturnsReview from './admin/returnsreview'
 import RequesterDashboard from './requesters/requesterdashboard'
 import RequestCenter from './requesters/requestcenter'
@@ -143,6 +144,9 @@ export default function App() {
   }
   if (path === '/admin/repair') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminRepairMaintenance /></ProtectedDashboard>
+  }
+  if (path === '/admin/history') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><AdminHistory /></ProtectedDashboard>
   }
   if (path === '/admin/audit-logs') {
     return <ProtectedDashboard requiredRole="IT_ADMIN"><AuditLogs /></ProtectedDashboard>

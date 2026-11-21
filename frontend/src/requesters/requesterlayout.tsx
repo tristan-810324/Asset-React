@@ -109,7 +109,7 @@ function pageFromPath(path: string): RequesterPage {
 }
 
 function IdentityPrompt({ identity, onSaved, onClose }: { identity: RequesterIdentity; onSaved: (next: RequesterIdentity) => void; onClose: () => void }) {
-  const canEdit = identity.status === 'Incomplete' || identity.status === 'Needs Correction'
+  const canEdit = identity.status === 'Incomplete' || identity.status === 'Needs Correction' || identity.status === 'Rejected'
   return <div className="fixed inset-0 z-100 grid place-items-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm" role="presentation">
         <section role="dialog" aria-modal="true" aria-labelledby="requester-identity-title" className="my-4 flex max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-2xl shadow-slate-950/30">
       <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-7 sm:py-5">
@@ -119,6 +119,7 @@ function IdentityPrompt({ identity, onSaved, onClose }: { identity: RequesterIde
       <div className="min-h-0 space-y-3 overflow-y-auto bg-slate-50/70 p-4 sm:p-6">
         {identity.status === 'Pending' && <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-3"><p className="text-xs font-extrabold text-blue-900">Under review by GSO Staff</p><p className="mt-1 text-xs leading-relaxed text-blue-800">We're verifying your employee information. This usually takes 1-2 business days.</p>{identity.reviewNote && <p className="mt-2 rounded-lg bg-white/80 p-2.5 text-xs font-semibold text-slate-700">GSO note: {identity.reviewNote}</p>}</div>}
         {identity.status === 'Needs Correction' && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-xs font-extrabold text-rose-900">Correction needed</p><p className="mt-1 text-xs leading-relaxed text-rose-800">{identity.reviewNote || 'Review and correct the staff details below before resubmitting.'}</p></div>}
+        {identity.status === 'Rejected' && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-3"><p className="text-xs font-extrabold text-rose-900">Account not approved</p><p className="mt-1 text-xs leading-relaxed text-rose-800">{identity.reviewNote || 'GSO did not approve this account. You may update your details and resubmit.'}</p></div>}
         {canEdit && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5"><RequesterIdentityForm profile={identity} onSaved={onSaved} /></section>}
         {!canEdit && <div className="flex justify-end"><button type="button" onClick={onClose} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Close for now</button></div>}
       </div>

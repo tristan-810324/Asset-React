@@ -2,12 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { getRequesterIdentityPicture, listRequesterDepartments, listRequesterIdentityReviews, listRequesterPositions, reviewRequesterIdentity, type RequesterIdentity, type RequesterIdentityStatus } from '../requesters/requesterApi'
 
-const statuses: Array<'all' | RequesterIdentityStatus> = ['all', 'Pending', 'Needs Correction', 'Verified']
+const statuses: Array<'all' | RequesterIdentityStatus> = ['all', 'Pending', 'Needs Correction', 'Rejected', 'Verified']
 const statusStyle: Record<RequesterIdentityStatus, string> = {
   Incomplete: 'border-slate-200 bg-slate-100 text-slate-700',
   Pending: 'border-blue-200 bg-blue-50 text-blue-800',
   Verified: 'border-blue-600 bg-blue-600 text-white',
   'Needs Correction': 'border-blue-300 bg-white text-blue-900',
+  Rejected: 'border-rose-300 bg-rose-600 text-white',
 }
 
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—'
@@ -29,7 +30,8 @@ export default function RequesterVerification() {
   const [busyId, setBusyId] = useState<string | number | null>(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [retryDecision, setRetryDecision] = useState<{ profile: RequesterIdentity; status: 'Verified' | 'Needs Correction' } | null>(null)
+  const [retryDecision, setRetryDecision] = useState<{ profile: RequesterIdentity; status: 'Verified' | 'Needs Correction' | 'Rejected' } | null>(null)
+  const [rejectingKey, setRejectingKey] = useState<string | null>(null)
   const [pictures, setPictures] = useState<Record<string, string>>({})
   const [masterDepartments, setMasterDepartments] = useState<string[]>([])
   const [masterPositions, setMasterPositions] = useState<string[]>([])
@@ -98,10 +100,14 @@ export default function RequesterVerification() {
     verified: profiles.filter((profile) => profile.status === 'Verified').length,
   }), [profiles])
 
-  async function decide(profile: RequesterIdentity, status: 'Verified' | 'Needs Correction') {
+  async function decide(profile: RequesterIdentity, status: 'Verified' | 'Needs Correction' | 'Rejected') {
     const note = notes[String(profile.userId)] || ''
     if (status === 'Needs Correction' && !note.trim()) {
       setError(`Add a review note for ${profile.accountName} describing what needs to be corrected.`)
+      return
+    }
+    if (status === 'Rejected' && !note.trim()) {
+      setError(`Add a review note explaining why ${profile.accountName} is rejected.`)
       return
     }
     if (status === 'Verified' && profile.matchedEmployeeCode && !profile.employeeRecordMatch && !note.trim()) {
@@ -123,11 +129,14 @@ export default function RequesterVerification() {
       } : {}
       const reviewedIdentity = await reviewRequesterIdentity(profile.userId, { status, note, ...masterDataDecision })
       setProfiles((current) => current.map((item) => String(item.userId) === String(reviewedIdentity.userId) ? reviewedIdentity : item))
+      setRejectingKey(null)
       setNotice(status === 'Verified'
         ? profile.matchedEmployeeCode
           ? `${profile.accountName} — verified against the existing Employee Master Data record.`
           : `${profile.accountName} — verified and added to Employee Master Data${masterDataDecision.addDepartment || masterDataDecision.addPosition ? ', including approved master data suggestions' : ''}.`
-        : `${profile.accountName} — sent back for correction.`)
+        : status === 'Rejected'
+          ? `${profile.accountName} — rejected.`
+          : `${profile.accountName} — sent back for correction.`)
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'Unable to save the GSO review.'
       setError(message)
@@ -265,8 +274,23 @@ export default function RequesterVerification() {
               </div>
 
               {profile.status !== 'Verified' && <div className="w-full xl:max-w-xs">
-                <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-slate-600">Review note <span className="font-medium text-slate-400">(required for correction)</span></span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="What should the requester fix?" className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label>
-                <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" onClick={() => void decide(profile, 'Needs Correction')} disabled={isBusy} className="rounded-xl border-2 border-blue-300 bg-white px-3 py-3 text-sm font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:opacity-50">Needs correction</button><button type="button" onClick={() => void decide(profile, 'Verified')} disabled={isBusy} className="rounded-xl bg-blue-600 px-3 py-3 text-sm font-extrabold text-white transition hover:bg-blue-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Verify requester'}</button></div>
+                {rejectingKey === key ? (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5">
+                    <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-rose-900">Bakit nireject ang account na ito?</span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="Ito ang makikita ng requester." className="w-full resize-y rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100" /></label>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button type="button" onClick={() => setRejectingKey(null)} disabled={isBusy} className="rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-sm font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>
+                      <button type="button" onClick={() => void decide(profile, 'Rejected')} disabled={isBusy} className="rounded-xl bg-rose-600 px-3 py-3 text-sm font-extrabold text-white transition hover:bg-rose-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Confirm reject'}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-slate-600">Review note <span className="font-medium text-slate-400">(required if the record does not match)</span></span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="Optional maliban kung may mismatch sa Employee Master Data." className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button type="button" onClick={() => { setError(''); setRejectingKey(key) }} disabled={isBusy} className="rounded-xl border-2 border-rose-300 bg-white px-3 py-3 text-sm font-extrabold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">Reject</button>
+                      <button type="button" onClick={() => void decide(profile, 'Verified')} disabled={isBusy} className="rounded-xl bg-blue-600 px-3 py-3 text-sm font-extrabold text-white transition hover:bg-blue-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Verify requester'}</button>
+                    </div>
+                  </>
+                )}
               </div>}
             </div>
           </article>

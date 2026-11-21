@@ -6,4 +6,9 @@ async function listLogs(query) {
   return auditRepository.listLogs(filters);
 }
 
-module.exports = { listLogs };
+// Only the actions this user performed, newest first. Used by the IT Admin History page.
+async function listMyActivity(userId) {
+  return { activity: await auditRepository.listUserActivity(userId, 500) };
+}
+
+module.exports = { listLogs, listMyActivity };

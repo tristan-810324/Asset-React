@@ -15,8 +15,18 @@ const listAccountPositions = asyncHandler(async (req, res) => {
 });
 
 const createSystemUser = asyncHandler(async (req, res) => {
-  const user = await usersService.createSystemUser(req.body);
+  const user = await usersService.createSystemUser(req.body, req.user);
   res.status(201).json({ success: true, data: { user } });
 });
 
-module.exports = { listSystemUsers, listAccountPositions, createSystemUser };
+const setSystemUserActive = asyncHandler(async (req, res) => {
+  const user = await usersService.setSystemUserActive(req.params.userId, req.body?.isActive, req.user);
+  res.json({ success: true, data: { user } });
+});
+
+const deleteSystemUser = asyncHandler(async (req, res) => {
+  const user = await usersService.deleteSystemUser(req.params.userId, req.user);
+  res.json({ success: true, data: { user } });
+});
+
+module.exports = { listSystemUsers, listAccountPositions, createSystemUser, setSystemUserActive, deleteSystemUser };

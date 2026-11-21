@@ -21,13 +21,23 @@ async function listSystemUsers() {
   return result.rows;
 }
 
+// Same sources the page text promises: saved positions, active employee records, and existing user accounts.
 async function listAccountPositions() {
   const result = await pool.query(
-    `SELECT name AS position
-       FROM employee_positions
-      ORDER BY lower(name), name`,
+    `SELECT DISTINCT ON (lower(position)) position
+       FROM (
+         SELECT name AS position FROM employee_positions
+         UNION ALL
+         SELECT "position" FROM employees WHERE status = 'Active'
+         UNION ALL
+         SELECT "position" FROM users
+         UNION ALL
+         SELECT * FROM (VALUES ('Head'), ('Others')) AS defaults(position)
+       ) AS options
+      WHERE BTRIM(position) <> ''
+      ORDER BY lower(position), position`,
   );
-  return result.rows.map((row) => row.position);
+  return result.rows.map((row) => row.position).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
 }
 
 async function createSystemUser({ name, email, roleKey, position, passwordHash }) {
@@ -63,4 +73,31 @@ async function createSystemUser({ name, email, roleKey, position, passwordHash }
   }
 }
 
-module.exports = { listSystemUsers, listAccountPositions, createSystemUser };
+async function setSystemUserActive(userId, isActive) {
+  const result = await pool.query(
+    'UPDATE users SET is_active = $2 WHERE id = $1 RETURNING id, name, email, is_active AS "isActive"',
+    [userId, isActive],
+  );
+  return result.rows[0] || null;
+}
+
+// Removes the sign-in tokens and role links first. Requests and issuance batches still reference the
+// account (ON DELETE RESTRICT), so the delete fails with 23503 when the account has any history.
+async function deleteSystemUser(userId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM auth_tokens WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
+    const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id, name, email', [userId]);
+    await client.query('COMMIT');
+    return result.rows[0] || null;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { listSystemUsers, listAccountPositions, createSystemUser, setSystemUserActive, deleteSystemUser };

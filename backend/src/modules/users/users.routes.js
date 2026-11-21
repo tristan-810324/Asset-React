@@ -10,5 +10,7 @@ router.use(authenticate, requireUserManagementAccess);
 router.get('/positions', usersController.listAccountPositions);
 router.get('/', usersController.listSystemUsers);
 router.post('/', usersController.createSystemUser);
+router.patch('/:userId/active', requireRole('IT_ADMIN'), usersController.setSystemUserActive);
+router.delete('/:userId', requireRole('IT_ADMIN'), usersController.deleteSystemUser);
 
 module.exports = router;

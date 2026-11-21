@@ -7,12 +7,13 @@ const statusStyles = {
   Pending: 'border-blue-200 bg-blue-50 text-blue-800',
   Verified: 'border-emerald-200 bg-emerald-50 text-emerald-800',
   'Needs Correction': 'border-rose-200 bg-rose-50 text-rose-800',
+  Rejected: 'border-rose-300 bg-rose-600 text-white',
 }
 
 function RequesterProfileContent() {
   const { user, identity, identityLoading, identityError, refreshIdentity, openIdentityPrompt } = useRequesterIdentity()
   const [editing, setEditing] = useState(false)
-  const needsDetails = !identity || identity.status === 'Incomplete' || identity.status === 'Needs Correction'
+  const needsDetails = !identity || identity.status === 'Incomplete' || identity.status === 'Needs Correction' || identity.status === 'Rejected'
   const showForm = editing || needsDetails
   const identityName = identity
     ? [identity.firstName, identity.middleName, identity.lastName, identity.suffix].filter(Boolean).join(' ') || identity.accountName
@@ -34,6 +35,7 @@ function RequesterProfileContent() {
       {!identityLoading && identity && <>
         {identity.status === 'Pending' && <div className="mx-5 mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:mx-6"><p className="text-sm font-extrabold text-blue-900">GSO is validating your details.</p><p className="mt-1 text-xs leading-relaxed text-blue-800">You can send requests once you are verified.</p>{identity.reviewNote && <p className="mt-3 text-xs font-semibold text-slate-700">GSO note: {identity.reviewNote}</p>}</div>}
         {identity.status === 'Needs Correction' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6">{identity.reviewNote || 'Pakitingnan at itama ang details bago muling isumite.'}</div>}
+        {identity.status === 'Rejected' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6"><p className="font-extrabold text-rose-900">Hindi na-approve ang account mo.</p><p className="mt-1">{identity.reviewNote || 'Pwede mong itama ang details at isumite ulit.'}</p></div>}
         {!showForm && <dl className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6">
           {[
             ['Full name', identityName],

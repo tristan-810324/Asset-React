@@ -3,15 +3,17 @@ import { AdminPageFrame } from '../components/navbars/adminnavbar'
 import { AdminGlyph, AdminMetricCard } from './adminui'
 import {
   createSystemUser,
+  deleteSystemUser,
   listSystemUsers,
   listUserPositions,
+  setSystemUserActive,
   type SystemUserAccount,
   type UserAccountRole,
 } from './userManagementApi'
 
-const boxClass = 'min-w-0 rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-6'
-const labelClass = 'mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500'
 const fieldClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400'
+const editFieldLabelClass = 'mb-2 block text-sm font-extrabold text-slate-900'
+const editControlClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(value))
@@ -34,8 +36,44 @@ export default function UserManagement() {
   const [search, setSearch] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [createError, setCreateError] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [busyUserId, setBusyUserId] = useState<string | null>(null)
+
+  async function toggleActive(account: SystemUserAccount) {
+    const nextActive = !account.isActive
+    if (!window.confirm(`${nextActive ? 'I-activate' : 'I-deactivate'} ang account ni ${account.name}?`)) return
+    setBusyUserId(account.id)
+    setErrorMessage('')
+    setSuccessMessage('')
+    try {
+      await setSystemUserActive(account.id, nextActive)
+      setAccounts((current) => current.map((item) => item.id === account.id ? { ...item, isActive: nextActive } : item))
+      setSuccessMessage(`${account.name} is now ${nextActive ? 'active' : 'inactive'}.`)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to update the account.')
+    } finally {
+      setBusyUserId(null)
+    }
+  }
+
+  async function removeAccount(account: SystemUserAccount) {
+    if (!window.confirm(`Burahin nang tuluyan ang account ni ${account.name}? Hindi ito na-undo. Kung may requests o issuance ang account, i-deactivate na lang.`)) return
+    setBusyUserId(account.id)
+    setErrorMessage('')
+    setSuccessMessage('')
+    try {
+      await deleteSystemUser(account.id)
+      setAccounts((current) => current.filter((item) => item.id !== account.id))
+      setSuccessMessage(`${account.name} was deleted.`)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete the account.')
+    } finally {
+      setBusyUserId(null)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -58,6 +96,16 @@ export default function UserManagement() {
     return () => { active = false }
   }, [reloadKey])
 
+  // Escape closes the add-account dialog, except while an account is being saved.
+  useEffect(() => {
+    if (!showAddModal) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isCreating) setShowAddModal(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showAddModal, isCreating])
+
   const activeCount = accounts.filter((account) => account.isActive).length
   const verifiedCount = accounts.filter((account) => Boolean(account.emailVerifiedAt)).length
   const filteredAccounts = useMemo(() => {
@@ -68,8 +116,14 @@ export default function UserManagement() {
     ))
   }, [accounts, search])
 
+  const openAddModal = () => {
+    setCreateError('')
+    setShowAddModal(true)
+  }
+
   const handleCreateAccount = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setCreateError('')
     setErrorMessage('')
     setSuccessMessage('')
     setIsCreating(true)
@@ -85,9 +139,10 @@ export default function UserManagement() {
       await createSystemUser({ name, email, roleKey, position })
       setSuccessMessage(`Created ${roleLabel(roleKey)} account for ${email}. Initial password: Admin123. Email verification is required on first sign-in.`)
       form.reset()
+      setShowAddModal(false)
       setReloadKey((key) => key + 1)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to create the account. Please try again.')
+      setCreateError(error instanceof Error ? error.message : 'Unable to create the account. Please try again.')
     } finally {
       setIsCreating(false)
     }
@@ -102,7 +157,16 @@ export default function UserManagement() {
             <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> IT Admin workspace
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">User management</h1>
-          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account and create requester, GSO Staff, or GSO Head accounts with a listed employee position.</p>
+          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account, add requester, GSO Staff, or GSO Head logins, and deactivate or delete accounts.</p>
+        </div>
+        <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
+          <button
+            type="button"
+            onClick={openAddModal}
+            className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50"
+          >
+            + Add user account
+          </button>
         </div>
       </section>
 
@@ -113,120 +177,188 @@ export default function UserManagement() {
       </section>
 
       {errorMessage && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">{errorMessage}</p>}
+      {successMessage && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold leading-relaxed text-emerald-800">{successMessage}</p>}
 
-      <section className="mt-6 grid items-start gap-6 xl:grid-cols-[0.82fr_1.45fr]">
-        <article className={boxClass}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em] text-blue-600">New account</p>
-              <h2 className="mt-1 text-base font-black tracking-tight text-slate-900">Create user account</h2>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500">Create a requester, GSO Staff, or GSO Head login.</p>
-            </div>
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-blue-100 bg-blue-50 text-blue-700"><AdminGlyph name="plus" /></span>
+      <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+        <div className="flex flex-col gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div>
+            <h2 className="text-base font-black tracking-tight text-slate-900">All system users</h2>
+            <p className="mt-1 text-xs font-medium text-slate-500">Accounts across every role, including seeded and admin-created users.</p>
+            <span className="mt-2 inline-flex rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">
+              {isLoading ? 'Loading…' : `${filteredAccounts.length} user(s) found`}
+            </span>
           </div>
-          <form className="mt-5 space-y-4" onSubmit={handleCreateAccount}>
-            <div>
-              <label htmlFor="user-name" className={labelClass}>Full name</label>
-              <input id="user-name" name="name" type="text" autoComplete="name" maxLength={200} placeholder="e.g. Juan Dela Cruz" required className={fieldClass} />
-            </div>
-            <div>
-              <label htmlFor="user-email" className={labelClass}>Email address</label>
-              <input id="user-email" name="email" type="email" autoComplete="email" maxLength={254} placeholder="name@dyci.edu.ph" required className={fieldClass} />
-            </div>
-            <div>
-              <label htmlFor="user-role" className={labelClass}>Account type</label>
-              <select id="user-role" name="roleKey" defaultValue="GSO_STAFF" required className={fieldClass}>
-                <option value="GSO_STAFF">GSO Staff</option>
-                <option value="GSO_HEAD">GSO Head</option>
-                <option value="BORROWER">EmployeeHead / Requester</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="user-position" className={labelClass}>Position</label>
-              <select id="user-position" name="position" defaultValue="" required disabled={!positions.length} className={fieldClass}>
-                <option value="" disabled>{positions.length ? 'Select a position' : 'No positions available'}</option>
-                {positions.map((position) => <option key={position} value={position}>{position}</option>)}
-              </select>
-              <p className="mt-1.5 text-[0.65rem] leading-relaxed text-slate-500">Position options come from active employee records and existing user accounts.</p>
-            </div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3">
-              <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-amber-800">Initial password</p>
-              <p className="mt-1 text-lg font-black tracking-wide text-amber-950">Admin123</p>
-              <p className="mt-1 text-[0.68rem] leading-relaxed text-amber-800">The user must verify their email during the first successful sign-in.</p>
-            </div>
-            {successMessage && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold leading-relaxed text-emerald-800">{successMessage}</p>}
-            <button type="submit" disabled={isCreating || !positions.length} aria-busy={isCreating} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
-              <AdminGlyph name="plus" />
-              {isCreating ? 'Creating account…' : 'Create account'}
-            </button>
-          </form>
-        </article>
-
-        <article className={boxClass}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em] text-blue-600">Directory</p>
-              <h2 className="mt-1 text-base font-black tracking-tight text-slate-900">All system users</h2>
-              <p className="mt-1 text-xs font-medium text-slate-500">Accounts across every role, including seeded and admin-created users.</p>
-            </div>
-            <label className="relative block sm:w-64">
-              <span className="sr-only">Search system users</span>
-              <AdminGlyph name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, role, position…" className={`${fieldClass} pl-9 pr-3`} />
-            </label>
-          </div>
-          <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
-            <table className="min-w-220 w-full border-collapse text-left text-xs">
-              <thead className="bg-slate-50/80 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-3">User</th>
-                  <th className="px-4 py-3">Position</th>
-                  <th className="px-4 py-3">Role(s)</th>
-                  <th className="px-4 py-3">Created</th>
-                  <th className="px-4 py-3">Email verification</th>
-                  <th className="px-4 py-3">Status</th>
+          <label className="relative block sm:w-72">
+            <span className="sr-only">Search system users</span>
+            <AdminGlyph name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, role, position…" className={`${fieldClass} pl-9 pr-3`} />
+          </label>
+        </div>
+        <div className="overflow-x-auto border-t border-slate-200">
+          <table className="min-w-220 w-full border-collapse text-left text-xs">
+            <thead className="bg-slate-50/80 text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">User</th>
+                <th className="px-4 py-3">Role(s)</th>
+                <th className="px-4 py-3">Created</th>
+                <th className="px-4 py-3">Email verification</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {isLoading ? (
+                <tr><td colSpan={6} className="px-4 py-10 text-center font-semibold text-slate-500">Loading system users…</td></tr>
+              ) : filteredAccounts.length === 0 ? (
+                <tr><td colSpan={6} className="px-4 py-10 text-center font-semibold text-slate-500">{accounts.length ? 'No matching users.' : errorMessage ? 'Unable to load users. See the error above.' : 'No system users found.'}</td></tr>
+              ) : filteredAccounts.map((account) => (
+                <tr key={account.id} className="hover:bg-slate-50/70">
+                  <td className="px-4 py-3.5">
+                    <p className="font-extrabold text-slate-800">{account.name}</p>
+                    <p className="mt-1 text-[0.68rem] text-slate-500">{account.email}</p>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <div className="flex flex-wrap gap-1">
+                      {account.roles.length
+                        ? account.roles.map((role) => <span key={role} className="inline-flex rounded-lg bg-blue-50 px-2 py-0.5 text-[0.62rem] font-extrabold text-blue-700">{roleLabel(role)}</span>)
+                        : <span className="text-slate-400">No role assigned</span>}
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3.5 text-slate-600">{formatDate(account.createdAt)}</td>
+                  <td className="px-4 py-3.5">
+                    <span className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-0.5 text-[0.62rem] font-extrabold ${account.emailVerifiedAt ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${account.emailVerifiedAt ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                      {account.emailVerifiedAt ? 'Verified' : 'Pending'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3.5">
+                    <span className={`inline-flex rounded-lg px-2 py-0.5 text-[0.62rem] font-extrabold ${account.isActive ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{account.isActive ? 'Active' : 'Inactive'}</span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3.5 text-right">
+                    <div className="flex justify-end gap-1.5">
+                      <button type="button" onClick={() => void toggleActive(account)} disabled={busyUserId !== null} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[0.65rem] font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">{account.isActive ? 'Deactivate' : 'Activate'}</button>
+                      <button type="button" onClick={() => void removeAccount(account)} disabled={busyUserId !== null} className="rounded-lg border border-rose-300 bg-white px-2.5 py-1.5 text-[0.65rem] font-extrabold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">{busyUserId === account.id ? 'Working…' : 'Delete'}</button>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {isLoading ? (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center font-semibold text-slate-500">Loading system users…</td></tr>
-                ) : filteredAccounts.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center font-semibold text-slate-500">{accounts.length ? 'No matching users.' : errorMessage ? 'Unable to load users. See the error above.' : 'No system users found.'}</td></tr>
-                ) : filteredAccounts.map((account) => (
-                  <tr key={account.id} className="hover:bg-slate-50/70">
-                    <td className="px-4 py-3.5">
-                      <p className="font-extrabold text-slate-800">{account.name}</p>
-                      <p className="mt-1 text-[0.68rem] text-slate-500">{account.email}</p>
-                    </td>
-                    <td className="px-4 py-3.5 text-slate-600">{account.position || '—'}</td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex flex-wrap gap-1">
-                        {account.roles.length
-                          ? account.roles.map((role) => <span key={role} className="inline-flex rounded-lg bg-blue-50 px-2 py-0.5 text-[0.62rem] font-extrabold text-blue-700">{roleLabel(role)}</span>)
-                          : <span className="text-slate-400">No role assigned</span>}
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3.5 text-slate-600">{formatDate(account.createdAt)}</td>
-                    <td className="px-4 py-3.5">
-                      <span className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-0.5 text-[0.62rem] font-extrabold ${account.emailVerifiedAt ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${account.emailVerifiedAt ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                        {account.emailVerifiedAt ? 'Verified' : 'Pending'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className={`inline-flex rounded-lg px-2 py-0.5 text-[0.62rem] font-extrabold ${account.isActive ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{account.isActive ? 'Active' : 'Inactive'}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-3 flex items-center gap-2 text-[0.68rem] leading-relaxed text-slate-400">
-            <AdminGlyph name="clock" className="h-3.5 w-3.5 shrink-0" />
-            Email is verified once on the first successful sign-in. Existing verified accounts continue to sign in directly.
-          </p>
-        </article>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="flex items-center gap-2 px-5 py-4 text-[0.68rem] leading-relaxed text-slate-400 sm:px-6">
+          <AdminGlyph name="clock" className="h-3.5 w-3.5 shrink-0" />
+          Email is verified once on the first successful sign-in. Existing verified accounts continue to sign in directly.
+        </p>
       </section>
+
+      {showAddModal && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5"
+          onClick={() => { if (!isCreating) setShowAddModal(false) }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-user-modal-title"
+            onClick={(event) => event.stopPropagation()}
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
+          >
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 border-[#d6b333] bg-[#17377f] text-sm font-black text-white shadow-sm">
+                  +
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">User management</p>
+                  <h2 id="add-user-modal-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Add a user account</h2>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">Fields marked * are required. Requester, GSO Staff, and GSO Head logins are created here.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                disabled={isCreating}
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:opacity-50"
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6">
+              <form id="create-user-form" className="mx-auto max-w-4xl space-y-4" onSubmit={handleCreateAccount}>
+                {createError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold leading-relaxed text-rose-700">{createError}</p>}
+
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Account details</h3>
+                    <p className="mt-1 text-sm text-slate-600">The name and email are used for sign-in and email verification.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Full name <span className="text-rose-600">*</span></span>
+                      <input name="name" type="text" autoComplete="name" maxLength={200} placeholder="e.g. Juan Dela Cruz" required className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Email address <span className="text-rose-600">*</span></span>
+                      <input name="email" type="email" autoComplete="email" maxLength={254} placeholder="name@dyci.edu.ph" required className={editControlClass} />
+                    </label>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Access and position</h3>
+                    <p className="mt-1 text-sm text-slate-600">Choose the account type, then pick a suggested position or type your own.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Account type <span className="text-rose-600">*</span></span>
+                      <select name="roleKey" defaultValue="GSO_STAFF" required className={editControlClass}>
+                        <option value="GSO_STAFF">GSO Staff</option>
+                        <option value="GSO_HEAD">GSO Head</option>
+                        <option value="BORROWER">EmployeeHead / Requester</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Position <span className="text-rose-600">*</span></span>
+                      <input name="position" list="user-position-options" autoComplete="off" required maxLength={120} placeholder="Type or pick, e.g. Head or Others" className={editControlClass} />
+                      <datalist id="user-position-options">
+                        {positions.map((position) => <option key={position} value={position} />)}
+                      </datalist>
+                    </label>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 sm:p-5 shadow-sm">
+                  <p className="text-xs font-extrabold uppercase tracking-wide text-amber-800">Initial password</p>
+                  <p className="mt-1 text-lg font-black tracking-wide text-amber-950">Admin123</p>
+                  <p className="mt-1 text-sm leading-relaxed text-amber-900">The user must verify their email during the first successful sign-in.</p>
+                </section>
+              </form>
+            </div>
+
+            <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
+              <button
+                type="reset"
+                form="create-user-form"
+                disabled={isCreating}
+                className="rounded-xl border-2 border-slate-300 bg-white px-6 py-3.5 text-base font-extrabold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100 disabled:opacity-50"
+              >
+                Clear form
+              </button>
+              <button
+                type="submit"
+                form="create-user-form"
+                disabled={isCreating}
+                aria-busy={isCreating}
+                className="rounded-xl bg-blue-600 px-6 py-3.5 text-base font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isCreating ? 'Creating account…' : 'Create account'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </AdminPageFrame>
   )
 }

@@ -8,5 +8,6 @@ const router = express.Router();
 // GSO officers can review these operational records but cannot change them.
 router.use(authenticate, requireRole('IT_ADMIN', 'GSO_STAFF', 'GSO_HEAD'));
 router.get('/logs', auditController.listLogs);
+router.get('/my-activity', requireRole('IT_ADMIN'), auditController.listMyActivity);
 
 module.exports = router;

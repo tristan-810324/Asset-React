@@ -84,7 +84,6 @@ export default function ReturnItems() {
   const [returnMessage, setReturnMessage] = useState<ReturnScanNotice | null>(null)
   const [returnCondition, setReturnCondition] = useState('Good')
   const [returnReason, setReturnReason] = useState('')
-  const [returnNote, setReturnNote] = useState('')
   const [repairReason, setRepairReason] = useState('')
   // Who checks whether the unit can still be fixed: GSO or ITSS.
   const [repairOwner, setRepairOwner] = useState<'GSO' | 'ITSS' | ''>('')
@@ -160,7 +159,6 @@ export default function ReturnItems() {
       setEntryMethod(method)
       setReturnCondition(['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(tag.condition) ? tag.condition : 'Good')
       setReturnReason('')
-      setReturnNote('')
     setRepairReason('')
     setRepairOwner('')
     setWriteOffConfirmed(false)
@@ -213,7 +211,6 @@ export default function ReturnItems() {
     setScannedTag(null)
     setScannerCode('')
     setReturnReason('')
-    setReturnNote('')
     setRepairReason('')
     setRepairOwner('')
     setWriteOffConfirmed(false)
@@ -248,12 +245,10 @@ export default function ReturnItems() {
     setIsConfirmingReturn(true)
     setBarcodeError('')
     try {
-      const note = returnNote.trim()
+      const repairDetail = [isRepairTag ? repairReason : '', isRepairTag && repairOwner ? (repairOwner === 'ITSS' ? 'Sent to ITSS to check' : 'GSO checks') : ''].filter(Boolean).join(': ')
       const result = await confirmTaggedAssetReturn(scannedTag.tagCode, {
         condition: returnCondition,
-        reason: [isRepairTag ? repairReason : '', isRepairTag && repairOwner ? (repairOwner === 'ITSS' ? 'Sent to ITSS to check' : 'GSO checks') : '', note].filter(Boolean).length > 0
-          ? `${effectiveReturnReason} — ${[isRepairTag ? repairReason : '', isRepairTag && repairOwner ? (repairOwner === 'ITSS' ? 'Sent to ITSS to check' : 'GSO checks') : '', note].filter(Boolean).join(': ')}`
-          : effectiveReturnReason,
+        reason: repairDetail ? `${effectiveReturnReason} — ${repairDetail}` : effectiveReturnReason,
         entryMethod,
         ...(isRepairTag && repairOwner ? { repairOwner } : {}),
         returnedByName: returnedByName.trim(),
@@ -264,7 +259,6 @@ export default function ReturnItems() {
       setScannedTag(null)
       setScannerCode('')
       setReturnReason('')
-      setReturnNote('')
     setRepairReason('')
     setRepairOwner('')
     setWriteOffConfirmed(false)
@@ -324,7 +318,6 @@ export default function ReturnItems() {
   // A typed code or a condition downgrade needs a written explanation for the audit log.
   // A unit that goes to repair is recorded as damaged; its reason comes from the repair reason chips.
   const effectiveReturnReason = isRepairTag ? 'Sira o may depekto' : returnReason
-  const isNoteRequired = effectiveReturnReason === 'Iba pa' || isConditionDowngrade || entryMethod === 'typed'
   const missingForReturn = !effectiveReturnReason
     ? 'Select the reason for return.'
     : isRepairTag && !repairReason
@@ -333,8 +326,6 @@ export default function ReturnItems() {
       ? 'Choose who checks it: GSO or ITSS.'
     : returnCondition === 'Unserviceable' && !writeOffConfirmed
       ? 'Confirm the write-off for the unserviceable unit.'
-    : isNoteRequired && !returnNote.trim()
-      ? 'Add the return notes.'
       : !isSerialEntered
         ? 'Enter the last characters of the serial number on the unit.'
       : !hasPhysicalCheck
@@ -344,7 +335,7 @@ export default function ReturnItems() {
           : otpCode.length !== 6
             ? "Enter the employee's 6-digit code."
             : ''
-  const isInspectionDone = Boolean(effectiveReturnReason) && (!isNoteRequired || Boolean(returnNote.trim())) && isSerialEntered && hasPhysicalCheck
+  const isInspectionDone = Boolean(effectiveReturnReason) && isSerialEntered && hasPhysicalCheck
 
   return (
     <GsoPageFrame activePage="Return Items" searchPlaceholder="Search returned asset, code, or employee...">
@@ -467,7 +458,7 @@ export default function ReturnItems() {
                   <aside className="space-y-4">
                     {entryMethod === 'typed' && (
                       <p role="note" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-relaxed text-amber-900">
-                        Typed, not scanned. Add a note why. It is flagged in the audit log.
+                        Typed, not scanned. It is flagged in the audit log.
                       </p>
                     )}
 
@@ -606,25 +597,6 @@ export default function ReturnItems() {
                           <input type="text" maxLength={200} value={returnedByName} onChange={(event) => setReturnedByName(event.target.value)} disabled={isConfirmingReturn} placeholder="Name of the person at the counter" className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-sm font-semibold text-slate-900 placeholder:text-slate-500 outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-50" />
                         </label>
                       </div>
-                      <label className="mt-3 block">
-                        <span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Notes <span className="normal-case text-slate-400">{isNoteRequired ? '(required)' : '(optional)'}</span></span>
-                        {/* 900 leaves room for the reason prefix within the backend's 1000-character limit. */}
-                        <textarea
-                          maxLength={900}
-                          value={returnNote}
-                          onChange={(event) => setReturnNote(event.target.value)}
-                          required={isNoteRequired}
-                          disabled={isConfirmingReturn}
-                          placeholder={entryMethod === 'typed'
-                            ? 'Why was the code typed?'
-                            : isConditionDowngrade
-                              ? 'Describe the damage'
-                              : returnReason === 'Iba pa'
-                                ? 'Why is it being returned?'
-                                : "Anything worth noting about the unit's condition"}
-                          className="min-h-20 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                        />
-                      </label>
                       {needsSerialCheck && (
                         <label className="mt-3 block rounded-xl border border-blue-100 bg-blue-50/50 p-3">
                           <span className="block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Serial number check</span>
