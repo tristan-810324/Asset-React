@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { AdminPageFrame } from '../components/navbars/adminnavbar'
 import { AdminGlyph, AdminMetricCard } from './adminui'
+import { listRequesterDepartments } from '../requesters/requesterApi'
 import {
   createSystemUser,
   deleteSystemUser,
@@ -14,6 +15,10 @@ import {
 const fieldClass = 'h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-3 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400'
 const editFieldLabelClass = 'mb-2 block text-sm font-extrabold text-slate-900'
 const editControlClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
+
+const OTHER_DEPARTMENT = '__other_department__'
+type AccountType = 'IT' | 'GSO' | 'REQUESTER'
+type SubPosition = 'Head' | 'Staff' | 'Others'
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(value))
@@ -41,6 +46,19 @@ export default function UserManagement() {
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [busyUserId, setBusyUserId] = useState<string | null>(null)
+  const [departments, setDepartments] = useState<string[]>([])
+  const [accountType, setAccountType] = useState<AccountType>('GSO')
+  const [subPosition, setSubPosition] = useState<SubPosition>('Staff')
+  const [departmentChoice, setDepartmentChoice] = useState('')
+
+  useEffect(() => {
+    let active = true
+    // Saved departments only. A department typed in the form is saved when the account is created.
+    void listRequesterDepartments()
+      .then(({ departments: records }) => { if (active) setDepartments(records.map((department) => department.name)) })
+      .catch(() => { if (active) setDepartments([]) })
+    return () => { active = false }
+  }, [])
 
   async function toggleActive(account: SystemUserAccount) {
     const nextActive = !account.isActive
@@ -116,8 +134,15 @@ export default function UserManagement() {
     ))
   }, [accounts, search])
 
+  const resetFormChoices = () => {
+    setAccountType('GSO')
+    setSubPosition('Staff')
+    setDepartmentChoice('')
+  }
+
   const openAddModal = () => {
     setCreateError('')
+    resetFormChoices()
     setShowAddModal(true)
   }
 
@@ -130,14 +155,26 @@ export default function UserManagement() {
 
     const form = event.currentTarget
     const formData = new FormData(form)
-    const name = String(formData.get('name') || '').trim()
-    const email = String(formData.get('email') || '').trim()
-    const roleKey = String(formData.get('roleKey') || 'GSO_STAFF') as UserAccountRole
-    const position = String(formData.get('position') || '').trim()
+    const text = (key: string) => String(formData.get(key) || '').trim()
+    const email = text('email')
+    const roleKey: UserAccountRole = accountType === 'IT' ? 'IT_STAFF' : accountType === 'REQUESTER' ? 'BORROWER' : subPosition === 'Head' ? 'GSO_HEAD' : 'GSO_STAFF'
+    const position = accountType === 'IT' ? 'IT Staff' : subPosition === 'Others' ? text('positionOther') : subPosition
+    const department = departmentChoice === OTHER_DEPARTMENT ? text('departmentOther') : departmentChoice
 
     try {
-      await createSystemUser({ name, email, roleKey, position })
-      setSuccessMessage(`Created ${roleLabel(roleKey)} account for ${email}. Initial password: Admin123. Email verification is required on first sign-in.`)
+      await createSystemUser({
+        firstName: text('firstName'),
+        middleName: text('middleName'),
+        lastName: text('lastName'),
+        suffix: text('suffix'),
+        employeeCode: text('employeeCode'),
+        department,
+        position,
+        contactNumber: text('contactNumber'),
+        email,
+        roleKey,
+      })
+      setSuccessMessage(`Created ${roleLabel(roleKey)} account for ${email}. It is approved right away. Initial password: Admin123. Email verification is required on first sign-in.`)
       form.reset()
       setShowAddModal(false)
       setReloadKey((key) => key + 1)
@@ -157,7 +194,7 @@ export default function UserManagement() {
             <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> IT Admin workspace
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">User management</h1>
-          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account, add requester, GSO Staff, or GSO Head logins, and deactivate or delete accounts.</p>
+          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account, add IT Staff, GSO Staff, GSO Head, or requester logins, and deactivate or delete accounts.</p>
         </div>
         <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
           <button
@@ -271,7 +308,7 @@ export default function UserManagement() {
                 <div className="min-w-0">
                   <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">User management</p>
                   <h2 id="add-user-modal-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Add a user account</h2>
-                  <p className="mt-1 text-xs font-semibold text-slate-500">Fields marked * are required. Requester, GSO Staff, and GSO Head logins are created here.</p>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">Fields marked * are required. The account is approved as soon as it is created.</p>
                 </div>
               </div>
               <button
@@ -285,22 +322,54 @@ export default function UserManagement() {
             </header>
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6">
-              <form id="create-user-form" className="mx-auto max-w-4xl space-y-4" onSubmit={handleCreateAccount}>
+              <form id="create-user-form" className="mx-auto max-w-4xl space-y-4" onSubmit={handleCreateAccount} onReset={resetFormChoices}>
                 {createError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold leading-relaxed text-rose-700">{createError}</p>}
 
                 <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
-                    <h3 className="text-sm font-extrabold text-slate-900">Account details</h3>
-                    <p className="mt-1 text-sm text-slate-600">The name and email are used for sign-in and email verification.</p>
+                    <h3 className="text-sm font-extrabold text-slate-900">Staff details</h3>
+                    <p className="mt-1 text-sm text-slate-600">Same details the requester form asks for. Details are checked against Employee Master Data.</p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
-                      <span className={editFieldLabelClass}>Full name <span className="text-rose-600">*</span></span>
-                      <input name="name" type="text" autoComplete="name" maxLength={200} placeholder="e.g. Juan Dela Cruz" required className={editControlClass} />
+                      <span className={editFieldLabelClass}>First name <span className="text-rose-600">*</span></span>
+                      <input name="firstName" type="text" autoComplete="off" placeholder="Enter first name" required maxLength={100} className={editControlClass} />
                     </label>
                     <label className="block">
-                      <span className={editFieldLabelClass}>Email address <span className="text-rose-600">*</span></span>
-                      <input name="email" type="email" autoComplete="email" maxLength={254} placeholder="name@dyci.edu.ph" required className={editControlClass} />
+                      <span className={editFieldLabelClass}>Surname <span className="text-rose-600">*</span></span>
+                      <input name="lastName" type="text" autoComplete="off" placeholder="Enter surname" required maxLength={100} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Middle name <span className="font-medium text-slate-500">(optional)</span></span>
+                      <input name="middleName" type="text" autoComplete="off" placeholder="Enter middle name" maxLength={100} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Suffix <span className="font-medium text-slate-500">(optional)</span></span>
+                      <input name="suffix" type="text" autoComplete="off" placeholder="e.g. Jr., III" maxLength={40} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Employee code <span className="text-rose-600">*</span></span>
+                      <input name="employeeCode" type="text" autoComplete="off" placeholder="e.g. 2024-00123" required maxLength={40} className={editControlClass} />
+                    </label>
+                    <div className="block">
+                      <span className={editFieldLabelClass}>Department / office <span className="text-rose-600">*</span></span>
+                      <select value={departmentChoice} onChange={(event) => setDepartmentChoice(event.target.value)} required className={editControlClass}>
+                        <option value="" disabled>Select department / office</option>
+                        {departments.map((department) => <option key={department} value={department}>{department}</option>)}
+                        <option value={OTHER_DEPARTMENT}>Not listed — type it</option>
+                      </select>
+                      {departmentChoice === OTHER_DEPARTMENT && (
+                        <input name="departmentOther" type="text" placeholder="Enter the official department / office name" required maxLength={120} className={`${editControlClass} mt-2`} />
+                      )}
+                    </div>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Contact number <span className="text-rose-600">*</span></span>
+                      <input name="contactNumber" type="tel" autoComplete="off" placeholder="e.g. 09XX XXX XXXX" required maxLength={30} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Account email <span className="text-rose-600">*</span></span>
+                      <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="e.g. name@gmail.com" required className={editControlClass} />
+                      <span className="mt-1.5 block text-xs text-slate-500">Used for login.</span>
                     </label>
                   </div>
                 </section>
@@ -308,24 +377,42 @@ export default function UserManagement() {
                 <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                   <div className="mb-4 border-b border-slate-100 pb-3">
                     <h3 className="text-sm font-extrabold text-slate-900">Access and position</h3>
-                    <p className="mt-1 text-sm text-slate-600">Choose the account type, then pick a suggested position or type your own.</p>
+                    <p className="mt-1 text-sm text-slate-600">Pick the account type. For GSO and Requester, pick Head, Staff, or Others. Others lets you type the position.</p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="block">
                       <span className={editFieldLabelClass}>Account type <span className="text-rose-600">*</span></span>
-                      <select name="roleKey" defaultValue="GSO_STAFF" required className={editControlClass}>
-                        <option value="GSO_STAFF">GSO Staff</option>
-                        <option value="GSO_HEAD">GSO Head</option>
-                        <option value="BORROWER">EmployeeHead / Requester</option>
+                      <select value={accountType} onChange={(event) => setAccountType(event.target.value as AccountType)} required className={editControlClass}>
+                        <option value="GSO">GSO</option>
+                        <option value="IT">IT</option>
+                        <option value="REQUESTER">Requester</option>
                       </select>
                     </label>
-                    <label className="block">
-                      <span className={editFieldLabelClass}>Position <span className="text-rose-600">*</span></span>
-                      <input name="position" list="user-position-options" autoComplete="off" required maxLength={120} placeholder="Type or pick, e.g. Head or Others" className={editControlClass} />
-                      <datalist id="user-position-options">
-                        {positions.map((position) => <option key={position} value={position} />)}
-                      </datalist>
-                    </label>
+                    {accountType === 'IT' ? (
+                      <div className="block">
+                        <span className={editFieldLabelClass}>Position</span>
+                        <input value="IT Staff" readOnly aria-readonly="true" className={`${editControlClass} cursor-not-allowed bg-slate-100 text-slate-700`} />
+                        <span className="mt-1.5 block text-xs text-slate-500">IT accounts are always IT Staff.</span>
+                      </div>
+                    ) : (
+                      <label className="block">
+                        <span className={editFieldLabelClass}>Position <span className="text-rose-600">*</span></span>
+                        <select value={subPosition} onChange={(event) => setSubPosition(event.target.value as SubPosition)} required className={editControlClass}>
+                          <option value="Head">Head</option>
+                          <option value="Staff">Staff</option>
+                          <option value="Others">Others (type it)</option>
+                        </select>
+                      </label>
+                    )}
+                    {accountType !== 'IT' && subPosition === 'Others' && (
+                      <label className="block sm:col-span-2">
+                        <span className={editFieldLabelClass}>Other position <span className="text-rose-600">*</span></span>
+                        <input name="positionOther" list="user-position-options" autoComplete="off" required maxLength={120} placeholder="Type the position, e.g. Accounting Clerk" className={editControlClass} />
+                        <datalist id="user-position-options">
+                          {positions.map((position) => <option key={position} value={position} />)}
+                        </datalist>
+                      </label>
+                    )}
                   </div>
                 </section>
 

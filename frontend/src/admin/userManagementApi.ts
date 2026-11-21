@@ -1,6 +1,6 @@
 import { apiRequest } from '../auth/authApi'
 
-export type UserAccountRole = 'BORROWER' | 'GSO_STAFF' | 'GSO_HEAD'
+export type UserAccountRole = 'BORROWER' | 'GSO_STAFF' | 'GSO_HEAD' | 'IT_STAFF'
 
 export type SystemUserAccount = {
   id: string
@@ -14,10 +14,16 @@ export type SystemUserAccount = {
 }
 
 export type CreateSystemUserInput = {
-  name: string
+  firstName: string
+  middleName: string
+  lastName: string
+  suffix: string
+  employeeCode: string
+  department: string
+  position: string
+  contactNumber: string
   email: string
   roleKey: UserAccountRole
-  position: string
 }
 
 export async function listSystemUsers() {

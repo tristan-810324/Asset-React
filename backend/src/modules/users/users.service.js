@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const usersRepository = require('./users.repository');
 const auditRepository = require('../audit/audit.repository');
+const requesterIdentityRepository = require('../requester-identity/requester-identity.repository');
 const { validateCreateSystemUser } = require('./users.validation');
 
 const DEFAULT_ACCOUNT_PASSWORD = 'Admin123';
@@ -9,6 +10,7 @@ const roleLabels = {
   BORROWER: 'EmployeeHead / Requester',
   GSO_STAFF: 'GSO Staff',
   GSO_HEAD: 'GSO Head',
+  IT_STAFF: 'IT Staff',
 };
 
 async function listSystemUsers() {
@@ -30,6 +32,24 @@ async function createSystemUser(input, actor) {
     if (error.code === '23505') {
       throw Object.assign(new Error('May account na gamit ang email na iyan.'), { status: 409 });
     }
+    throw error;
+  }
+
+  // Auto-approve: save the identity and add it to Employee Master Data the same way a GSO approval does.
+  // If that fails, remove the new login so no half-created account is left behind.
+  try {
+    await requesterIdentityRepository.submitMine(created.id, account);
+    await requesterIdentityRepository.review(created.id, {
+      status: 'Verified',
+      note: 'Auto-approved: account created by IT.',
+      department: account.department,
+      position: account.position,
+      addDepartment: true,
+      addPosition: true,
+      reviewedByUserId: actor.id,
+    });
+  } catch (error) {
+    await usersRepository.deleteSystemUser(String(created.id));
     throw error;
   }
 

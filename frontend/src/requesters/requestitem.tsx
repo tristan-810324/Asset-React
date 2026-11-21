@@ -3,10 +3,11 @@ import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
 import { ProgressPath } from '../components/requestpath'
 import { listFacilityVenues, type FacilityVenue } from '../facilities/facilityOptionsApi'
-import { listCatalogAssets, listMyIssuanceActivity, listPurchaseItemNames, listRequesterDepartmentStaff, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType, type RequesterDepartmentStaff, type RequesterIssuanceApproval } from './requesterApi'
+import { listCatalogAssets, listMyIssuanceActivity, listPurchaseItemNames, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType, type RequesterIssuanceApproval } from './requesterApi'
 
 type FormRow = Record<string, string | number>
-type PlannedDistributionDestination = 'employee' | 'department_location'
+// Items are assigned to a room under the requester's name. Older drafts that say "employee" are read as rooms.
+type PlannedDistributionDestination = 'department_location'
 type PlannedRecipient = {
   destinationType: PlannedDistributionDestination
   employeeCode: string
@@ -268,13 +269,8 @@ function FormGroup({ title, hint, action, children }: { title: string; hint?: st
 const inputClass = 'h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 const textareaClass = 'min-h-20 w-full resize-y rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:font-medium placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100'
 
-function plannedDestinationType(value: unknown): PlannedDistributionDestination {
-  return value === 'department_location' ? value : 'employee'
-}
-
-function plannedDestinationLabel(destinationType: PlannedDistributionDestination) {
-  if (destinationType === 'department_location') return 'Assigned room'
-  return 'Assigned employee'
+function plannedDestinationType(_value: unknown): PlannedDistributionDestination {
+  return 'department_location'
 }
 
 function plannedRecipientsFor(item: FormRow): PlannedRecipient[] {
@@ -325,8 +321,6 @@ function RequestItemContent() {
   const [form, setForm] = useState<FormValues>(() => type ? initialForm(type, itemPrefill) : {})
   const [catalog, setCatalog] = useState<CatalogAsset[]>([])
   const [purchaseItemNames, setPurchaseItemNames] = useState<PurchaseItemName[]>([])
-  const [departmentStaff, setDepartmentStaff] = useState<RequesterDepartmentStaff[]>([])
-  const [departmentStaffError, setDepartmentStaffError] = useState('')
   const [catalogError, setCatalogError] = useState('')
   const [catalogLoaded, setCatalogLoaded] = useState(false)
   const [search, setSearch] = useState(() => (params.get('q') || '').slice(0, 100))
@@ -398,9 +392,6 @@ function RequestItemContent() {
     void listPurchaseItemNames()
       .then((itemNames) => { if (active) setPurchaseItemNames(itemNames) })
       .catch((reason: unknown) => { if (active) setCatalogError(reason instanceof Error ? reason.message : 'Unable to load saved item names.') })
-    void listRequesterDepartmentStaff()
-      .then((staff) => { if (active) { setDepartmentStaff(staff); setDepartmentStaffError('') } })
-      .catch((reason: unknown) => { if (active) setDepartmentStaffError(reason instanceof Error ? reason.message : 'Unable to load department staff.') })
     return () => { active = false }
   }, [type])
 
@@ -486,9 +477,6 @@ function RequestItemContent() {
       && plannedRecipients.every((recipient) => {
         const hasBaseDetails = Number.isInteger(Number(recipient.quantity))
           && Number(recipient.quantity) > 0
-        if (recipient.destinationType === 'employee') {
-          return hasBaseDetails && Boolean(recipient.employeeCode) && Boolean(recipient.useLocation.trim())
-        }
         if (recipient.destinationType === 'department_location') {
           return hasBaseDetails && Boolean(recipient.building.trim()) && Boolean(recipient.room.trim())
         }
@@ -536,22 +524,7 @@ function RequestItemContent() {
     })
     updateRow('items', itemIndex, 'plannedRecipientsJson', JSON.stringify(updated))
   }
-  const changePlannedRecipientDestination = (itemIndex: number, recipientIndex: number, destinationType: PlannedDistributionDestination) => {
-    const recipients = plannedRecipientsFor(requestItems[itemIndex] || {})
-    const updated = recipients.map((recipient, index) => index === recipientIndex
-      ? {
-          destinationType,
-          employeeCode: '',
-          quantity: recipient.quantity,
-          useLocation: '',
-          purpose: recipient.purpose,
-          building: '',
-          room: '',
-        }
-      : recipient)
-    updateRow('items', itemIndex, 'plannedRecipientsJson', JSON.stringify(updated))
-  }
-  const addPlannedRecipient = (itemIndex: number, destinationType: PlannedDistributionDestination) => {
+  const addPlannedRecipient = (itemIndex: number) => {
     const recipients = plannedRecipientsFor(requestItems[itemIndex] || {})
     const requestedQuantity = Number(requestItems[itemIndex]?.quantity || 0)
     const assignedQuantity = recipients.reduce((sum, recipient) => sum + Number(recipient.quantity || 0), 0)
@@ -559,7 +532,7 @@ function RequestItemContent() {
     if (!Number.isInteger(remainingQuantity) || remainingQuantity < 1) return
     updateRow('items', itemIndex, 'plannedRecipientsJson', JSON.stringify([
       ...recipients,
-      { destinationType, employeeCode: '', quantity: remainingQuantity, useLocation: '', purpose: '', building: '', room: '' },
+      { destinationType: 'department_location', employeeCode: '', quantity: remainingQuantity, useLocation: '', purpose: '', building: '', room: '' },
     ]))
   }
   const removePlannedRecipient = (itemIndex: number, recipientIndex: number) => {
@@ -1177,61 +1150,40 @@ function RequestItemContent() {
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
                           <h3 className="text-sm font-extrabold text-slate-800">Assign every requested unit</h3>
-                          <p className="mt-1 max-w-2xl text-[0.68rem] leading-relaxed text-slate-500">Choose the employee who will use each unit or assign it to a designated room. For room assignments, you remain the accountable Employee Head.</p>
+                          <p className="mt-1 max-w-2xl text-[0.68rem] leading-relaxed text-slate-500">Choose the room where each group of units will be kept. You stay accountable as the requesting Employee Head.</p>
                         </div>
                         <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${Number(item.quantity) > 0 && plannedQuantity === Number(item.quantity) ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{plannedQuantity} of {Number(item.quantity) || 0} assigned</span>
                       </div>
-                      {departmentStaffError && <p role="status" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-800">Department staff are unavailable right now. You can still assign the item to a room, or refresh the page to try employee assignment again.</p>}
+                      {plannedRecipients.length === 0 && <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center">
+                        <p className="text-xs font-bold text-slate-700">No room yet</p>
+                        <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-500">Add the room where the {Number(item.quantity) || 0} unit(s) will be kept.</p>
+                      </div>}
                       {plannedRecipients.length > 0 && <div className="mt-3 space-y-3">
                         {plannedRecipients.map((recipient, recipientIndex) => {
-                          const isEmployeeDestination = recipient.destinationType === 'employee'
-                          const selectedStaff = departmentStaff.find((staff) => staff.employeeCode === recipient.employeeCode)
                           const otherAllocated = plannedRecipients.reduce((sum, entry, currentIndex) => sum + (currentIndex === recipientIndex ? 0 : Number(entry.quantity || 0)), 0)
                           const maxRecipientQuantity = Math.max(Number(item.quantity || 0) - otherAllocated, 1)
-                          return <div key={`${index}-${recipientIndex}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem_auto]">
-                              <Field label="Destination type">
-                                <select className={inputClass} value={recipient.destinationType} onChange={(event) => changePlannedRecipientDestination(index, recipientIndex, plannedDestinationType(event.target.value))}>
-                                  <option value="employee">Assign to an employee</option>
-                                  <option value="department_location">Assign to a designated room</option>
-                                </select>
-                              </Field>
-                              <Field label="Assigned quantity"><input className={inputClass} type="number" min="1" max={maxRecipientQuantity} step="1" value={recipient.quantity} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'quantity', event.target.value)} required /></Field>
-                              <button type="button" onClick={() => removePlannedRecipient(index, recipientIndex)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>
+                          return <div key={`${index}-${recipientIndex}`} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                              <p className="text-xs font-extrabold text-slate-800">Room {recipientIndex + 1}</p>
+                              <button type="button" onClick={() => removePlannedRecipient(index, recipientIndex)} className="rounded-lg px-2.5 py-1.5 text-[0.68rem] font-extrabold text-rose-600 transition hover:bg-rose-50">Remove room</button>
                             </div>
 
-                            {isEmployeeDestination ? <>
-                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                              <div><Field label={`Employee ${recipientIndex + 1}`}>
-                                <select className={inputClass} value={recipient.employeeCode} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'employeeCode', event.target.value)} required>
-                                  <option value="">Select department staff</option>
-                                  {recipient.employeeCode && !departmentStaff.some((staff) => staff.employeeCode === recipient.employeeCode) && <option value={recipient.employeeCode} disabled>Unavailable employee · {recipient.employeeCode} · choose another</option>}
-                                  {departmentStaff.map((staff) => {
-                                    const isRequester = staff.employeeCode.trim().toLowerCase() === String(identity?.employeeCode || '').trim().toLowerCase()
-                                    return <option key={staff.employeeCode} value={staff.employeeCode} disabled={plannedRecipients.some((entry, entryIndex) => entryIndex !== recipientIndex && entry.destinationType === 'employee' && entry.employeeCode === staff.employeeCode)}>{staff.employeeName}{isRequester ? ' · You (Department Head)' : ''} · {staff.employeeCode}</option>
-                                  })}
-                                </select>
-                              </Field></div>
-                                <Field label="Employee work location"><input className={inputClass} value={recipient.useLocation} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'useLocation', event.target.value)} maxLength={200} placeholder="e.g. IT Office · Room 201" required /></Field>
-                              </div>
-                              {selectedStaff && <p className="mt-2 text-[0.68rem] font-semibold text-slate-600">{selectedStaff.position} · {selectedStaff.email}</p>}
-                            </> : <div className="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
-                              <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-emerald-800">Accountable custodian</p>
-                              <p className="mt-1 text-xs font-extrabold text-slate-800">{verifiedEmployeeName || 'Requesting department head'} <span className="font-semibold text-slate-500">· Department Head</span></p>
-                              <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-600">The requesting Employee Head remains accountable for the item; the selected room is its assigned location.</p>
-                              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                                <Field label="Building / unit"><input className={inputClass} value={recipient.building} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'building', event.target.value)} maxLength={100} placeholder="e.g. College of Accountancy" required /></Field>
-                                <Field label="Room / exact area"><input className={inputClass} value={recipient.room} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'room', event.target.value)} maxLength={100} placeholder="e.g. Room 201" required /></Field>
-                              </div>
-                            </div>}
+                            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                              <Field label="Units in this room"><input className={inputClass} type="number" min="1" max={maxRecipientQuantity} step="1" value={recipient.quantity} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'quantity', event.target.value)} required /></Field>
+                              <Field label="Building / unit"><input className={inputClass} value={recipient.building} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'building', event.target.value)} maxLength={100} placeholder="e.g. College of Accountancy" required /></Field>
+                              <Field label="Room / exact area"><input className={inputClass} value={recipient.room} onChange={(event) => updatePlannedRecipient(index, recipientIndex, 'room', event.target.value)} maxLength={100} placeholder="e.g. Room 201" required /></Field>
+                            </div>
+                            <p className="mt-1.5 text-[0.68rem] text-slate-500">Up to {maxRecipientQuantity} unit(s) can still go to this room.</p>
+
+                            <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[0.68rem] leading-relaxed text-emerald-900"><span className="font-extrabold">Accountable: {verifiedEmployeeName || 'Requesting department head'}</span> (Department Head). You stay responsible for these units.</p>
                           </div>
                         })}
                       </div>}
                       {plannedQuantity > Number(item.quantity) && <p role="alert" className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[0.68rem] font-bold text-rose-700">Assigned quantities exceed the requested quantity. Reduce the assignments before submitting.</p>}
-                      {unplannedQuantity > 0 && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-800">{plannedRecipients.length > 0 ? `${unplannedQuantity} unit(s) still need an assignment.` : `Assign all ${Number(item.quantity) || 0} requested unit(s) to an employee or room.`} GSO cannot complete missing assignments for you.</p>}
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button type="button" onClick={() => addPlannedRecipient(index, 'employee')} disabled={departmentStaff.length === 0 || plannedQuantity >= Number(item.quantity || 0)} className="rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">+ Assign employee</button>
-                        <button type="button" onClick={() => addPlannedRecipient(index, 'department_location')} disabled={plannedQuantity >= Number(item.quantity || 0)} className="rounded-xl border border-emerald-200 px-3 py-2 text-xs font-extrabold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50">+ Assign room</button>
+                      {unplannedQuantity > 0 && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[0.68rem] font-semibold text-amber-800">{plannedRecipients.length > 0 ? `${unplannedQuantity} unit(s) still need a room.` : `Assign all ${Number(item.quantity) || 0} requested unit(s) to a room.`} GSO cannot complete missing assignments for you.</p>}
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <button type="button" onClick={() => addPlannedRecipient(index)} disabled={plannedQuantity >= Number(item.quantity || 0)} className="rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-extrabold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50">{plannedRecipients.length ? '+ Add another room' : '+ Assign a room'}</button>
+                        {plannedRecipients.length > 0 && plannedQuantity === Number(item.quantity) && <span className="text-[0.68rem] font-semibold text-emerald-700">All units have a room.</span>}
                       </div>
                     </section>
                   </div>
@@ -1274,7 +1226,7 @@ function RequestItemContent() {
                <ul className="mt-3 divide-y divide-slate-200 rounded-xl border border-slate-100 px-3.5">
                  {requestItems.map((item, index) => {
                    const plannedRecipients = plannedRecipientsFor(item)
-                    return <li key={`${item.category}-${item.itemName}-${index}`} className="py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="wrap-break-word text-sm font-extrabold text-slate-900">{String(item.itemName || 'Unnamed item')}</p><p className="mt-0.5 text-xs font-semibold text-slate-600">{String(item.category || 'No category')} · Qty {item.quantity}</p></div><span className="shrink-0 text-xs font-bold text-slate-500">{item.catalogItemId === '__GENERAL__' ? 'New item' : 'Catalog item'}</span></div><p className="mt-1.5 wrap-break-word text-xs leading-relaxed text-slate-600">{String(item.description || 'No specifications')}</p><div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 p-2.5"><p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-700">Final item assignment</p>{plannedRecipients.map((recipient, recipientIndex) => { const staff = departmentStaff.find((entry) => entry.employeeCode === recipient.employeeCode); const destination = recipient.destinationType === 'employee' ? staff?.employeeName || recipient.employeeCode || 'Employee not selected' : `${verifiedEmployeeName || 'Department Head'} · Head accountable`; return <p key={`${recipient.destinationType}-${recipient.employeeCode}-${recipientIndex}`} className="mt-1 text-[0.68rem] font-semibold text-slate-700"><span className="font-extrabold">{plannedDestinationLabel(recipient.destinationType)}</span> · {destination} · {recipient.quantity} · {recipient.useLocation || 'Location not set'} · {recipient.purpose || 'Use not set'}</p> })}</div></li>
+                    return <li key={`${item.category}-${item.itemName}-${index}`} className="py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="wrap-break-word text-sm font-extrabold text-slate-900">{String(item.itemName || 'Unnamed item')}</p><p className="mt-0.5 text-xs font-semibold text-slate-600">{String(item.category || 'No category')} · Qty {item.quantity}</p></div><span className="shrink-0 text-xs font-bold text-slate-500">{item.catalogItemId === '__GENERAL__' ? 'New item' : 'Catalog item'}</span></div><p className="mt-1.5 wrap-break-word text-xs leading-relaxed text-slate-600">{String(item.description || 'No specifications')}</p><div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 p-2.5"><p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-700">Final item assignment</p>{plannedRecipients.map((recipient, recipientIndex) => <p key={recipientIndex} className="mt-1 text-[0.68rem] font-semibold text-slate-700"><span className="font-extrabold">Assigned room</span> · {verifiedEmployeeName || 'Department Head'} · Head accountable · {recipient.quantity} · {[recipient.building, recipient.room].filter(Boolean).join(' · ') || 'Location not set'}</p>)}</div></li>
                  })}
               </ul>
               <dl className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-100 px-3.5">

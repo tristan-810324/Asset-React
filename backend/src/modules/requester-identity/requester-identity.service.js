@@ -171,4 +171,4 @@ async function review(userIdValue, input, reviewer) {
   return profile;
 }
 
-module.exports = { getMine, submitMine, listReviews, getReviewPicture, review };
+module.exports = { getMine, submitMine, listReviews, getReviewPicture, review, validateRequesterIdentity };

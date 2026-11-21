@@ -667,8 +667,7 @@ async function listAwaitingDeliveries({ itemIds = [] } = {}) {
   for (const line of waiting) {
     const candidates = [];
     for (const item of inventory) {
-      if (!purchaseCategoryMatches(line.category, item.category)) continue;
-      const match = nameMatch(line.itemName, item.name);
+      const match = deliveryNameMatch(line.itemName, line.category, item.category, item.name);
       if (!match) continue;
       const availableQuantity = await availableOf(item);
       if (availableQuantity > 0) {
@@ -738,7 +737,7 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
       const line = lines.get(delivery.lineId);
       const item = items.get(delivery.itemId);
       const inventoryName = String(item.item_name || item.description || '').trim();
-      const match = purchaseCategoryMatches(line.category, item.category) ? nameMatch(line.item_name, inventoryName) : null;
+      const match = deliveryNameMatch(line.item_name, line.category, item.category, inventoryName);
       if (!match) throw httpError(409, 'Dapat tugma ang item name at category ng inventory record sa requested item.');
       if (match === 'SIMILAR' && !delivery.confirmSimilarName) {
         throw httpError(409, `Magkaiba ang pangalan ng "${line.item_name}" at "${inventoryName}". Kumpirmahin muna na iisang item ang dalawa.`);
@@ -949,6 +948,8 @@ async function reviewPurchaseRequisition({ id, decision, note, changedBy }) {
       const shortageNames = [];
       const heldNames = [];
       for (const line of lines) {
+        // A "not listed" item the GSO Head approved is saved as an item name, so the requester can pick it next time.
+        if (!line.item_name_id) await saveApprovedItemName(client, line, changedBy);
         const requested = Number(line.requested_quantity);
         const reserved = Number(line.reserved_quantity);
         const shortage = Math.max(Number(line.finance_quantity), requested - reserved);
@@ -1125,6 +1126,36 @@ function purchaseCategoryMatches(requestCategory, inventoryCategory) {
   const normalizedInventoryCategory = normalizePurchaseCategory(inventoryCategory);
   return (purchaseCategoryAliases[requestCategory] || [normalizePurchaseCategory(requestCategory)])
     .includes(normalizedInventoryCategory);
+}
+
+// Saves an approved proposed name under its matching category (the Manage Categories & Item Names list).
+// shortcut: a category with no match is skipped, not created; upgrade if requesters pick categories GSO has not set up.
+async function saveApprovedItemName(client, line, changedBy) {
+  const name = String(line.item_name || '').trim();
+  if (!name) return;
+  // A line picked from existing stock also has no item name id; its name is already in Item Master Data, so skip it.
+  const inStock = await client.query(
+    `SELECT 1 FROM item_catalog WHERE lower(COALESCE(NULLIF(item_name, ''), description)) = lower($1) LIMIT 1`,
+    [name],
+  );
+  if (inStock.rowCount) return;
+  const categories = (await client.query('SELECT id, name FROM item_categories ORDER BY id')).rows;
+  const category = categories.find((row) => purchaseCategoryMatches(line.category, row.name));
+  if (!category) return;
+  await client.query(
+    `INSERT INTO item_category_item_names (category_id, name, created_by_user_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (category_id, lower(name)) DO NOTHING`,
+    [category.id, name, changedBy],
+  );
+}
+
+// An exactly matching name links even when GSO filed the stock under another category (for example a fan
+// under Electrical Supplies instead of Office Equipment). Similar names still need the same category.
+function deliveryNameMatch(requestedName, requestCategory, inventoryCategory, inventoryName) {
+  const match = nameMatch(requestedName, inventoryName);
+  if (match === 'EXACT') return match;
+  return match && purchaseCategoryMatches(requestCategory, inventoryCategory) ? match : null;
 }
 
 async function releasePurchaseLineStock(client, lineId) {

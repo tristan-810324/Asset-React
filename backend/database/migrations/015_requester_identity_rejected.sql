@@ -9,3 +9,5 @@ ALTER TABLE public.requester_identity_profiles
   );
 
 COMMIT;
+ 
+    

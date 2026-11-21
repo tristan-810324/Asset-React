@@ -191,8 +191,7 @@ export function DeliveryChecklist({ lines, receiptDefault = '', restocked, skipL
                       <p className="text-xs font-extrabold text-slate-900">{line.referenceNo} <span className="font-semibold text-slate-500">· {line.requesterName}{line.department ? ` · ${line.department}` : ''}</span></p>
                       <p className="text-[0.62rem] font-semibold text-slate-400">Requested {formatDate(line.createdAt)}</p>
                     </div>
-                    <p className="mt-0.5 text-[0.68rem] font-semibold text-slate-600">Needs {line.remainingQuantity}{line.remainingQuantity !== line.requestedQuantity ? ` of ${line.requestedQuantity}` : ''}</p>
-                    {isChecked && taking > 0 && <p className={`mt-1 text-[0.68rem] font-extrabold ${plan && plan.short > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    <p className="mt-0.5 text-[0.68rem] font-semibold text-slate-600">Needs {line.remainingQuantity}{line.remainingQuantity !== line.requestedQuantity ? ` of ${line.requestedQuantity}` : ''}</p>                    {isChecked && taking > 0 && <p className={`mt-1 text-[0.68rem] font-extrabold ${plan && plan.short > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
                       {plan && plan.short > 0 ? `Links ${taking} of ${line.remainingQuantity} · ${plan.short} still to buy` : `Links ${taking}`}
                       <span className="font-semibold text-slate-500"> from {plan?.picks.map((pick) => pick.itemCode).join(', ')}</span>
                     </p>}
