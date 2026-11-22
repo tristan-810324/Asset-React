@@ -135,6 +135,21 @@ async function createUnitTags(client, issuance, assignedUserId) {
   return tags;
 }
 
+// The condition an item leaves stock in: the condition its latest return recorded, or the stock condition when it was
+// never returned. An item returned as Fair is issued as Fair next time, not as New again.
+async function conditionForIssue(client, itemId, stockCondition) {
+  const result = await client.query(
+    `SELECT ret.return_condition
+       FROM employee_issuance_returns AS ret
+       JOIN employee_issuances AS iss ON iss.id = ret.issuance_id
+      WHERE iss.item_id = $1 AND ret.status = 'Returned'
+      ORDER BY ret.decided_at DESC NULLS LAST, ret.id DESC
+      LIMIT 1`,
+    [itemId],
+  );
+  return result.rows[0]?.return_condition || stockCondition;
+}
+
 async function writeAuditLog(client, issuance, {
   changedByUserId = null,
   reason,
@@ -228,7 +243,7 @@ async function createPendingIssuance({ employeeCode, itemId, quantity, notes, to
       item_id: item.id,
       item_code: item.item_code,
       description: item.description,
-      item_condition: item.condition,
+      item_condition: await conditionForIssue(client, item.id, item.condition),
       quantity,
       unit_of_measure: item.unit_of_measure,
     };
@@ -570,7 +585,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
           item_code: item.item_code,
           description: item.description,
           tracking_mode: item.tracking_mode,
-          item_condition: item.condition,
+          item_condition: await conditionForIssue(client, item.id, item.condition),
           quantity: recipientAllocation.quantity,
           unit_of_measure: item.unit_of_measure,
         };

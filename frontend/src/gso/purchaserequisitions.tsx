@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import type { PurchaseRequisitionLine, PurchaseRequisitionStockCheck, ServiceRequest, StaffRoute } from '../requesters/requesterApi'
+import type { PurchaseRequisitionLine, PurchaseRequisitionStockCheck, ServiceRequest } from '../requesters/requesterApi'
 import { formatDate, formatDateTime } from '../requesters/requesterrequestutils'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
@@ -24,7 +24,7 @@ import {
   inventoryMatchesLine,
   linesOf,
 } from './requisitionFlow'
-import { Banner, DeliveryRecords, EmptyState, LineStatusBadge, QuantityChips, RequestSummary, RoutePill, fieldInput, fieldLabel } from './requisitionParts'
+import { Banner, DeliveryRecords, EmptyState, LineStatusBadge, QuantityChips, RequestSummary, fieldInput, fieldLabel } from './requisitionParts'
 
 type Tab = 'review' | 'waiting'
 type StepStatus = 'current' | 'upcoming' | 'done'
@@ -111,46 +111,54 @@ function chipFor(request: ServiceRequest, tab: Tab) {
   return waitingOn(request)
 }
 
-function ConditionIcon({ ok }: { ok: boolean }) {
-  return <span className={`grid h-4 w-4 shrink-0 place-items-center rounded-full ${ok ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500'}`}>
-    <svg aria-hidden="true" className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">{ok ? <path d="m5 12.5 4.5 4.5L19 7.5" /> : <path d="M7 7l10 10M17 7 7 17" />}</svg>
-    <span className="sr-only">{ok ? 'Yes' : 'No'}</span>
-  </span>
-}
-
-const STAFF_CHOICES: Array<{ route: StaffRoute; title: string; detail: string; on: string; dot: string }> = [
-  { route: 'ISSUE', title: 'Issue the full request now', detail: 'Reserve the complete request and prepare it in Main Issuance.', on: 'border-emerald-500 bg-emerald-50', dot: 'border-emerald-600 bg-emerald-600' },
-  { route: 'HEAD_ISSUE', title: 'Ask GSO Head first', detail: 'The Head approves or declines the complete request.', on: 'border-amber-400 bg-amber-50', dot: 'border-amber-500 bg-amber-500' },
-]
-
-// The conditions behind an item's route, checked against live stock.
-// When the item is in stock, the staff member chooses: issue now or ask the GSO Head first.
-function StockCheckCard({ line, check, route }: {
+// The requester's specs next to the units in storage. GSO Staff tick the units that match, by hand.
+function StockCheckCard({ line, check, selected, covered, onToggle }: {
   line: PurchaseRequisitionLine
   check: PurchaseRequisitionStockCheck
-  route: StaffRoute
+  selected: string[]
+  covered: number
+  onToggle: (itemId: string) => void
 }) {
-  const matched = check.matches.length > 0
-  const enoughStock = check.availableQuantity >= line.requestedQuantity
+  const short = Math.max(line.requestedQuantity - covered, 0)
   return <article className="rounded-xl border border-slate-200 bg-white p-3.5 transition-shadow hover:shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="text-sm font-extrabold text-slate-900">{line.itemName} <span className="font-bold text-slate-500">× {line.requestedQuantity}</span></p>
         <p className="mt-0.5 text-xs font-medium text-slate-500">{categoryLabel(line.category)}</p>
       </div>
-      <RoutePill route={route} />
+      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${short === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{short === 0 ? `${covered} matched` : `${covered} matched · ${short} to purchase`}</span>
     </div>
-    {line.specifications && <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[0.65rem] leading-relaxed text-slate-600">{line.specifications}</p>}
-    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-      <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 ${matched ? 'border-emerald-100 bg-emerald-50/70 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
-        <ConditionIcon ok={matched} />
-        <span className="text-[0.68rem] font-extrabold">{matched ? `Matches inventory · ${check.matches.length} item${check.matches.length === 1 ? '' : 's'}` : 'No inventory match'}</span>
-      </div>
-      <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 ${enoughStock ? 'border-emerald-100 bg-emerald-50/70 text-emerald-800' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
-        <ConditionIcon ok={enoughStock} />
-        <span className="text-[0.68rem] font-extrabold">{enoughStock ? `Enough stock · ${check.availableQuantity} available` : `Not enough stock · ${line.requestedQuantity - check.availableQuantity} short`}</span>
-      </div>
+    <div className="mt-3 rounded-xl border-2 border-blue-400 bg-blue-50 px-4 py-3 shadow-sm">
+      <p className="text-[0.7rem] font-extrabold uppercase tracking-wide text-blue-800">Specs the requester needs</p>
+      <p className="mt-1 whitespace-pre-wrap text-base font-black leading-snug text-slate-900">{line.specifications || 'No specs written by the requester.'}</p>
     </div>
+    <p className="mt-3 text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Units in storage · tick the ones that match</p>
+    {check.matches.length === 0
+      ? <p className="mt-1.5 text-[0.68rem] text-slate-500">No units in storage for this category.</p>
+      : <ul className="mt-2 space-y-1.5">
+        {check.matches.map((unit) => {
+          const on = selected.includes(unit.itemId)
+          return <li key={unit.itemId}>
+            <label className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-2.5 py-2 ${on ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+              <input type="checkbox" checked={on} onChange={() => onToggle(unit.itemId)} className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600" />
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="text-xs font-black text-slate-900">{unit.itemCode}</span>
+                  <span className="text-xs font-semibold text-slate-600">{unit.name}</span>
+                </span>
+                <span className="mt-1 block rounded-md bg-white px-2 py-1 text-[0.7rem] font-semibold leading-relaxed text-slate-800 ring-1 ring-slate-200">{unit.description || 'No specs entered'}</span>
+                <span className="mt-1.5 flex flex-wrap gap-1.5">
+                  {unit.condition && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[0.6rem] font-bold text-emerald-700">Condition: {unit.condition}</span>}
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">{unit.availableQuantity} available</span>
+                  {unit.storageLocation && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[0.6rem] font-bold text-blue-700">{unit.storageLocation}</span>}
+                  {unit.dateAcquired && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">Acquired {new Date(unit.dateAcquired).toLocaleDateString('en-PH', { dateStyle: 'medium' })}</span>}
+                  {(unit.unitCost ?? 0) > 0 && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">{(unit.unitCost ?? 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}</span>}
+                </span>
+              </span>
+            </label>
+          </li>
+        })}
+      </ul>}
   </article>
 }
 
@@ -305,34 +313,35 @@ function routedMessage(request: ServiceRequest) {
 
 function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest; onSaved: (message: string) => void; onRefresh: () => void }) {
   const checks = linesOf(request).flatMap((line) => line.routeStatus === 'WAITING_STAFF_REVIEW' && line.stockCheck ? [{ line, check: line.stockCheck }] : [])
-  const [packageRoute, setPackageRoute] = useState<'ISSUE' | 'HEAD_ISSUE'>('ISSUE')
-  const requestHasShortage = checks.some(({ line, check }) => check.reservedQuantity < line.requestedQuantity)
-  const canChooseRequestRoute = !requestHasShortage && checks.every(({ check }) => check.options.includes('ISSUE'))
-  const requestNeedsHeadApproval = requestHasShortage || !canChooseRequestRoute || packageRoute === 'HEAD_ISSUE'
-  const routeOf = (line: PurchaseRequisitionLine, check: PurchaseRequisitionStockCheck): StaffRoute => {
-    if (check.reservedQuantity < line.requestedQuantity) return 'PURCHASE'
-    return requestNeedsHeadApproval ? 'HEAD_ISSUE' : 'ISSUE'
-  }
-  const count = (route: StaffRoute) => checks.filter(({ line, check }) => routeOf(line, check) === route).length
-  const toHead = requestNeedsHeadApproval ? checks.length : 0
-  const choosable = canChooseRequestRoute ? 1 : 0
+  const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [mode, setMode] = useState<'route' | 'ask'>('route')
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const requester = formText(request.formData.requesterName) || request.requesterName
 
+  // Units GSO Staff ticked for a line, counted up to the requested quantity.
+  const coveredOf = (line: PurchaseRequisitionLine, check: PurchaseRequisitionStockCheck) => {
+    let covered = 0
+    for (const itemId of picked[line.id] || []) {
+      const unit = check.matches.find((entry) => entry.itemId === itemId)
+      covered += Math.min(unit?.availableQuantity ?? 0, line.requestedQuantity - covered)
+    }
+    return covered
+  }
+  const toggle = (lineId: string, itemId: string) => setPicked((current) => {
+    const list = current[lineId] || []
+    return { ...current, [lineId]: list.includes(itemId) ? list.filter((id) => id !== itemId) : [...list, itemId] }
+  })
+  const unmatchedTotal = checks.reduce((total, { line, check }) => total + Math.max(line.requestedQuantity - coveredOf(line, check), 0), 0)
+
   async function submit(action: 'ROUTE' | 'NEEDS_INFORMATION') {
     setBusy(true)
     setError('')
     try {
       if (action === 'ROUTE') {
-        const routes = Object.fromEntries(checks.map(({ line, check }) => [line.id, routeOf(line, check)]))
-        const result = await staffReviewPurchaseRequisition(request.id, { action, routes })
-        if (countIssuableLines(result.request) > 0) {
-          window.location.assign(`/gso/main-issuance?purchaseRequisitionId=${encodeURIComponent(request.id)}`)
-          return
-        }
+        const selectedUnits = Object.fromEntries(checks.map(({ line }) => [line.id, picked[line.id] || []]))
+        const result = await staffReviewPurchaseRequisition(request.id, { action, selectedUnits })
         onSaved(routedMessage(result.request))
       } else {
         await staffReviewPurchaseRequisition(request.id, { action, note: question.trim() })
@@ -351,17 +360,12 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
       status="current"
       titleId={`stock-check-${request.id}`}
       title="Check stock"
-      description={requestHasShortage
-        ? 'At least one item is short. The GSO Head will decide on the complete request.'
-        : choosable > 0
-          ? 'Review stock, then choose whether to issue the full request or ask the GSO Head.'
-          : 'The GSO Head’s decision applies to the complete request.'}
+      description="Compare the requester's specs with the units in storage. Tick every unit that matches. Anything not ticked is bought."
     >
       <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">{checks.length} item{checks.length === 1 ? '' : 's'}</span>
     </WorkflowStepHeader>
-    {!requestHasShortage && requestNeedsHeadApproval && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-xs font-semibold leading-relaxed text-amber-950"><span className="font-extrabold">One request, one decision:</span> because at least one item needs GSO Head approval, all requested items wait for that decision and stay together for issuance.</div>}
     <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-2 sm:p-3">
-      {checks.map(({ line, check }) => <StockCheckCard key={line.id} line={line} check={check} route={routeOf(line, check)} />)}
+      {checks.map(({ line, check }) => <StockCheckCard key={line.id} line={line} check={check} selected={picked[line.id] || []} covered={coveredOf(line, check)} onToggle={(itemId) => toggle(line.id, itemId)} />)}
     </div>
     <section className="mt-5 border-t border-slate-200 pt-5" aria-label="Confirm routing">
       <WorkflowStepHeader
@@ -369,36 +373,25 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
         status="upcoming"
         titleId={`route-confirmation-${request.id}`}
         title="Confirm route"
-        description="The route applies to this request as one package."
+        description="The whole request goes to the GSO Head as one package."
       />
       <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/60 p-4">
       {mode === 'route' ? <>
-        {canChooseRequestRoute && <div className="rounded-xl border border-slate-300 bg-slate-100 p-1" role="radiogroup" aria-label="Choose the route for the complete request">
-          {STAFF_CHOICES.map((choice) => {
-            const selected = packageRoute === choice.route
-            return <button key={choice.route} type="button" role="radio" aria-checked={selected} onClick={() => setPackageRoute(choice.route as 'ISSUE' | 'HEAD_ISSUE')} className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${selected ? `${choice.on} text-slate-900 shadow-sm` : 'text-slate-700 hover:bg-white/70'}`}>
-              <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border-2 ${selected ? choice.dot : 'border-slate-300 bg-white'}`}>{selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}</span>
-              <span><span className="block text-xs font-extrabold">{choice.title}</span><span className="mt-0.5 block text-[0.62rem] text-slate-500">{choice.detail}</span></span>
-            </button>
-          })}
-        </div>}
         <div className="rounded-xl border border-blue-100 bg-white/80 p-3">
-        <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Route summary</p>
-        <ul className="mt-2 space-y-2">
-          {(['ISSUE', 'HEAD_ISSUE', 'PURCHASE'] as StaffRoute[]).filter((route) => count(route) > 0).map((route) => <li key={route} className="flex flex-wrap items-center gap-2 text-xs text-slate-700">
-            <RoutePill route={route} />
-            <span>{count(route)} item line(s) {route === 'ISSUE' ? 'reserved for the complete request' : route === 'HEAD_ISSUE' ? 'waiting for the whole-request decision' : 'short and included in the purchase decision'}</span>
-          </li>)}
-        </ul>
+          <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Route summary</p>
+          <p className="mt-2 text-xs leading-relaxed text-slate-700">{unmatchedTotal === 0
+            ? 'Every requested unit is matched. The GSO Head approves, then the request is ready to issue.'
+            : `${unmatchedTotal} unit(s) are not matched. They go to purchase, and the GSO Head approves the complete request.`}</p>
         </div>
-        {error && <div className="mt-3 space-y-2"><Banner tone="error">{error}</Banner><button type="button" onClick={onRefresh} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[0.65rem] font-extrabold text-rose-700 hover:bg-rose-50">Refresh stock check</button></div>}
+        {error && <div className="mt-3 space-y-2"><Banner tone="error">{error}</Banner><button type="button" onClick={onRefresh} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[0.65rem] font-extrabold text-rose-700 hover:bg-rose-50">Refresh</button></div>}
         <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-          <button type="button" disabled={busy || checks.length === 0} onClick={() => void submit('ROUTE')} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : toHead ? 'Send entire request to GSO Head' : 'Reserve full request for issuance'}</button>
+          <button type="button" disabled={busy} onClick={() => { setMode('ask'); setError('') }} className="rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Ask requester first</button>
+          <button type="button" disabled={busy || checks.length === 0} onClick={() => void submit('ROUTE')} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : 'Send to GSO Head'}</button>
         </div>
       </> : <>
         <label className="block">
           <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-600">Question for {requester}</span>
-          <textarea autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={2000} required className="min-h-20 w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-xs font-medium outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-100" placeholder="What is missing? For example: the model, size, or the reason for the quantity." onKeyDown={(event) => { if (event.key === 'Escape') setMode('route') }} />
+          <textarea autoFocus value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={2000} required className="min-h-20 w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-xs font-medium outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100" />
         </label>
         <p className="mt-1.5 text-[0.62rem] leading-relaxed text-slate-500">Nothing is reserved yet. The request goes back to the requester and returns here when they reply.</p>
         {error && <div className="mt-3"><Banner tone="error">{error}</Banner></div>}

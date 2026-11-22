@@ -90,6 +90,11 @@ const listAwaitingPurchaseDeliveries = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { lines } });
 });
 
+const swapRequisitionUnit = asyncHandler(async (req, res) => {
+  const result = await requestsService.swapRequisitionUnit(req.body, req.user);
+  res.json({ success: true, data: result });
+});
+
 const recordPurchaseDeliveries = asyncHandler(async (req, res) => {
   const requests = await requestsService.recordPurchaseDeliveries(req.body, req.user);
   res.json({ success: true, data: { requests } });
@@ -199,6 +204,7 @@ module.exports = {
   getStaffPurchaseRequisitionForIssuance,
   listAwaitingPurchaseDeliveries,
   recordPurchaseDeliveries,
+  swapRequisitionUnit,
   undoPurchaseDelivery,
   reviewPurchaseRequisition,
   handPurchaseRequisitionToFinance,

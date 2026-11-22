@@ -446,28 +446,29 @@ async function listItemsToBuy() {
 // Inventory records with the same item name and category, and how many units each can still give.
 // `consumed` carries units already planned for earlier items of the same request in a preview.
 async function checkLineStock(queryable, line, { lock = false, consumed = new Map() } = {}) {
+  // GSO Staff compare the specs by hand, so every in-stock unit of the category is offered, not only the same name.
   const candidates = await queryable.query(
     `SELECT item.id, item.item_code, COALESCE(NULLIF(item.item_name, ''), item.description) AS name,
-            item.category, item.quantity, item.unit_of_measure
+            item.description, item.category, item.quantity, item.unit_of_measure,
+            item.condition, item.location AS storage_location, item.date_acquired, item.unit_cost
        FROM item_catalog AS item
-      WHERE lower(trim(COALESCE(NULLIF(item.item_name, ''), item.description))) = lower(trim($1))
-        AND item.quantity > 0
+      WHERE item.quantity > 0
         AND item.condition NOT IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
       ORDER BY item.id
       ${lock ? 'FOR UPDATE OF item' : ''}`,
-    [line.itemName],
   );
   const requestedQuantity = Number(line.requestedQuantity);
-  let remaining = requestedQuantity;
   const matches = [];
   for (const item of candidates.rows) {
     if (!purchaseCategoryMatches(line.category, item.category)) continue;
     const itemId = String(item.id);
     const availableQuantity = Math.max(0, await getAvailableQuantity(queryable, item) - (consumed.get(itemId) || 0));
-    const reserveQuantity = Math.min(remaining, availableQuantity);
-    remaining -= reserveQuantity;
-    if (reserveQuantity) consumed.set(itemId, (consumed.get(itemId) || 0) + reserveQuantity);
-    matches.push({ itemId, itemCode: item.item_code, name: item.name, unitOfMeasure: item.unit_of_measure, availableQuantity, reserveQuantity });
+    if (availableQuantity < 1) continue;
+    matches.push({
+      itemId, itemCode: item.item_code, name: item.name, description: item.description || '', unitOfMeasure: item.unit_of_measure,
+      availableQuantity, reserveQuantity: 0,
+      condition: item.condition, storageLocation: item.storage_location || '', dateAcquired: item.date_acquired, unitCost: Number(item.unit_cost) || 0,
+    });
   }
   const availableQuantity = matches.reduce((total, match) => total + match.availableQuantity, 0);
   const options = staffRouteOptions({
@@ -476,13 +477,7 @@ async function checkLineStock(queryable, line, { lock = false, consumed = new Ma
     approvalPolicy: line.approvalPolicy,
     staffIssueMaxQuantity: line.staffIssueMaxQuantity,
   });
-  return {
-    route: options[0],
-    options,
-    availableQuantity,
-    reservedQuantity: requestedQuantity - remaining,
-    matches,
-  };
+  return { route: options[0], options, availableQuantity, reservedQuantity: 0, matches };
 }
 
 // Adds a stock check to every item GSO Staff still has to route, in line order, as routing would reserve it.
@@ -514,7 +509,7 @@ function staffRouteSummary(counts, note) {
   return `GSO Staff checked the complete request: ${parts.filter(Boolean).join('; ')}. ${destination}${note ? ` Note: ${note}` : ''}`;
 }
 
-async function staffReviewPurchaseRequisition({ id, action, note, expectedRoutes, changedBy }) {
+async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits = {}, changedBy }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -545,47 +540,41 @@ async function staffReviewPurchaseRequisition({ id, action, note, expectedRoutes
       historyNote = `GSO Staff asked the requester for more details: ${note}`;
     } else {
       const counts = { ISSUE: 0, HEAD_ISSUE: 0, PURCHASE: 0 };
-      // Release every line first so a multi-line request cannot reserve the same units twice.
+      // Release every line first, then reserve only the units GSO Staff picked as matching the requester's specs.
       for (const line of lines) await releasePurchaseLineStock(client, line.id);
 
       const consumed = new Map();
-      const checkedLines = [];
       for (const line of lines) {
-        const check = await checkLineStock(client, {
-          itemName: line.item_name,
-          category: line.category,
-          requestedQuantity: line.requested_quantity,
-          approvalPolicy: line.approval_policy,
-          staffIssueMaxQuantity: line.staff_issue_max_quantity,
-        }, { lock: true, consumed });
-        const requestedRoute = expectedRoutes[String(line.id)];
-        if (!check.options.includes(requestedRoute)) {
-          throw httpError(409, `Nagbago ang stock ng ${line.item_name}. I-refresh at i-check muli bago mag-route.`);
+        const requested = Number(line.requested_quantity);
+        const check = await checkLineStock(client, line, { lock: true, consumed });
+        let remaining = requested;
+        const chosen = [];
+        for (const itemId of selectedUnits[String(line.id)] || []) {
+          const match = check.matches.find((entry) => entry.itemId === String(itemId));
+          if (!match) throw httpError(409, `Nagbago ang stock ng ${line.item_name}. I-refresh at i-check muli bago mag-route.`);
+          const quantity = Math.min(match.availableQuantity, remaining);
+          if (quantity < 1) continue;
+          chosen.push({ itemId: match.itemId, quantity });
+          consumed.set(match.itemId, (consumed.get(match.itemId) || 0) + quantity);
+          remaining -= quantity;
         }
-        checkedLines.push({ line, check, requestedRoute });
-      }
-
-      const hasShortage = checkedLines.some(({ line, check }) => check.reservedQuantity < Number(line.requested_quantity));
-      const needsHeadApproval = hasShortage || checkedLines.some(({ requestedRoute }) => requestedRoute !== 'ISSUE');
-      for (const { line, check } of checkedLines) {
-        const lineHasShortage = check.reservedQuantity < Number(line.requested_quantity);
-        const route = lineHasShortage ? 'PURCHASE' : needsHeadApproval ? 'HEAD_ISSUE' : 'ISSUE';
-        for (const match of check.matches.filter((entry) => entry.reserveQuantity > 0)) {
+        const reserved = requested - remaining;
+        for (const pick of chosen) {
           await client.query(
             `INSERT INTO purchase_requisition_line_allocations (line_id, item_id, quantity)
              VALUES ($1, $2, $3)
              ON CONFLICT (line_id, item_id) DO UPDATE
                SET quantity = EXCLUDED.quantity, fulfilled_quantity = 0, status = 'Reserved', updated_at = NOW()`,
-            [line.id, match.itemId, match.reserveQuantity],
+            [line.id, pick.itemId, pick.quantity],
           );
         }
-        counts[route] += 1;
+        // Matching units go to the GSO Head with the request; any shortfall is part of the purchase.
+        counts[reserved < requested ? 'PURCHASE' : 'HEAD_ISSUE'] += 1;
         await client.query(
           `UPDATE purchase_requisition_lines
-              SET route_status = $2, reserved_quantity = $3, finance_quantity = $4, review_note = '', updated_at = NOW()
+              SET route_status = 'WAITING_GSO_HEAD', reserved_quantity = $2, finance_quantity = $3, review_note = '', updated_at = NOW()
             WHERE id = $1`,
-          [line.id, route === 'ISSUE' ? 'READY_FOR_STAFF' : 'WAITING_GSO_HEAD', check.reservedQuantity,
-            Number(line.requested_quantity) - check.reservedQuantity],
+          [line.id, reserved, requested - reserved],
         );
       }
       historyNote = staffRouteSummary(counts, note);
@@ -682,6 +671,114 @@ async function listAwaitingDeliveries({ itemIds = [] } = {}) {
     if (candidates.length) lines.push({ ...line, candidates });
   }
   return lines;
+}
+
+// Units in storage that GSO Staff can pick for this requisition: same category and not reserved for another request.
+async function listRequisitionStorageCandidates(requestId) {
+  const categories = (await pool.query(
+    'SELECT DISTINCT category FROM purchase_requisition_lines WHERE request_id = $1',
+    [requestId],
+  )).rows.map((row) => row.category);
+  const items = (await pool.query(
+    `SELECT item.id, item.item_code, COALESCE(NULLIF(item.item_name, ''), item.description) AS name,
+            item.description, item.category, item.quantity, item.unit_of_measure
+       FROM item_catalog AS item
+      WHERE item.quantity > 0
+        AND item.condition NOT IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
+      ORDER BY item.id`,
+  )).rows;
+  const units = [];
+  for (const item of items) {
+    if (!categories.some((category) => purchaseCategoryMatches(category, item.category))) continue;
+    const availableQuantity = await getAvailableQuantity(pool, item);
+    if (availableQuantity < 1) continue;
+    units.push({
+      itemId: String(item.id),
+      itemCode: item.item_code,
+      name: item.name,
+      description: item.description || '',
+      category: item.category,
+      unitOfMeasure: item.unit_of_measure,
+      availableQuantity,
+    });
+  }
+  return units;
+}
+
+// GSO Staff pick another unit from storage for a ready requisition line. One reserved unit goes back to stock and
+// the chosen unit is reserved in its place, so the staff can pick the unit that matches the requester's specs.
+async function swapRequisitionUnit({ lineId, fromItemId, toItemId, changedBy }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const line = (await client.query(
+      'SELECT id, request_id, item_name, category FROM purchase_requisition_lines WHERE id = $1 FOR UPDATE',
+      [lineId],
+    )).rows[0];
+    if (!line) throw httpError(404, 'Hindi makita ang requisition item.');
+    const request = (await client.query(
+      'SELECT id, request_type, status FROM service_requests WHERE id = $1 FOR UPDATE',
+      [line.request_id],
+    )).rows[0];
+    if (request.request_type !== 'PURCHASE_REQUISITION' || request.status !== 'Approved') {
+      throw httpError(409, 'Hindi na puwedeng palitan ang unit ng requisition na ito.');
+    }
+    const to = (await client.query(
+      `SELECT id, item_code, category, quantity, condition FROM item_catalog WHERE id = $1 FOR UPDATE`,
+      [toItemId],
+    )).rows[0];
+    if (!to) throw httpError(404, 'Hindi makita ang napiling unit.');
+    if (!purchaseCategoryMatches(line.category, to.category)) throw httpError(409, 'Iba ang category ng napiling unit.');
+    if (['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(to.condition)) {
+      throw httpError(409, 'Hindi puwedeng i-issue ang unit na hindi serviceable.');
+    }
+    if (await getAvailableQuantity(client, to) < 1) {
+      throw httpError(409, `${to.item_code} ay naka-reserve na sa ibang request at ready na i-issue sa ibang tao.`);
+    }
+
+    const from = (await client.query(
+      `SELECT id, quantity, fulfilled_quantity FROM purchase_requisition_line_allocations
+        WHERE line_id = $1 AND item_id = $2 AND status = 'Reserved' FOR UPDATE`,
+      [lineId, fromItemId],
+    )).rows[0];
+    if (!from || Number(from.quantity) - Number(from.fulfilled_quantity) < 1) {
+      throw httpError(409, 'Hindi na naka-reserve ang unit na papalitan. I-refresh ang listahan.');
+    }
+    // quantity must stay above zero (table CHECK), so the last unit is released by status instead.
+    const unitsLeft = Number(from.quantity) - Number(from.fulfilled_quantity);
+    await client.query(
+      `UPDATE purchase_requisition_line_allocations
+          SET quantity = CASE WHEN $2::INT > 1 THEN quantity - 1 ELSE quantity END,
+              status = CASE WHEN $2::INT > 1 THEN 'Reserved' ELSE 'Released' END,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [from.id, unitsLeft],
+    );
+    await client.query(
+      `INSERT INTO purchase_requisition_line_allocations (line_id, item_id, quantity)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (line_id, item_id) DO UPDATE
+         SET quantity = CASE WHEN purchase_requisition_line_allocations.status = 'Released'
+                             THEN purchase_requisition_line_allocations.fulfilled_quantity
+                             ELSE purchase_requisition_line_allocations.quantity END + 1,
+             status = 'Reserved', updated_at = NOW()`,
+      [lineId, toItemId],
+    );
+    await refreshInventoryStatus(client, fromItemId);
+    await refreshInventoryStatus(client, toItemId);
+    await client.query(
+      `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+       SELECT id, status, status, $2, $3 FROM service_requests WHERE id = $1`,
+      [line.request_id, `GSO Staff reserved ${to.item_code} for ${line.item_name} instead of the previous unit.`, changedBy],
+    );
+    await client.query('COMMIT');
+    return { lineId: String(lineId), fromItemId: String(fromItemId), toItemId: String(toItemId) };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // Links bought units that are already in Item Master Data to the requisition items waiting for them, in one step.
@@ -1647,6 +1744,8 @@ async function changeMineStatus({ id, userId, expectedStatus, status, note }) {
 
 module.exports = {
   listAssets,
+  swapRequisitionUnit,
+  listRequisitionStorageCandidates,
   listPurchaseItemNames,
   listPurchaseItemNamesByIds,
   listCatalogItemsByIds,

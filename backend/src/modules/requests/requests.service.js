@@ -599,20 +599,22 @@ async function staffReviewPurchaseRequisition(idValue, input, user) {
   if (!['ROUTE', 'NEEDS_INFORMATION'].includes(input.action)) invalid('Pumili kung iru-route ang mga item o hihingi ng detalye sa requester.');
   const note = text(input.note, 'Note', 2000, { optional: true });
   if (input.action === 'NEEDS_INFORMATION' && !note) invalid('Isulat kung anong detalye ang kailangan mula sa requester.');
-  // The routes the staff member saw; the server checks stock again and refuses if any changed.
-  const expectedRoutes = {};
+  // The units GSO Staff picked as matching each requested item; the server checks them again under lock.
+  const selectedUnits = {};
   if (input.action === 'ROUTE') {
-    if (!input.routes || typeof input.routes !== 'object' || Array.isArray(input.routes)) invalid('I-refresh ang requisition bago mag-route.');
-    for (const [lineId, route] of Object.entries(input.routes)) {
-      if (!/^\d{1,18}$/.test(lineId) || !STAFF_ROUTES.has(route)) invalid('Hindi valid ang item route. I-refresh ang requisition.');
-      expectedRoutes[lineId] = route;
+    if (!input.selectedUnits || typeof input.selectedUnits !== 'object' || Array.isArray(input.selectedUnits)) invalid('I-refresh ang requisition bago mag-route.');
+    for (const [lineId, itemIds] of Object.entries(input.selectedUnits)) {
+      if (!/^\d{1,18}$/.test(lineId) || !Array.isArray(itemIds) || itemIds.some((itemId) => !/^\d{1,18}$/.test(String(itemId)))) {
+        invalid('Hindi valid ang piniling unit. I-refresh ang requisition.');
+      }
+      selectedUnits[lineId] = itemIds.map(String);
     }
   }
   const request = await requestsRepository.staffReviewPurchaseRequisition({
     id,
     action: input.action,
     note,
-    expectedRoutes,
+    selectedUnits,
     changedBy: user.id,
   });
   const requesterNotified = ['Needs Information', 'Approved'].includes(request.status)
@@ -655,6 +657,21 @@ async function listAwaitingPurchaseDeliveries(query = {}) {
   const itemIds = query.itemIds ? String(query.itemIds).split(',').map((id) => idOf(id, 'inventory record')) : [];
   if (itemIds.length > 500) invalid('Masyadong maraming inventory record ang napili.');
   return requestsRepository.listAwaitingDeliveries({ itemIds });
+}
+
+// GSO Staff pick another unit from storage for a ready requisition line.
+async function swapRequisitionUnit(input, user) {
+  const positiveId = (value, label) => {
+    const text = String(value ?? '');
+    if (!/^\d{1,20}$/.test(text) || text === '0') invalid(`Hindi valid ang ${label}.`);
+    return text;
+  };
+  return requestsRepository.swapRequisitionUnit({
+    lineId: positiveId(input?.lineId, 'requisition item'),
+    fromItemId: positiveId(input?.fromItemId, 'reserved unit'),
+    toItemId: positiveId(input?.toItemId, 'storage unit'),
+    changedBy: user.id,
+  });
 }
 
 // GSO Staff link what they bought (already added in Item Master Data) to the requests waiting for it.
@@ -805,7 +822,9 @@ async function getStaffPurchaseRequisitionForIssuance(idValue) {
   if (!purchaseRequestReadyForStaffIssuance(request)) {
     invalid('Hindi pa kumpleto ang stock ng buong request. Walang item na puwedeng i-issue.', 409);
   }
-  return request;
+  // Only units that are free now; a unit reserved for another request is not offered.
+  const storageCandidates = await requestsRepository.listRequisitionStorageCandidates(request.id);
+  return { ...request, storageCandidates };
 }
 
 async function reviewPurchaseRequisition(idValue, input, user) {
@@ -1121,6 +1140,7 @@ module.exports = {
   getStaffPurchaseRequisitionForIssuance,
   listAwaitingPurchaseDeliveries,
   recordPurchaseDeliveries,
+  swapRequisitionUnit,
   autoReserveReceivedPurchaseStock,
   undoPurchaseDelivery,
   reviewPurchaseRequisition,

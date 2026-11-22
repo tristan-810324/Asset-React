@@ -1,8 +1,12 @@
+-- Consolidated migration 007: platform support, and every later change (008 to 016) folded in on 2026-11-22.
+-- Fresh databases get the full schema here. Databases that already recorded 008 to 016 are not changed.
+BEGIN;
+
+-- ==== 007_platform_support ====
 -- Notifications, GSO Head signatures, Facility Use venue choices, Loss & Damage cases, and facility damage/repair columns.
 -- Folded in on 2026-11-17 from the former 008 to 013 files (kept in migrations_archive/folded-2026-11-17).
 -- Consolidated from the pre-consolidation migrations (archived in migrations_archive/pre-consolidation-2026-11-15).
 -- Reference data is included. One-time data conversions are not, because a new database has no rows to convert.
-BEGIN;
 
 CREATE TABLE public.app_notifications (
     id bigint NOT NULL,
@@ -139,5 +143,165 @@ ALTER TABLE public.service_request_assets
   ADD COLUMN IF NOT EXISTS repaired_quantity integer NOT NULL DEFAULT 0 CHECK (repaired_quantity >= 0),
   ADD COLUMN IF NOT EXISTS unserviceable_quantity integer NOT NULL DEFAULT 0 CHECK (unserviceable_quantity >= 0),
   ADD CONSTRAINT service_request_assets_repair_checked_check CHECK (repaired_quantity + unserviceable_quantity <= damaged_quantity);
+
+-- ==== 008_facility_write_off ====
+-- GSO repair check on a facility item that is Unserviceable: the reason, the waive-or-charge decision, and the
+-- estimated value (unit cost from the Item Master × units). Recorded on the returned asset row.
+
+ALTER TABLE public.service_request_assets
+  ADD COLUMN IF NOT EXISTS write_off_reason text CHECK (write_off_reason IS NULL OR length(write_off_reason) <= 300),
+  ADD COLUMN IF NOT EXISTS write_off_decision text CHECK (write_off_decision IS NULL OR write_off_decision IN ('WAIVED', 'CHARGED')),
+  ADD COLUMN IF NOT EXISTS write_off_estimated_value numeric(12, 2) CHECK (write_off_estimated_value IS NULL OR write_off_estimated_value >= 0),
+  ADD COLUMN IF NOT EXISTS write_off_by_user_id bigint REFERENCES public.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS write_off_at timestamp with time zone;
+
+-- ==== 009_tagged_write_off ====
+-- GSO repair check on a tagged unit that cannot be repaired: the reason, the waive-or-charge decision, and the
+-- estimated value. Recorded on the return record, the same way facility write-offs are recorded (008).
+
+ALTER TABLE public.employee_issuance_returns
+  ADD COLUMN IF NOT EXISTS write_off_reason text CHECK (write_off_reason IS NULL OR length(write_off_reason) <= 300),
+  ADD COLUMN IF NOT EXISTS write_off_decision text CHECK (write_off_decision IS NULL OR write_off_decision IN ('WAIVED', 'CHARGED')),
+  ADD COLUMN IF NOT EXISTS write_off_estimated_value numeric(12, 2) CHECK (write_off_estimated_value IS NULL OR write_off_estimated_value >= 0),
+  ADD COLUMN IF NOT EXISTS write_off_by_user_id bigint REFERENCES public.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS write_off_at timestamp with time zone;
+
+-- ==== 010_repair_owner ====
+-- Who checks a returned unit that needs repair: GSO or ITSS. An ITSS unit notifies IT Admin, and its
+-- outcome notifies GSO. Recorded on the return record, the same way the write-off fields are (009).
+
+ALTER TABLE public.employee_issuance_returns
+  ADD COLUMN IF NOT EXISTS repair_owner text;
+
+ALTER TABLE public.employee_issuance_returns
+  DROP CONSTRAINT IF EXISTS employee_issuance_returns_repair_owner_check,
+  ADD CONSTRAINT employee_issuance_returns_repair_owner_check CHECK (repair_owner IS NULL OR repair_owner IN ('GSO', 'ITSS'));
+
+-- ==== 011_loss_damage_charge ====
+-- Loss & Damage: GSO either waives a report (NO_CHARGE) or charges it (CHARGED) with an amount
+-- calculated from the reported items' unit cost. Charged reports are paid at the Finance office, like
+-- the facility return settlements. Adds one resolution and one amount column; no rows are rewritten.
+
+ALTER TABLE public.loss_damage_settlements
+  ADD COLUMN IF NOT EXISTS charge_amount NUMERIC(12,2);
+
+ALTER TABLE public.loss_damage_settlements
+  DROP CONSTRAINT IF EXISTS loss_damage_settlements_resolution_check,
+  DROP CONSTRAINT IF EXISTS loss_damage_settlements_status_check,
+  DROP CONSTRAINT IF EXISTS loss_damage_settlements_charge_amount_check,
+  ADD CONSTRAINT loss_damage_settlements_resolution_check CHECK (resolution = ANY (ARRAY['NO_CHARGE', 'FOR_REPAIR', 'CHARGED', 'RESOLVED'])),
+  ADD CONSTRAINT loss_damage_settlements_status_check CHECK (
+    (resolution = 'NO_CHARGE' AND status = 'NO_CHARGE')
+    OR (resolution = 'FOR_REPAIR' AND status = 'FOR_REPAIR')
+    OR (resolution = 'CHARGED' AND status = 'CHARGED')
+    OR (resolution = 'RESOLVED' AND status = 'RESOLVED')
+  ),
+  ADD CONSTRAINT loss_damage_settlements_charge_amount_check CHECK (
+    resolution <> 'CHARGED' OR (charge_amount IS NOT NULL AND charge_amount > 0 AND charge_amount <= 9999999999.99)
+  );
+
+-- ==== 012_loss_damage_repair_owner ====
+-- Loss & Damage: a damaged item goes straight to To Be Repaired when GSO decides, and the decision records
+-- who repairs it (GSO or ITSS). Same owner values as the returns repair owner (010).
+
+ALTER TABLE public.loss_damage_settlements
+  ADD COLUMN IF NOT EXISTS repair_owner text;
+
+
+ALTER TABLE public.loss_damage_settlements
+  DROP CONSTRAINT IF EXISTS loss_damage_settlements_repair_owner_check,
+  ADD CONSTRAINT loss_damage_settlements_repair_owner_check CHECK (repair_owner IS NULL OR repair_owner IN ('GSO', 'ITSS'));
+
+-- ==== 013_loss_damage_close_repaired ====
+-- Loss & Damage: a damaged case is closed once its item is sent to Repair & Maintenance, because the repair is
+-- tracked there. Cases decided before this rule stayed In Progress; close them when the item has already left
+-- the requester's holdings (custody_resolved_at is set). Only the status changes; no item or payment is touched.
+
+WITH closed AS (
+  UPDATE service_requests AS request
+     SET status = 'Closed', updated_at = NOW()
+    FROM loss_damage_settlements AS settlement
+   WHERE settlement.request_id = request.id
+     AND request.request_type = 'LOSS_DAMAGE_REPORT'
+     AND request.status = 'In Progress'
+     AND settlement.status = 'FOR_REPAIR'
+     AND settlement.custody_resolved_at IS NOT NULL
+  RETURNING request.id
+)
+INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
+SELECT id, 'In Progress', 'Closed', 'Closed: the damaged item was sent to Repair & Maintenance.', NULL
+  FROM closed;
+
+-- ==== 014_item_numbers_per_transaction ====
+-- Item numbers per transaction: each issuance (batch) numbers its units ITEM 1..N, and the number is stored
+-- when the unit is given out, so printed labels and the requester's list keep the same number.
+-- unit_number is left as it was (it still orders units). Existing batches are numbered once, by barcode order.
+
+ALTER TABLE public.asset_unit_tags
+  ADD COLUMN IF NOT EXISTS batch_item_number INTEGER;
+
+ALTER TABLE public.employee_issuance_batches
+  ADD COLUMN IF NOT EXISTS numbered_items INTEGER NOT NULL DEFAULT 0;
+
+-- A unit belongs to the batch of the issuance it was given to, even after it came back (the return record keeps that link).
+WITH batch_tags AS (
+  SELECT DISTINCT tag.id AS tag_id, issue.batch_id
+    FROM asset_unit_tags AS tag
+    JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
+  UNION
+  SELECT DISTINCT return_record.asset_unit_tag_id AS tag_id, issue.batch_id
+    FROM employee_issuance_returns AS return_record
+    JOIN employee_issuances AS issue ON issue.id = return_record.issuance_id
+   WHERE return_record.asset_unit_tag_id IS NOT NULL
+),
+numbered AS (
+  SELECT tag_id, batch_id, ROW_NUMBER() OVER (PARTITION BY batch_id ORDER BY tag_id) AS item_number
+    FROM batch_tags
+)
+UPDATE asset_unit_tags AS tag
+   SET batch_item_number = numbered.item_number
+  FROM numbered
+ WHERE tag.id = numbered.tag_id
+   AND tag.batch_item_number IS NULL;
+
+WITH batch_tags AS (
+  SELECT DISTINCT tag.id AS tag_id, issue.batch_id
+    FROM asset_unit_tags AS tag
+    JOIN employee_issuances AS issue ON issue.id = tag.issuance_id
+  UNION
+  SELECT DISTINCT return_record.asset_unit_tag_id AS tag_id, issue.batch_id
+    FROM employee_issuance_returns AS return_record
+    JOIN employee_issuances AS issue ON issue.id = return_record.issuance_id
+   WHERE return_record.asset_unit_tag_id IS NOT NULL
+),
+totals AS (
+  SELECT batch_id, COUNT(*) AS total FROM batch_tags GROUP BY batch_id
+)
+UPDATE employee_issuance_batches AS batch
+   SET numbered_items = totals.total
+  FROM totals
+ WHERE batch.id = totals.batch_id
+   AND batch.numbered_items < totals.total;
+
+-- ==== 015_requester_identity_rejected ====
+-- GSO can now reject a requester account outright (status Rejected), separate from Needs Correction.
+-- Only the status CHECK list changes; no rows are rewritten.
+
+ALTER TABLE public.requester_identity_profiles
+  DROP CONSTRAINT IF EXISTS requester_identity_status_check,
+  ADD CONSTRAINT requester_identity_status_check CHECK (
+    verification_status = ANY (ARRAY['Pending'::text, 'Verified'::text, 'Needs Correction'::text, 'Rejected'::text])
+  );
+
+-- ==== 016_audit_entity_type_user ====
+-- User account create, activate/deactivate, and delete write audit rows with entity_type 'user'.
+-- The CHECK list did not include it, so those writes failed after the users row had already changed.
+-- Only the entity_type CHECK list changes; no rows are rewritten.
+
+ALTER TABLE public.inventory_change_logs
+  DROP CONSTRAINT IF EXISTS inventory_change_logs_entity_type_check,
+  ADD CONSTRAINT inventory_change_logs_entity_type_check CHECK (
+    entity_type = ANY (ARRAY['item'::text, 'category'::text, 'employee'::text, 'request'::text, 'signature'::text, 'facility_option'::text, 'user'::text])
+  );
 
 COMMIT;

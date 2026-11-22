@@ -115,6 +115,10 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
   const [isCompletingRepair, setIsCompletingRepair] = useState(false)
   const [writeOffNote, setWriteOffNote] = useState('')
   const [completionChoice, setCompletionChoice] = useState<'repaired' | 'writeOff'>('repaired')
+  // Yes/No check before a unit is saved as repaired.
+  const [confirmRepaired, setConfirmRepaired] = useState(false)
+  // Who did the repair, typed by GSO before the unit is saved as repaired.
+  const [repairedByName, setRepairedByName] = useState('')
   const [tagWriteOffReason, setTagWriteOffReason] = useState('')
   const [tagWriteOffDecision, setTagWriteOffDecision] = useState<'waive' | 'charge' | ''>('')
   // Same as the facility check: a waiver needs the GSO staff who checked the item and why.
@@ -422,7 +426,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
         // Puts exactly the units of this return back in stock.
         await markReturnRepaired(repairCompletionItem.returnId)
       } else if (repairCompletionItem.tagCode) {
-        await completeTaggedAssetRepair(repairCompletionItem.tagCode)
+        await completeTaggedAssetRepair(repairCompletionItem.tagCode, repairedByName.trim())
       } else {
         const updatedInventoryItem = await updateInventoryItem(inventoryItem.id, {
           itemCode: inventoryItem.itemCode,
@@ -672,7 +676,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
                       <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-slate-700">GSO</span>
                     </td>
                     <td className="px-5 py-4 sm:px-6">
-                      <button type="button" onClick={() => { setCompletionChoice('repaired'); setRepairActionError(''); setRepairCompletionItem(item) }} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
+                      <button type="button" onClick={() => { setCompletionChoice('repaired'); setConfirmRepaired(false); setRepairedByName(''); setRepairActionError(''); setRepairCompletionItem(item) }} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
                       <p className="mt-1.5 text-[0.62rem] font-bold text-slate-500">1 left to check.</p>
                     </td>
                   </tr>
@@ -950,7 +954,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
 
             <fieldset className="mt-4 grid gap-2" disabled={isCompletingRepair}>
               <label className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 p-3.5 transition ${completionChoice === 'repaired' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 bg-white hover:border-slate-400'}`}>
-                <input type="radio" name="repair-outcome" checked={completionChoice === 'repaired'} onChange={() => { setCompletionChoice('repaired'); setRepairActionError('') }} className="h-4 w-4 accent-emerald-600" />
+                <input type="radio" name="repair-outcome" checked={completionChoice === 'repaired'} onChange={() => { setCompletionChoice('repaired'); setConfirmRepaired(false); setRepairActionError('') }} className="h-4 w-4 accent-emerald-600" />
                 <span className="text-base font-extrabold text-slate-900">Repaired · to stock</span>
               </label>
               {repairCompletionItem.returnId && (
@@ -960,6 +964,24 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
                 </label>
               )}
             </fieldset>
+
+            {completionChoice === 'repaired' && (
+              <label className="mt-4 block">
+                <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-emerald-700">Who repaired it? <span className="text-rose-600">*</span></span>
+                <input value={repairedByName} onChange={(event) => setRepairedByName(event.target.value)} maxLength={200} disabled={isCompletingRepair} placeholder="e.g. Juan Dela Cruz, technician" className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100" />
+              </label>
+            )}
+
+            {completionChoice === 'repaired' && confirmRepaired && (
+              <div role="alert" className="mt-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/40 p-4">
+                <p className="text-sm font-black text-emerald-900">Is {repairCompletionItem.asset} ({repairCompletionItem.tagCode || repairCompletionItem.code}) really repaired?</p>
+                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">Yes puts it back in GSO Storage as Available and records your name as the checker. No keeps it in To Be Repaired.</p>
+                <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <button type="button" disabled={isCompletingRepair} onClick={() => setConfirmRepaired(false)} className="rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">No, still in repair</button>
+                  <button type="button" disabled={isCompletingRepair || !repairedByName.trim()} onClick={() => { void handleMarkAsRepaired() }} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-extrabold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50">{isCompletingRepair ? 'Saving…' : 'Yes, repaired'}</button>
+                </div>
+              </div>
+            )}
 
             {completionChoice === 'writeOff' && (
               <div className="mt-4 space-y-4">
@@ -1018,7 +1040,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
               <button
                 type="button"
                 disabled={isCompletingRepair || (completionChoice === 'writeOff' && (!tagWriteOffReason || !tagWriteOffDecision || (tagWriteOffReason === 'Other' && !writeOffNote.trim()) || (tagWriteOffDecision === 'waive' && !tagWaiverNote.trim())))}
-                onClick={() => { void (completionChoice === 'writeOff' ? handleGsoWriteOff() : handleMarkAsRepaired()) }}
+                onClick={() => { if (completionChoice === 'repaired') { setConfirmRepaired(true); return } void handleGsoWriteOff() }}
                 className={`rounded-xl px-6 py-3.5 text-base font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${completionChoice === 'writeOff' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'}`}
               >
                 {isCompletingRepair ? 'Saving…' : completionChoice === 'writeOff' ? 'Yes, write off' : 'Save check'}

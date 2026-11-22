@@ -28,12 +28,11 @@ import MainIssuance from './gso/mainissuance'
 import AssetLabels from './gso/assetlabels'
 import GsoPurchaseRequisitions from './gso/purchaserequisitions'
 import GsoProcurement from './gso/procurement'
-import ViewFacilities from './gso/viewfacilities'
-import FacilityRequests from './gso/facilityrequest'
 import GsoHeadIssuanceRecord from './gsohead/issuancerecord'
 import ReturnItems from './gso/returnitems'
 import ToRepaired from './gso/torepaired'
 import LossDamageCases from './gso/lossdamagecases'
+import GsoPayments from './gso/payments'
 import GsoHistory from './gso/history'
 import ItemsMasterData from './gso/itemsmasterdata'
 import IssuanceApproval from './gso/issuanceapproval'
@@ -231,17 +230,14 @@ export default function App() {
   if (path === '/gso/to-be-repaired') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ToRepaired /></ProtectedDashboard>
   }
+  if (path === '/gso/payments') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoPayments /></ProtectedDashboard>
+  }
   if (path === '/gso/loss-damage-cases') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><LossDamageCases /></ProtectedDashboard>
   }
   if (path === '/gso/history') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoHistory /></ProtectedDashboard>
-  }
-  if (path === '/gso/facility-requests') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><FacilityRequests /></ProtectedDashboard>
-  }
-  if (path === '/gso/facilities-equipment') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><ViewFacilities /></ProtectedDashboard>
   }
   if (path === '/gso/service-workboard') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ServiceWorkboard /></ProtectedDashboard>

@@ -109,7 +109,7 @@ export type PurchaseRequisitionStockCheck = {
   options: StaffRoute[]
   availableQuantity: number
   reservedQuantity: number
-  matches: Array<{ itemId: string; itemCode: string; name: string; unitOfMeasure: string; availableQuantity: number; reserveQuantity: number }>
+  matches: Array<{ itemId: string; itemCode: string; name: string; description?: string; unitOfMeasure: string; availableQuantity: number; reserveQuantity: number; condition?: string; storageLocation?: string; dateAcquired?: string | null; unitCost?: number }>
 }
 
 export type PurchaseRequisitionLine = {

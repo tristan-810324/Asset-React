@@ -13,7 +13,7 @@ import {
 } from './issuancesApi'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
-import { getStaffPurchaseRequisition, listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
+import { getStaffPurchaseRequisition, listStaffPurchaseRequisitions, swapRequisitionUnit, type StorageUnit } from './purchaseRequisitionsApi'
 import { linesOf, formText, purchaseLineReadyForIssuance, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
 import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
 import type { PurchaseRequisitionLine, ServiceRequest } from '../requesters/requesterApi'
@@ -478,6 +478,8 @@ export default function MainIssuance() {
   const [recipientAssignmentChecks, setRecipientAssignmentChecks] = useState<Record<string, EmployeeIssuanceRecord['assignedItems']>>({})
   const [recipientAssignmentErrors, setRecipientAssignmentErrors] = useState<Record<string, string>>({})
   const [purchaseRequisitionLineIds, setPurchaseRequisitionLineIds] = useState<Record<string, string>>({})
+  const [storageCandidates, setStorageCandidates] = useState<StorageUnit[]>([])
+  const [swapBusyId, setSwapBusyId] = useState('')
   const [purchaseRequisitionReference, setPurchaseRequisitionReference] = useState('')
   const [purchaseRequisitionOtherTypeCount, setPurchaseRequisitionOtherTypeCount] = useState(0)
   const [purchaseRequisitionReusableCount, setPurchaseRequisitionReusableCount] = useState(0)
@@ -516,7 +518,8 @@ export default function MainIssuance() {
       listEmployees(),
       listInventoryItems(),
       listStaffPurchaseRequisitions().catch(() => []),
-      selectedPurchaseRequisitionId ? getStaffPurchaseRequisition(selectedPurchaseRequisitionId) : Promise.resolve(null),
+      // A requisition that is not complete yet is not an error here; the page just shows no requisition items.
+      selectedPurchaseRequisitionId ? getStaffPurchaseRequisition(selectedPurchaseRequisitionId).catch(() => null) : Promise.resolve(null),
     ])
       .then(([employeeResult, inventoryResult, requisitionQueue, purchaseRequisition, ]) => {
         if (!active) return
@@ -535,6 +538,7 @@ export default function MainIssuance() {
         setRecipientAssignmentChecks({})
         setRecipientAssignmentErrors({})
         setPurchaseRequisitionLineIds({})
+        setStorageCandidates([])
         setPurchaseRequisitionOtherTypeCount(0)
         setPurchaseRequisitionReusableCount(0)
         setItemSearch('')
@@ -566,6 +570,8 @@ export default function MainIssuance() {
             .filter(([itemId]) => itemIds.has(itemId))
             .map(([itemId, reservation]) => [itemId, String(reservation.quantity)]))
           setInventory(items)
+          // Units in storage that are free now (the server leaves out units reserved for another request).
+          setStorageCandidates(purchaseRequisition?.storageCandidates ?? [])
           setSelectedQuantities(quantities)
           setPurchaseRequisitionLineIds(Object.fromEntries([...reservedByItem.entries()]
             .filter(([itemId]) => itemIds.has(itemId))
@@ -775,6 +781,25 @@ export default function MainIssuance() {
       reservedUnits,
     }
   }, [readyRequisitions, selectedPurchaseRequisitionId])
+  // Swaps the reserved unit of the same category for the chosen storage unit, then reloads so every list is fresh.
+  async function useStorageUnit(unit: StorageUnit) {
+    const reserved = inventory.find((item) => purchaseRequisitionLineIds[item.id] && item.category.trim() === unit.category.trim())
+    const lineId = reserved ? purchaseRequisitionLineIds[reserved.id] : undefined
+    if (!reserved || !lineId) {
+      setSubmitError('There is no reserved unit of this category to replace.')
+      return
+    }
+    setSubmitError('')
+    setSwapBusyId(unit.itemId)
+    try {
+      await swapRequisitionUnit({ lineId, fromItemId: reserved.id, toItemId: unit.itemId })
+      window.location.reload()
+    } catch (reason) {
+      setSubmitError(reason instanceof Error ? reason.message : 'Unable to reserve this unit.')
+      setSwapBusyId('')
+    }
+  }
+
   const inventoryById = useMemo(() => new Map(inventory.map((item) => [item.id, item])), [inventory])
   const selectedItems = useMemo<SelectedInventoryItem[]>(() => Object.entries(selectedQuantities).flatMap(([itemId, quantityText]) => {
     const item = inventoryById.get(itemId)
@@ -1562,6 +1587,25 @@ export default function MainIssuance() {
                   : 'Pick consumable stock for the employee.'}
               />
 
+              {isRequisitionIssuance && storageCandidates.length > 0 && (
+                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                  <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-indigo-800">Other units in storage · same category</p>
+                  <p className="mt-1 text-[0.68rem] text-slate-600">Compare the specs with the requester's request. Use a unit to reserve it in place of the reserved one.</p>
+                  <ul className="mt-2 space-y-2">
+                    {storageCandidates.map((unit) => (
+                      <li key={unit.itemId} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800">{unit.itemCode} · {unit.name}</p>
+                          <p className="mt-0.5 text-[0.68rem] leading-relaxed text-slate-600">{unit.description || 'No specs entered'}</p>
+                        </div>
+                        <button type="button" disabled={swapBusyId !== ''} onClick={() => void useStorageUnit(unit)} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-extrabold text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50">
+                          {swapBusyId === unit.itemId ? 'Reserving…' : 'Use this unit'}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(11rem,0.55fr)]">
                 <label className="block">
                   <span className="sr-only">Search inventory by item name, code, description, or category</span>

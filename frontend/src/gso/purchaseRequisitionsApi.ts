@@ -1,5 +1,5 @@
 import { apiRequest } from '../auth/authApi'
-import type { ServiceRequest, StaffRoute } from '../requesters/requesterApi'
+import type { ServiceRequest } from '../requesters/requesterApi'
 
 export type ItemToBuyRequest = {
   requestId: string
@@ -30,15 +30,26 @@ export async function listStaffPurchaseRequisitions() {
   return result.requests
 }
 
+// A unit in storage GSO Staff can pick for a ready requisition. Units reserved for another request are not listed.
+export type StorageUnit = {
+  itemId: string
+  itemCode: string
+  name: string
+  description: string
+  category: string
+  unitOfMeasure: string
+  availableQuantity: number
+}
+
 export async function getStaffPurchaseRequisition(id: string) {
-  const result = await apiRequest<{ request: ServiceRequest }>(`/requests/purchase-requisitions/${encodeURIComponent(id)}/issuance-details`)
+  const result = await apiRequest<{ request: ServiceRequest & { storageCandidates: StorageUnit[] } }>(`/requests/purchase-requisitions/${encodeURIComponent(id)}/issuance-details`)
   return result.request
 }
 
 // `routes` are the routes the staff member saw; the server refuses if stock or a rule changed since.
 export async function staffReviewPurchaseRequisition(
   id: string,
-  input: { action: 'ROUTE'; routes: Record<string, StaffRoute>; note?: string } | { action: 'NEEDS_INFORMATION'; note: string },
+  input: { action: 'ROUTE'; selectedUnits: Record<string, string[]>; note?: string } | { action: 'NEEDS_INFORMATION'; note: string },
 ) {
   return apiRequest<{ request: ServiceRequest; requesterNotified: boolean | null }>(`/requests/purchase-requisitions/${encodeURIComponent(id)}/staff-review`, {
     method: 'PATCH',
@@ -91,6 +102,14 @@ export async function recordPurchaseDeliveries(input: { deliveries: DeliveryInpu
 }
 
 // Takes a linked delivery back until its units are issued.
+// GSO Staff pick another unit from storage for a ready requisition line. The reserved unit goes back to stock.
+export async function swapRequisitionUnit(input: { lineId: string; fromItemId: string; toItemId: string }) {
+  return apiRequest<{ lineId: string; fromItemId: string; toItemId: string }>('/requests/purchase-requisitions/swap-unit', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 export async function undoPurchaseDelivery(requestId: string, receiptId: string) {
   const result = await apiRequest<{ request: ServiceRequest }>(
     `/requests/purchase-requisitions/${encodeURIComponent(requestId)}/deliveries/${encodeURIComponent(receiptId)}/undo`,

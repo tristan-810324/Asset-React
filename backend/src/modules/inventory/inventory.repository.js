@@ -18,7 +18,11 @@ const itemColumns = `
       'location', tag.location,
       'condition', tag.condition,
       'lifecycleStatus', tag.lifecycle_status,
-      'custodyStatus', tag.custody_status
+      'custodyStatus', tag.custody_status,
+      'disposalReason', tag.disposal_reason,
+      'lastInspectedAt', tag.last_inspected_at,
+      'repairedByName', tag.repaired_by_name,
+      'lastInspectedBy', (SELECT checker.name FROM users AS checker WHERE checker.id = tag.last_inspected_by_user_id)
     ) ORDER BY tag.unit_number)
       FROM asset_unit_tags AS tag
      WHERE tag.item_id = i.id
@@ -47,9 +51,24 @@ const itemColumns = `
   COALESCE(stock_usage.repair_quantity, 0)::INTEGER AS "repairQuantity",
   i.unit_of_measure AS "unitOfMeasure",
   i.condition,
+  (
+    SELECT ret.return_condition
+      FROM employee_issuance_returns AS ret
+      JOIN employee_issuances AS iss ON iss.id = ret.issuance_id
+     WHERE iss.item_id = i.id AND ret.status IN ('Returned', 'Lost')
+     ORDER BY ret.decided_at DESC NULLS LAST, ret.id DESC
+     LIMIT 1
+  ) AS "conditionAfterReturn",
   CASE
     WHEN i.inventory_status = 'Borrowed' AND COALESCE(stock_usage.active_quantity, 0) = 0 THEN 'Borrowed'
     WHEN i.quantity > COALESCE(stock_usage.active_quantity, 0) + COALESCE(stock_usage.repair_quantity, 0) THEN 'Available'
+    -- A unit written off from Repair & Maintenance leaves the stock; the record must say so instead of "Available".
+    -- The list shows it as Unserviceable; the item detail keeps the exact state (written off, reason).
+    WHEN i.quantity = 0 AND EXISTS (SELECT 1 FROM asset_unit_tags AS disposed WHERE disposed.item_id = i.id AND disposed.lifecycle_status = 'Disposed') THEN 'Unserviceable'
+    -- Returned as unserviceable and waiting for the GSO repair check.
+    WHEN COALESCE(stock_usage.repair_quantity, 0) > 0 AND i.quantity <= COALESCE(stock_usage.repair_quantity, 0)
+     AND EXISTS (SELECT 1 FROM asset_unit_tags AS queued WHERE queued.item_id = i.id AND queued.location = 'To Be Repaired' AND queued.lifecycle_status <> 'Disposed') THEN 'To Be Repaired'
+    WHEN COALESCE(stock_usage.repair_quantity, 0) > 0 AND i.quantity <= COALESCE(stock_usage.repair_quantity, 0) THEN 'Unserviceable'
     WHEN COALESCE(stock_usage.pending_quantity, 0) > 0 THEN 'Pending Approval'
     WHEN COALESCE(stock_usage.reserved_quantity, 0) > 0 THEN 'Reserved'
     WHEN COALESCE(stock_usage.issued_quantity, 0) > 0 THEN 'Issued'
@@ -127,6 +146,23 @@ const itemColumns = `
          WHERE issue.item_id = i.id
            AND return_request.status = 'Returned'
            AND return_request.decided_at IS NOT NULL
+
+        UNION ALL
+
+        SELECT 'updated'::TEXT AS action,
+               change.reason,
+               change.old_values,
+               change.new_values,
+               change.changed_at,
+               editor.name AS changed_by,
+               change.id AS sort_id
+          FROM inventory_change_logs AS change
+          LEFT JOIN users AS editor ON editor.id = change.changed_by_user_id
+         WHERE change.entity_type = 'item'
+           AND change.item_id = i.id
+           AND change.action = 'updated'
+           AND NOT (change.new_values ? 'itemCode')
+           AND (change.new_values ? 'repairOutcome' OR change.new_values ? 'condition')
 
         UNION ALL
 

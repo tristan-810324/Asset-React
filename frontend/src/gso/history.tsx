@@ -8,18 +8,25 @@ import { listAuditLogs } from '../admin/auditLogsApi'
 import { listEmployees } from './employeesApi'
 import { listLossDamageCases } from './lossDamageCasesApi'
 
-type TabKey = 'returns' | 'facilities' | 'service' | 'loss' | 'repair' | 'unserviceable' | 'employees' | 'requisitions'
+type SourceKey = 'returns' | 'facilities' | 'service' | 'loss' | 'repair' | 'unserviceable' | 'employees' | 'requisitions'
+type TabKey = 'returns' | 'service' | 'loss' | 'employees'
+
+// Which history sources each tab shows, merged and sorted together.
+const TAB_SOURCES: Record<TabKey, SourceKey[]> = {
+  returns: ['returns', 'requisitions'],
+  service: ['service'],
+  loss: ['loss', 'repair', 'unserviceable'],
+  employees: ['employees'],
+}
+// Old ?tab= links keep working: they open the group their module now belongs to.
+const LEGACY_TABS: Record<string, TabKey> = { requisitions: 'returns', facilities: 'returns', repair: 'loss', unserviceable: 'loss' }
 
 // Tabs with a working history list. The rest are placeholders until their data is wired.
 const TABS: { key: TabKey; label: string; ready: boolean }[] = [
-  { key: 'returns', label: 'Returns', ready: true },
-  { key: 'facilities', label: 'Facilities and equipment', ready: true },
+  { key: 'returns', label: 'Returns & Requisitions', ready: true },
   { key: 'service', label: 'Service Workboard', ready: true },
-  { key: 'loss', label: 'Loss & Damage', ready: true },
-  { key: 'repair', label: 'Repair & Maintenance', ready: true },
-  { key: 'unserviceable', label: 'Unserviceable', ready: true },
+  { key: 'loss', label: 'Loss, Repair & Unserviceable', ready: true },
   { key: 'employees', label: 'Employees', ready: true },
-  { key: 'requisitions', label: 'Requisitions & Issuances', ready: true },
 ]
 
 type HistoryRow = { id: string; date: string | null; reference: string; detail: string; items?: string; person: string; personEmail?: string; status: string; service?: { title: string; team: string; claimedBy: string | null; closedAt: string | null }; actorName?: string; actorEmail?: string }
@@ -46,7 +53,6 @@ const unserviceableCount = (row: { condition: string | null; damagedQuantity: nu
   row.unserviceableQuantity || (row.condition === 'Unserviceable' ? row.damagedQuantity : 0)
 // One history line per facility item from the return check. Payment is handled by Finance, so no settlement status is shown.
 // Unserviceable items sort by what is left to do: To pay first, then Waived, then Paid.
-const writeOffRank: Record<string, number> = { 'To pay': 0, Waived: 1, Paid: 2, 'No decision': 3 }
 const writeOffStatus = (row: FacilityFinanceRow) => {
   if (row.writeOffDecision === 'WAIVED') return 'Waived'
   if (row.writeOffDecision !== 'CHARGED') return 'No decision'
@@ -55,13 +61,17 @@ const writeOffStatus = (row: FacilityFinanceRow) => {
 // What a unit's repair ended with: repaired and back in stock, written off (waived or to pay), or still being repaired.
 const repairStatusOf = (record: RepairHistoryRecord) => {
   if (record.outcome === 'Repaired') return 'Repaired'
-  if (record.outcome === 'Written Off') return record.writeOffDecision === 'CHARGED' ? 'To pay' : 'Waived'
+  if (record.outcome === 'Written Off') {
+    if (record.writeOffDecision !== 'CHARGED') return 'Waived'
+    return record.settlementStatus === 'Paid' ? 'Paid' : 'To pay'
+  }
   return 'In repair'
 }
 const repairTone = (status: string) => ({
   Repaired: 'bg-emerald-50 text-emerald-700',
   Done: 'bg-emerald-50 text-emerald-700',
   'To pay': 'bg-rose-50 text-rose-700',
+  Paid: 'bg-emerald-50 text-emerald-700',
   Waived: 'bg-slate-100 text-slate-700',
   'In repair': 'bg-amber-50 text-amber-800',
   'Needs Repair': 'bg-amber-50 text-amber-800',
@@ -70,6 +80,7 @@ const writeOffTone = (status: string) => status === 'To pay'
   ? 'bg-rose-50 text-rose-700'
   : status === 'Paid' ? 'bg-emerald-50 text-emerald-700'
     : status === 'Waived' ? 'bg-slate-100 text-slate-700' : 'bg-amber-50 text-amber-700'
+const lossGroupTone = (status: string) => ['To pay', 'Paid', 'Waived', 'No decision'].includes(status) ? writeOffTone(status) : repairTone(status)
 const facilityHistoryRow = (row: FacilityFinanceRow, prefix: string, index: number, detail: string, status: string): HistoryRow => ({
   id: `${prefix}-${row.requestId}-${row.itemCode}-${index}`,
   date: row.returnedAt,
@@ -80,7 +91,7 @@ const facilityHistoryRow = (row: FacilityFinanceRow, prefix: string, index: numb
   status,
 })
 
-async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
+async function loadSource(tab: SourceKey): Promise<HistoryRow[]> {
   if (tab === 'returns') {
     // Item returns from Return Issuance, plus facility items brought back from facility requests.
     const [records, facilityRows] = await Promise.all([
@@ -108,7 +119,7 @@ async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
       ))
     return [...itemReturns, ...facilityReturns]
   }
-  if (tab === 'facilities') {
+  if (false) {
     // Finished facility requests, plus borrowed equipment that has been returned or closed.
     const [facilityRequests, borrowings] = await Promise.all([
       listGsoRequests({ type: 'FACILITY_USE' }),
@@ -232,6 +243,10 @@ async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
   return []
 }
 
+async function loadRows(tab: TabKey): Promise<HistoryRow[]> {
+  return (await Promise.all(TAB_SOURCES[tab].map(loadSource))).flat()
+}
+
 const dateText = (value: string | null) => {
   if (!value) return '—'
   const date = new Date(value)
@@ -292,8 +307,9 @@ function historyReportParts({ title, note, generatedAt, headers, rows }: { title
 
 export default function GsoHistory() {
   const [tab, setTab] = useState<TabKey>(() => {
-    const requested = new URLSearchParams(window.location.search).get('tab') as TabKey | null
-    return TABS.some((item) => item.key === requested) ? requested as TabKey : 'returns'
+    const requested = new URLSearchParams(window.location.search).get('tab') ?? ''
+    const key = (LEGACY_TABS[requested] ?? requested) as TabKey
+    return TABS.some((item) => item.key === key) ? key : 'returns'
   })
   const [rows, setRows] = useState<HistoryRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -344,7 +360,6 @@ export default function GsoHistory() {
       if (sortKey === 'reference') return a.reference.localeCompare(b.reference, undefined, { numeric: true })
       if (sortKey === 'person') return a.person.localeCompare(b.person)
       if (sortKey === 'oldest') return byNewest(b, a)
-      if (tab === 'unserviceable') return (writeOffRank[a.status] ?? 9) - (writeOffRank[b.status] ?? 9) || byNewest(a, b)
       return byNewest(a, b)
     })
     return sorted.filter((row) => (!query || `${row.reference} ${row.detail} ${row.person} ${row.status}`.toLowerCase().includes(query))
@@ -355,8 +370,8 @@ export default function GsoHistory() {
   const reportName = current.label.replace(/[^a-z0-9]+/gi, '_')
   const today = new Date().toISOString().slice(0, 10)
   // Same columns and order as the table on screen: Person, Date, Reference, Details, then the tab's extra column, then Status.
-  const reportHeaders = ['Person', 'Date', 'Reference', 'Details', ...(tab === 'facilities' ? ['Items borrowed'] : []), ...(tab === 'employees' ? ['Reviewed by'] : []), 'Status']
-  const reportCells = (row: HistoryRow) => [personName(row), dateText(row.date), row.reference, row.detail, ...(tab === 'facilities' ? [row.items || 'No items listed'] : []), ...(tab === 'employees' ? [reviewerName(row)] : []), row.status]
+  const reportHeaders = ['Person', 'Date', 'Reference', 'Details', ...(false ? ['Items borrowed'] : []), ...(tab === 'employees' ? ['Reviewed by'] : []), 'Status']
+  const reportCells = (row: HistoryRow) => [personName(row), dateText(row.date), row.reference, row.detail, ...(false ? [row.items || 'No items listed'] : []), ...(tab === 'employees' ? [reviewerName(row)] : []), row.status]
   const reportTitle = `${current.label} History`
   const reportNote = dateFilter ? `Filtered by date: ${dateFilter}` : 'Includes the records matching the selected filters'
   const reportGeneratedAt = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())
@@ -454,7 +469,7 @@ export default function GsoHistory() {
 
         {error && <p role="alert" className="px-5 py-4 text-xs font-bold text-rose-700">{error}</p>}
         {!error && !loading && visible.length === 0 && <p className="px-5 py-12 text-center text-xs font-semibold text-slate-500">{rows.length === 0
-  ? tab === 'facilities'
+  ? false
     ? 'No borrowed equipment or facility requests yet. They will show up here once they are returned or completed.'
     : `No ${current.label.toLowerCase()} history yet.`
   : 'No records match these filters.'}</p>}
@@ -466,7 +481,7 @@ export default function GsoHistory() {
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Date</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Reference</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Details</th>
-                {tab === 'facilities' && <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Items borrowed</th>}
+                {false && <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Items borrowed</th>}
                 {tab === 'employees' && <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Reviewed by</th>}
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Status</th>
               </tr>
@@ -491,9 +506,9 @@ export default function GsoHistory() {
                     </div>
                   </td>
                   : <td className="max-w-md px-5 py-4 text-slate-600">{row.detail}</td>}
-                {tab === 'facilities' && <td className="max-w-md px-5 py-4 text-slate-700">{row.items || <span className="text-slate-400">No items listed</span>}</td>}
+                {false && <td className="max-w-md px-5 py-4 text-slate-700">{row.items || <span className="text-slate-400">No items listed</span>}</td>}
                 {tab === 'employees' && <td className="px-5 py-4 font-semibold text-slate-800">{reviewerName(row)}</td>}
-                <td className="px-5 py-4 sm:px-6"><span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${tab === 'unserviceable' || tab === 'loss' ? writeOffTone(row.status) : tab === 'repair' ? repairTone(row.status) : tab === 'service' ? serviceStatusTone(row.status) : tab === 'employees' ? (row.status === 'Verified' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700') : 'bg-slate-100 text-slate-700'}`}>{row.status}</span></td>
+                <td className="px-5 py-4 sm:px-6"><span className={`inline-flex rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${tab === 'loss' ? lossGroupTone(row.status) : tab === 'service' ? serviceStatusTone(row.status) : tab === 'employees' ? (row.status === 'Verified' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700') : 'bg-slate-100 text-slate-700'}`}>{row.status}</span></td>
               </tr>)}
             </tbody>
           </table>

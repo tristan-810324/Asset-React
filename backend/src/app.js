@@ -16,6 +16,7 @@ const notificationsRoutes = require('./modules/notifications/notifications.route
 const signaturesRoutes = require('./modules/signatures/signatures.routes');
 const facilityOptionsRoutes = require('./modules/facilities/facilities.routes');
 const lossDamageRoutes = require('./modules/loss-damage/loss-damage.routes');
+const chargesRoutes = require('./modules/charges/charges.routes');
 const errorMiddleware = require('./middleware/error.middleware');
 const expirySweepMiddleware = require('./middleware/expiry-sweep.middleware');
 
@@ -69,6 +70,7 @@ app.use('/api/v1/notifications', notificationsRoutes);
 app.use('/api/v1/signatures', signaturesRoutes);
 app.use('/api/v1/facility-options', facilityOptionsRoutes);
 app.use('/api/v1/loss-damage', lossDamageRoutes.router);
+app.use('/api/v1/charges', chargesRoutes);
 app.use(errorMiddleware);
 
 module.exports = app;

@@ -65,7 +65,7 @@ const confirmScannedTagReturn = asyncHandler(async (req, res) => {
 });
 
 const completeTaggedAssetRepair = asyncHandler(async (req, res) => {
-  const result = await returnsService.completeTaggedAssetRepair(req.params.tagCode, req.user);
+  const result = await returnsService.completeTaggedAssetRepair(req.params.tagCode, req.user, req.body);
   res.json({ success: true, data: { result } });
 });
 

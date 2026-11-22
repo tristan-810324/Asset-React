@@ -19,15 +19,14 @@ npm run db:migrate
 | `004_requests_and_audit.sql` | Request Center (service requests, assets, history), Job / Service work orders, and the audit log |
 | `005_issuances_assets_and_returns.sql` | Issuing and borrowing, barcode tags per unit, label reprints, returns, and return codes |
 | `006_purchase_requisition_workflow.sql` | Requisition routing, stock reservations, deliveries, and the approval policy history |
-| `007_platform_support.sql` | Notifications, GSO Head signatures, Facility Use venues with seed, Loss / Damage decisions and custody, and facility damage and repair columns |
+| `007_platform_support.sql` | Everything from the old 008 to 016 files, folded in on 2026-11-22. Notifications, GSO Head signatures, Facility Use venues with seed, Loss / Damage decisions and custody, and facility damage and repair columns |
 
 ## Which case you are in
 
 - **New, empty database:** `npm run db:migrate` applies all migrations.
 - **Existing database that ran the old 29 files (for example Neon):** `npm run db:migrate` records 001 to 007 as
   already included and applies nothing else. If the database has only part of the old history, the runner stops
-  and changes nothing. Apply the missing old files from `migrations_archive/pre-consolidation-2026-11-15` in order,
-  then run it again.
+  and changes nothing. Restore the missing old files from git history in order, then run it again.
 - **A restored copy with tables but no `schema_migrations` ledger:** the runner stops and changes nothing. If the
   copy already has the whole schema, run:
 
@@ -37,16 +36,13 @@ npm run db:migrate
 
 ## Adding a change
 
-The next forward migration is `008_<feature>.sql`. Add it to `migrations/` and keep the matching table definitions
+The next forward migration is `008_<feature>.sql`. Files 008 to 016 are archived, so new numbers start after the archived names. Add it to `migrations/` and keep the matching table definitions
 in the consolidated files up to date in the same change, so a fresh install and an upgraded database stay the same.
 Do not rename, edit, or delete a file that has already been applied.
 
 ## Archive
 
-[migrations_archive/pre-consolidation-2026-11-15](./migrations_archive/pre-consolidation-2026-11-15/) keeps the 29
-files that were used before consolidation, unchanged. [migrations_archive/folded-2026-11-17](./migrations_archive/folded-2026-11-17/)
-keeps the former 008 to 013 files that were folded into 007 on 2026-11-17, so ledgers that recorded them still work. The pre-consolidation README lists where each one went, and each one-time data
-step that was not carried over, with the reason.
+Files 008 to 016 were folded into 007 and their names are listed in [scripts/migrate.js](../scripts/migrate.js), so ledgers that recorded them still work. The old files are not kept in the repository.
 
 ## Seed data
 

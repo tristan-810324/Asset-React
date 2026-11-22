@@ -20,7 +20,6 @@ function Icon({ name, className = 'h-5 w-5' }: { name: IconName; className?: str
 }
 
 const services: Array<{ type: RequestType; title: string; detail: string; icon: IconName; action?: string }> = [
-  { type: 'FACILITY_USE', title: 'Facilities and equipment request', detail: 'Reserve a campus venue and borrow the equipment you need. Return borrowed items after the event.', icon: 'building' },
   { type: 'JOB_REQUEST', title: 'Job / Service Request', detail: 'Describe the work, location, and target date.', icon: 'wrench' },
   { type: 'LOSS_DAMAGE_REPORT', title: 'Loss / Damage Report', detail: 'Report lost or damaged school property.', icon: 'warning' },
 ]
@@ -154,9 +153,9 @@ function RequestCenterContent() {
       <section className="mt-6" aria-labelledby="services-heading">
         <p className={eyebrowClass}>School services</p>
         <h2 id="services-heading" className="mt-1 text-lg font-black tracking-tight text-slate-900">Other requests</h2>
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:gap-4">
           {services.map((card) => (
-            <a key={card.type} href={newRequestHref(card.type)} onClick={(event) => openConfirm(event, { title: card.title, detail: card.detail, href: newRequestHref(card.type), icon: card.icon })} className={`${cardClass} last:col-span-2 xl:last:col-span-1`}>
+            <a key={card.type} href={newRequestHref(card.type)} onClick={(event) => openConfirm(event, { title: card.title, detail: card.detail, href: newRequestHref(card.type), icon: card.icon })} className={cardClass}>
               <span className={cardIconClass}><Icon name={card.icon} /></span>
               <span className="mt-2 text-sm font-black leading-tight tracking-tight text-slate-900 sm:mt-3 sm:text-base">{card.title}</span>
               <span className="mt-1.5 hidden flex-1 text-xs font-medium leading-relaxed text-slate-500 lg:block">{card.detail}</span>

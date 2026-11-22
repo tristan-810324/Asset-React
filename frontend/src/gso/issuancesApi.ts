@@ -611,10 +611,10 @@ export async function reprintUnitLabel(tagCode: string, reason: string) {
   return result.label
 }
 
-export async function completeTaggedAssetRepair(tagCode: string) {
+export async function completeTaggedAssetRepair(tagCode: string, repairedByName: string) {
   const result = await apiRequest<{ result: { tagCode: string; condition: string; location: string } }>(
     `/issuances/tags/${encodeURIComponent(normalizeAssetTagRequestCode(tagCode))}/repair-complete`,
-    { method: 'PATCH', body: JSON.stringify({}) },
+    { method: 'PATCH', body: JSON.stringify({ repairedByName }) },
   )
   return result.result
 }

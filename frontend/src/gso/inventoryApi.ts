@@ -37,6 +37,10 @@ export type InventoryAssetTag = {
   condition: string
   lifecycleStatus: string
   custodyStatus: string
+  disposalReason?: string | null
+  lastInspectedAt?: string | null
+  lastInspectedBy?: string | null
+  repairedByName?: string | null
 }
 
 export type InventoryReceiptRecord = {
@@ -90,6 +94,7 @@ export type InventoryCurrentBorrower = {
 
 export type InventoryItemRecord = {
   id: string
+  conditionAfterReturn?: string | null
   itemCode: string
   category: string
   itemName: string

@@ -726,13 +726,18 @@ async function sendOverdueReminders() {
   return batches.length;
 }
 
-async function completeTaggedAssetRepair(tagCodeValue, user) {
+async function completeTaggedAssetRepair(tagCodeValue, user, input = {}) {
   if (typeof tagCodeValue !== 'string' || !/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/i.test(tagCodeValue.trim())) {
     throw httpError(400, 'I-scan ang unique barcode ng physical unit bago markahang repaired.');
+  }
+  const repairedByName = typeof input?.repairedByName === 'string' ? input.repairedByName.trim() : '';
+  if (!repairedByName || repairedByName.length > 200) {
+    throw httpError(400, 'Ilagay kung sino ang nag-repair ng unit.');
   }
   return returnsRepository.completeTaggedAssetRepair({
     tagCode: tagCodeValue.trim().toUpperCase(),
     changedByUserId: user.id,
+    repairedByName,
   });
 }
 

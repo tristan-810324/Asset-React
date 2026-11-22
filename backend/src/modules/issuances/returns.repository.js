@@ -801,7 +801,7 @@ async function confirmScannedTagReturn({
   }
 }
 
-async function completeTaggedAssetRepair({ tagCode, changedByUserId }) {
+async function completeTaggedAssetRepair({ tagCode, changedByUserId, repairedByName }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -830,9 +830,10 @@ async function completeTaggedAssetRepair({ tagCode, changedByUserId }) {
               last_inspected_at = NOW(),
               last_inspected_by_user_id = $2,
               last_inspection_note = $3,
+              repaired_by_name = $4,
               updated_at = NOW()
         WHERE id = $1`,
-      [tag.id, changedByUserId, repairCompletionReason],
+      [tag.id, changedByUserId, repairCompletionReason, repairedByName],
     );
     const inventoryStatus = await refreshInventoryStatus(client, tag.item_id);
     await writeReturnAuditLog(client, {

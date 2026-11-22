@@ -70,7 +70,9 @@ type InventoryItem = {
   acquisitionCost: string
   currentValue: string
   condition: string
+  conditionAfterReturn?: string | null
   conditionTone: string
+  conditionAfterReturnTone?: string
   quantity: string
   availableQuantity: string
   // Units in To Be Repaired that have not had their check yet.
@@ -244,6 +246,19 @@ function calculateAcquisitionCost(quantity: string | number, unitCost: string | 
 function lastDeliveryUnitCost(item: InventoryItem) {
   const lastPricedReceipt = item.receiptHistory.find((receipt) => Number(receipt.unitCost) > 0)
   return lastPricedReceipt ? Number(lastPricedReceipt.unitCost).toFixed(2) : ''
+}
+
+// What happened to one unit in plain words: written off, lost, to be repaired, unserviceable, or its condition.
+function unitStateFor(tag: InventoryAssetTag): { label: string; detail: string; tone: string } {
+  const reason = tag.disposalReason ? `Reason: ${tag.disposalReason}` : ''
+  if (tag.lifecycleStatus === 'Disposed' && tag.location === 'Written Off') {
+    return { label: 'Written off', detail: reason || 'Removed from stock after repair was declined.', tone: 'bg-rose-100 text-rose-800' }
+  }
+  if (tag.lifecycleStatus === 'Disposed' && tag.location === 'Lost') return { label: 'Lost', detail: reason, tone: 'bg-rose-100 text-rose-800' }
+  if (tag.lifecycleStatus === 'Disposed') return { label: 'Disposed', detail: reason, tone: 'bg-slate-200 text-slate-700' }
+  if (tag.location === 'To Be Repaired') return { label: 'To be repaired', detail: 'Waiting for the GSO repair check.', tone: 'bg-amber-100 text-amber-800' }
+  if (tag.condition === 'Unserviceable') return { label: 'Unserviceable', detail: reason, tone: toneForCondition(tag.condition) }
+  return { label: tag.condition, detail: '', tone: toneForCondition(tag.condition) }
 }
 
 function toneForCondition(condition: string) {
@@ -579,52 +594,10 @@ function formatCreatedAt(value: string) {
   return `${dateText} · ${timeText}`
 }
 
-const changeFieldLabels: Record<string, string> = {
-  itemCode: 'Asset Code',
-  category: 'Category',
-  itemName: 'Item Name',
-  description: 'Item Description',
-  dateAcquired: 'Date Acquired',
-  timeAcquired: 'Time Acquired',
-  unitCost: 'Unit Cost',
-  acquisitionCost: 'Total Cost',
-  currentValue: 'Current Value',
-  quantity: 'Quantity',
-  unitOfMeasure: 'Unit',
-  condition: 'Condition',
-  trackingMode: 'Tracking Mode',
-  employeeCode: 'Employee Code',
-  firstName: 'First Name',
-  lastName: 'Last Name',
-  department: 'Department',
-  position: 'Position',
-  email: 'Email',
-  status: 'Employment Status',
-}
 
 function formatChangeValue(value: unknown) {
   if (value === null || value === undefined || value === '') return 'N/A'
   return typeof value === 'object' ? JSON.stringify(value) : String(value)
-}
-
-function getChangeDetails(change: InventoryChangeRecord) {
-  if (change.action === 'issued') {
-    const condition = change.newValues.condition
-    return condition === undefined ? [] : [`Condition before issuance: ${formatChangeValue(condition)}`]
-  }
-  if (change.action === 'returned') {
-    const condition = change.newValues.condition
-    return condition === undefined ? [] : [`Condition after return: ${formatChangeValue(condition)}`]
-  }
-
-  const fields = new Set([...Object.keys(change.oldValues), ...Object.keys(change.newValues)])
-  return [...fields]
-    .filter((field) => !['dateAcquired', 'timeAcquired'].includes(field))
-    .filter((field) => JSON.stringify(change.oldValues[field]) !== JSON.stringify(change.newValues[field]))
-    .map((field) => {
-      const label = changeFieldLabels[field] || field.replace(/([A-Z])/g, ' $1')
-      return `${label}: ${formatChangeValue(change.oldValues[field])} -> ${formatChangeValue(change.newValues[field])}`
-    })
 }
 
 function buildItemConditionHistory(changeHistory: InventoryChangeRecord[]): ItemHistoryEntry[] {
@@ -668,6 +641,20 @@ function buildItemConditionHistory(changeHistory: InventoryChangeRecord[]): Item
       return
     }
 
+    // A unit written off from Repair & Maintenance: its condition becomes Unserviceable and it leaves stock.
+    if (change.action === 'updated' && change.newValues.repairOutcome === 'Written Off') {
+      history.push({
+        previous: history[history.length - 1]?.next || 'Before write-off',
+        next: 'Unserviceable',
+        changedAt: formatCreatedAt(change.changedAt),
+        by: change.changedBy || 'GSO Staff',
+        actorLabel: 'Written off by GSO staff',
+        note: `Written off and removed from stock. ${change.reason}`,
+        tone: toneForCondition('Unserviceable'),
+      })
+      return
+    }
+
     if (change.action === 'updated'
       && JSON.stringify(change.oldValues.condition) !== JSON.stringify(change.newValues.condition)
       && typeof nextCondition === 'string'
@@ -694,7 +681,11 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
       ? 'bg-blue-50 text-blue-700'
       : record.status === 'Reserved' || record.status === 'Pending Approval'
         ? 'bg-violet-50 text-violet-700'
-        : 'bg-amber-50 text-amber-700'
+        : record.status === 'Unserviceable'
+          ? 'bg-rose-50 text-rose-700'
+          : record.status === 'To Be Repaired'
+            ? 'bg-amber-50 text-amber-700'
+            : 'bg-amber-50 text-amber-700'
 
   const changeHistory = record.changeHistory || []
 
@@ -722,6 +713,7 @@ function mapInventoryRecord(record: InventoryItemRecord): InventoryItem {
     acquisitionCost: formatMoney(record.acquisitionCost),
     currentValue: formatMoney(record.currentValue, '—'),
     condition: record.condition,
+    conditionAfterReturn: record.conditionAfterReturn ?? null,
     conditionTone,
     quantity: String(record.quantity),
     availableQuantity: String(record.availableQuantity ?? record.quantity),
@@ -2730,11 +2722,17 @@ export default function ItemsMasterData() {
                           <span className="mt-1 block truncate text-[0.68rem] font-bold text-blue-700">{item.name}</span>
                         )}
                         <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{item.code}</span>
-                        <span className="mt-1 inline-flex rounded-md bg-slate-100 px-1.5 py-0.5 text-[0.58rem] font-bold text-slate-500">
-                          {item.category}
-                        </span>
-                        <span className={`mt-1 inline-flex rounded-md px-1.5 py-0.5 text-[0.58rem] font-extrabold ${item.trackingMode === 'individual' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
-                          {inventoryTypeLabel(item.trackingMode, item.issueBehavior)}
+                        <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[0.6rem] font-extrabold ${item.statusTone}`}>
+                            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+                            {item.status}
+                          </span>
+                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-[0.6rem] font-bold text-slate-600">
+                            {item.category}
+                          </span>
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[0.6rem] font-bold ${item.trackingMode === 'individual' ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {inventoryTypeLabel(item.trackingMode, item.issueBehavior)}
+                          </span>
                         </span>
                       </span>
                     </div>
@@ -2871,7 +2869,10 @@ export default function ItemsMasterData() {
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + selectedItem.conditionTone}>
-                      Condition before issuance: {selectedItem.condition}
+                      Condition before issuance: {selectedItem.conditionAfterReturn || selectedItem.condition}
+                    </span>
+                    <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + (selectedItem.conditionAfterReturn ? toneForCondition(selectedItem.conditionAfterReturn) : 'bg-slate-100 text-slate-500')}>
+                      Condition after return: {selectedItem.conditionAfterReturn || 'Not returned yet'}
                     </span>
                     <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + selectedItem.statusTone}>
                       Status: {selectedItem.status}
@@ -2885,16 +2886,22 @@ export default function ItemsMasterData() {
                     <p className="mt-1 text-sm text-slate-600">Each barcode keeps its own current condition and location, including units settled through a Loss / Damage case.</p>
                   </div>
                   <ul className="inventory-list-scrollbar max-h-64 space-y-2 overflow-y-auto">
-                    {selectedItem.assetTags.map((tag) => <li key={tag.tagCode} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                      <div className="min-w-0">
-                        <p className="text-xs font-extrabold text-slate-900">{tag.tagCode} <span className="font-semibold text-slate-500">· Item {tag.unitNumber}</span></p>
-                        <p className="mt-1 text-[0.68rem] text-slate-600">{tag.location || 'Location not recorded'}{tag.serialNumber ? ` · Serial ${tag.serialNumber}` : ''}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className={`rounded-full px-2.5 py-1 text-[0.6rem] font-extrabold ${toneForCondition(tag.condition)}`}>{tag.condition}</span>
-                        <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[0.6rem] font-extrabold text-slate-700">{tag.lifecycleStatus === 'Disposed' ? 'Disposed' : tag.custodyStatus}</span>
-                      </div>
-                    </li>)}
+                    {selectedItem.assetTags.map((tag) => {
+                      const state = unitStateFor(tag)
+                      return <li key={tag.tagCode} className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-extrabold text-slate-900">{tag.tagCode} <span className="font-semibold text-slate-500">· Item {tag.unitNumber}</span></p>
+                          <p className="mt-1 text-[0.68rem] text-slate-600">{tag.location || 'Location not recorded'}{tag.serialNumber ? ` · Serial ${tag.serialNumber}` : ''}</p>
+                          {state.detail && <p className="mt-0.5 text-[0.68rem] font-semibold text-slate-700">{state.detail}</p>}
+                          {tag.repairedByName && <p className="mt-0.5 text-[0.68rem] font-semibold text-emerald-800">Repaired by {tag.repairedByName}</p>}
+                          {tag.lastInspectedBy && <p className="mt-0.5 text-[0.68rem] font-semibold text-blue-800">Last checked by {tag.lastInspectedBy}{tag.lastInspectedAt ? ` · ${formatCreatedAt(tag.lastInspectedAt)}` : ''}</p>}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={`rounded-full px-2.5 py-1 text-[0.6rem] font-extrabold ${state.tone}`}>{state.label}</span>
+                          <span className="rounded-full bg-slate-200 px-2.5 py-1 text-[0.6rem] font-extrabold text-slate-700">{tag.lifecycleStatus === 'Disposed' ? 'Disposed' : tag.custodyStatus}</span>
+                        </div>
+                      </li>
+                    })}
                   </ul>
                 </section>}
 
@@ -2971,14 +2978,6 @@ export default function ItemsMasterData() {
             <div className="flex shrink-0 flex-wrap gap-2 border-b-2 border-slate-300 bg-white px-5 py-3.5 sm:px-8">
               <button
                 type="button"
-                aria-pressed={itemHistoryTab === 'changes'}
-                onClick={() => setItemHistoryTab('changes')}
-                className={`rounded-xl px-4 py-3 text-base font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${itemHistoryTab === 'changes' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50'}`}
-              >
-                Item Change History
-              </button>
-              <button
-                type="button"
                 aria-pressed={itemHistoryTab === 'condition'}
                 onClick={() => setItemHistoryTab('condition')}
                 className={`rounded-xl px-4 py-3 text-base font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${itemHistoryTab === 'condition' ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/20' : 'border-2 border-slate-300 bg-white text-slate-800 hover:bg-slate-50'}`}
@@ -2988,7 +2987,7 @@ export default function ItemsMasterData() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
-              {itemHistoryTab === 'condition' ? (
+              {(
                 selectedItem.history.length > 0 ? (
                   <div className="space-y-3">
                     {selectedItem.history.map((log, index) => (
@@ -3011,35 +3010,6 @@ export default function ItemsMasterData() {
                     No condition history recorded yet.
                   </p>
                 )
-              ) : selectedItem.changeHistory && selectedItem.changeHistory.length > 0 ? (
-                <div className="space-y-3">
-                  {[...selectedItem.changeHistory]
-                    .sort((left, right) => new Date(left.changedAt).getTime() - new Date(right.changedAt).getTime())
-                    .map((change, index) => (
-                      <article key={change.changedAt + '-' + index} className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-                        <div className="min-w-0">
-                          <p className="text-base font-semibold leading-relaxed text-slate-950">{change.action === 'updated' ? 'Item updated' : change.reason}</p>
-                          {change.action === 'updated' && change.reason && (
-                            <p className="mt-3 text-base leading-relaxed text-slate-800">Reason: {change.reason}</p>
-                          )}
-                          {getChangeDetails(change).length > 0 && (
-                            <ul className="mt-3 space-y-1 text-base leading-relaxed text-slate-800">
-                              {getChangeDetails(change).map((detail) => (
-                                <li key={detail}>{detail}</li>
-                              ))}
-                            </ul>
-                          )}
-                          <p className="mt-3 text-sm font-bold text-slate-700">
-                            {change.action === 'updated' ? 'Edited by' : 'By'} {change.changedBy || 'Unknown user'} · {formatCreatedAt(change.changedAt)}
-                          </p>
-                        </div>
-                      </article>
-                    ))}
-                </div>
-              ) : (
-                <p className="grid min-h-40 place-items-center rounded-2xl border-2 border-dashed border-slate-400 bg-white px-5 py-10 text-center text-base font-semibold text-slate-700">
-                  No item changes recorded yet.
-                </p>
               )}
             </div>
           </section>

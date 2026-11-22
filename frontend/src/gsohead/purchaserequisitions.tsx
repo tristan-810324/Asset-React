@@ -56,14 +56,28 @@ function DecisionCard({ line }: { line: PurchaseRequisitionLine }) {
     <p className={`mt-2 rounded-lg border px-2.5 py-2 text-[0.66rem] font-semibold leading-relaxed ${ROUTES[approval.route].tone}`}><span className="font-extrabold">Why you: </span>{approval.reason}</p>
     <QuantityChips line={line} />
     {reserved.length > 0 && <p className="mt-1.5 text-[0.6rem] font-semibold text-slate-500">Held from {reserved.map((allocation) => `${allocation.itemCode} (${allocation.quantity} ${allocation.unitOfMeasure})`).join(', ')}</p>}
-    {line.specifications && <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[0.65rem] leading-relaxed text-slate-600">{line.specifications}</p>}
+    <div className="mt-3 rounded-xl border-2 border-blue-400 bg-blue-50 px-4 py-3 shadow-sm">
+      <p className="text-[0.7rem] font-extrabold uppercase tracking-wide text-blue-800">Specs the requester needs</p>
+      <p className="mt-1 whitespace-pre-wrap text-base font-black leading-snug text-slate-900">{line.specifications || 'No specs written by the requester.'}</p>
+    </div>
   </article>
 }
+
+// Common reasons for declining a whole requisition. The Head can pick one or type a different reason.
+const OTHER_REASON = '__other__'
+const DECLINE_REASONS = [
+  'No budget available for this purchase',
+  'Item is not needed for the department right now',
+  'A similar item is already available elsewhere',
+  'Specifications need to be revised by the requester',
+  'Duplicate of an existing request',
+]
 
 function DecisionPanel({ request, onSaved }: { request: ServiceRequest; onSaved: (message: string, updated: ServiceRequest) => void }) {
   const items = linesOf(request)
   const [decision, setDecision] = useState<'APPROVE' | 'DECLINE' | ''>('')
   const [note, setNote] = useState('')
+  const [reasonChoice, setReasonChoice] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const shortageLines = items.filter((line) => line.financeQuantity > 0)
@@ -111,6 +125,14 @@ function DecisionPanel({ request, onSaved }: { request: ServiceRequest; onSaved:
         <button type="button" role="radio" aria-checked={decision === 'APPROVE'} disabled={busy} onClick={() => setDecision('APPROVE')} className={`rounded-xl border px-3 py-2.5 text-xs font-extrabold transition ${decision === 'APPROVE' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-emerald-300 hover:text-emerald-700'}`}>Approve</button>
         <button type="button" role="radio" aria-checked={decision === 'DECLINE'} disabled={busy} onClick={() => setDecision('DECLINE')} className={`rounded-xl border px-3 py-2.5 text-xs font-extrabold transition ${decision === 'DECLINE' ? 'border-rose-600 bg-rose-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-rose-300 hover:text-rose-700'}`}>Decline</button>
       </div>
+      {decision === 'DECLINE' && <label className="mt-3 block">
+        <span className="mb-1 block text-[0.6rem] font-extrabold uppercase tracking-wide text-rose-700">Common reason</span>
+        <select value={reasonChoice} disabled={busy} onChange={(event) => { const value = event.target.value; setReasonChoice(value); setNote(value === OTHER_REASON ? '' : value) }} className="h-10 w-full rounded-xl border border-rose-200 bg-white px-3 text-xs font-semibold outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100">
+          <option value="">Choose a reason…</option>
+          {DECLINE_REASONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+          <option value={OTHER_REASON}>Other (type the reason below)</option>
+        </select>
+      </label>}
       {decision === 'DECLINE' && <label className="mt-3 block">
         <span className="mb-1 block text-[0.6rem] font-extrabold uppercase tracking-wide text-rose-700">Reason for the requester</span>
         <textarea autoFocus value={note} onChange={(event) => setNote(event.target.value)} maxLength={2000} className="min-h-20 w-full resize-y rounded-xl border border-rose-200 bg-white p-3 text-xs font-semibold outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100" placeholder="Why are you declining?" />

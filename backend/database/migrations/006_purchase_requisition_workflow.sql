@@ -1,4 +1,4 @@
--- Purchase requisitions: line routing, stock reservations, deliveries, and the saved item approval policy history.
+-- Purchase requisitions: line routing, stock reservations, deliveries, and the saved item approval policy history.-- Purchase requisitions: line routing, stock reservations, deliveries, and the saved item approval policy history.
 -- Consolidated from the pre-consolidation migrations (archived in migrations_archive/pre-consolidation-2026-11-15).
 -- Reference data is included. One-time data conversions are not, because a new database has no rows to convert.
 BEGIN;
@@ -161,3 +161,4 @@ ALTER TABLE ONLY public.purchase_requisition_lines
     ADD CONSTRAINT purchase_requisition_lines_request_id_fkey FOREIGN KEY (request_id) REFERENCES public.service_requests(id) ON DELETE RESTRICT;
 
 COMMIT;
+

@@ -77,12 +77,18 @@ function addToInventoryHref(item: ItemToBuy) {
 function FinanceLines({ request }: { request: ServiceRequest }) {
   const lines = (request.purchaseLines || []).filter((line) => Number(line.financeQuantity) > 0)
   return <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100 bg-slate-50/70">
-    {lines.map((line) => <li key={line.id} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
-      <div className="min-w-0">
-        <p className="truncate text-xs font-black text-slate-900">{line.itemName}</p>
-        <p className="text-[0.62rem] text-slate-500">{line.category}</p>
+    {lines.map((line) => <li key={line.id} className="px-3.5 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-xs font-black text-slate-900">{line.itemName}</p>
+          <p className="text-[0.62rem] text-slate-500">{line.category}</p>
+        </div>
+        <p className="shrink-0 text-sm font-black text-slate-900">{line.financeQuantity} <span className="text-xs font-bold text-slate-500">to buy</span></p>
       </div>
-      <p className="shrink-0 text-sm font-black text-slate-900">{line.financeQuantity} <span className="text-xs font-bold text-slate-500">to buy</span></p>
+      <div className="mt-2 rounded-xl border-2 border-blue-400 bg-blue-50 px-3 py-2 shadow-sm">
+        <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-800">Specs the requester needs</p>
+        <p className="mt-0.5 whitespace-pre-wrap text-sm font-black leading-snug text-slate-900">{line.specifications || 'No specs written by the requester.'}</p>
+      </div>
     </li>)}
   </ul>
 }
