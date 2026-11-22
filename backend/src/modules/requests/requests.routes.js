@@ -37,8 +37,7 @@ router.get('/purchase-requisitions/items-to-buy', requireRole('GSO_STAFF'), requ
 router.get('/purchase-requisitions/issuance-queue', requireRole('GSO_STAFF'), requestsController.listStaffPurchaseRequisitions);
 router.patch('/purchase-requisitions/:id/staff-review', requireRole('GSO_STAFF'), requestsController.staffReviewPurchaseRequisition);
 router.get('/purchase-requisitions/awaiting-delivery', requireRole('GSO_STAFF'), requestsController.listAwaitingPurchaseDeliveries);
-router.post('/purchase-requisitions/deliveries', requireRole('GSO_STAFF'), requestsController.recordPurchaseDeliveries);
-router.post('/purchase-requisitions/:id/deliveries/:receiptId/undo', requireRole('GSO_STAFF'), requestsController.undoPurchaseDelivery);
+router.post('/purchase-requisitions/deliveries', requireRole('GSO_STAFF'), requestsController.recordPurchaseDeliveries);router.post('/purchase-requisitions/:id/deliveries/:receiptId/undo', requireRole('GSO_STAFF'), requestsController.undoPurchaseDelivery);
 router.get('/purchase-requisitions/:id/issuance-details', requireRole('GSO_STAFF'), requestsController.getStaffPurchaseRequisitionForIssuance);
 
 router.post('/facility-slips/print', requireRole('GSO_STAFF'), requestsController.recordFacilitySlipPrints);
