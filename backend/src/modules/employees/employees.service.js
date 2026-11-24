@@ -45,7 +45,7 @@ function emailChangeNoticeInBackground({ to, employeeName, newEmail, changedBy }
 
 function validateEmployeeCode(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 40) {
-    throw Object.assign(new Error('Hindi valid ang employee code na ie-edit.'), { status: 400 });
+    throw Object.assign(new Error('Invalid employee code to edit.'), { status: 400 });
   }
   return value.trim();
 }
@@ -76,7 +76,7 @@ async function listEmployeePositions() {
 async function resolveDepartment(employee) {
   const department = await departmentsRepository.getDepartmentByName(employee.department);
   if (!department) {
-    throw Object.assign(new Error('Pumili ng department mula sa Department Master Data.'), { status: 400 });
+    throw Object.assign(new Error('Choose a department from Department Master Data.'), { status: 400 });
   }
   return { ...employee, department: department.name };
 }
@@ -84,7 +84,7 @@ async function resolveDepartment(employee) {
 async function resolvePosition(employee) {
   const position = await employeesRepository.getEmployeePositionByName(employee.position);
   if (!position) {
-    throw Object.assign(new Error('Pumili ng position mula sa Position Master Data.'), { status: 400 });
+    throw Object.assign(new Error('Choose a position from Position Master Data.'), { status: 400 });
   }
   return { ...employee, position: position.name };
 }

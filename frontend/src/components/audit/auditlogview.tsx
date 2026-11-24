@@ -27,6 +27,7 @@ const flagOptions: Array<{ value: AuditLogFlag; label: string; hint: string; ton
   { value: 'RECORD_DELETED', label: 'Record deleted', hint: 'A record was removed from the system.', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
   { value: 'LABEL_REPRINT', label: 'Label reprinted', hint: 'The old barcode label was replaced with a new one.', tone: 'bg-violet-50 text-violet-700 ring-violet-200' },
   { value: 'FINANCE_PDF_REPRINT', label: 'Signed PDF reprinted', hint: 'A signed PDF already handed to Finance was printed again. The reason is recorded.', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
+  { value: 'ACCOUNT_EDITED', label: 'Account edited', hint: 'An account name or position was changed by IT Admin. The reason is recorded.', tone: 'bg-amber-50 text-amber-800 ring-amber-200' },
 ]
 
 const entityLabels: Record<AuditLogEntityType, string> = {
@@ -186,7 +187,7 @@ export default function AuditLogView({ frame, variant = 'table' }: { frame: (con
         setTotal(result.total)
         setFlaggedCount(result.flaggedLast30Days)
       } catch (error) {
-        if (active) setErrorMessage(error instanceof Error ? error.message : 'Hindi ma-load ang audit logs.')
+        if (active) setErrorMessage(error instanceof Error ? error.message : 'Could not load audit logs.')
       } finally {
         if (active) setIsLoading(false)
       }
@@ -252,7 +253,7 @@ export default function AuditLogView({ frame, variant = 'table' }: { frame: (con
 
       {flaggedCount > 0 && flag !== 'any' && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 sm:mt-5 sm:gap-3 sm:rounded-2xl sm:px-5 sm:py-4">
-          <p className="text-xs font-bold leading-relaxed text-amber-900"><span className="sm:hidden">{flaggedCount} need a look.</span><span className="hidden sm:inline">{flaggedCount} entr{flaggedCount === 1 ? 'y' : 'ies'} in the last 30 days were typed in, reported lost, undone, deleted, or reprinted. Check them first.</span></p>
+          <p className="text-xs font-bold leading-relaxed text-amber-900"><span className="sm:hidden">{flaggedCount} need a look.</span><span className="hidden sm:inline">{flaggedCount} entr{flaggedCount === 1 ? 'y' : 'ies'} in the last 30 days were typed in, reported lost, undone, deleted, reprinted, or edited. Check them first.</span></p>
           <button type="button" onClick={showRedFlags} className="rounded-lg bg-amber-500 px-3 py-1.5 text-[0.7rem] font-extrabold text-white hover:bg-amber-600 sm:px-3.5 sm:py-2 sm:text-xs">Show red flags</button>
         </div>
       )}

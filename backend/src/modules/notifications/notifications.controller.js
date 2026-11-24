@@ -20,7 +20,7 @@ const listMine = asyncHandler(async (req, res) => {
 });
 
 const markRead = asyncHandler(async (req, res) => {
-  if (!/^\d{1,20}$/.test(req.params.id)) throw Object.assign(new Error('Hindi valid ang notification ID.'), { status: 400 });
+  if (!/^\d{1,20}$/.test(req.params.id)) throw Object.assign(new Error('Invalid notification ID.'), { status: 400 });
   await repository.markRead(req.params.id, req.user);
   res.json({ success: true, data: { markedRead: true } });
 });

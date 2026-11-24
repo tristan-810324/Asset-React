@@ -98,7 +98,7 @@ export default function NotificationInbox({ eyebrow, description, variant = 'inb
         setError('')
       })
       .catch(() => {
-        if (active) setError('Hindi ma-load ang notifications. Subukan ulit sa ilang sandali.')
+        if (active) setError('Could not load notifications. Try again in a moment.')
       })
       .finally(() => {
         if (active) setLoading(false)

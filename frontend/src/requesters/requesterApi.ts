@@ -1,4 +1,5 @@
 import { apiRequest } from '../auth/authApi'
+import type { ServicePhoto } from '../components/servicePhotos'
 
 export type RequestType = 'BORROWING' | 'FACILITY_USE' | 'JOB_REQUEST' | 'PURCHASE_REQUISITION' | 'LOSS_DAMAGE_REPORT' | 'ISSUANCE_REQUEST'
 
@@ -77,6 +78,7 @@ export type ServiceWorkflow = {
   startedAt?: string | null
   completedAt?: string | null
   completionNote?: string | null
+  resolutionType?: string | null
   autoCloseAt?: string | null
   tasks?: ServiceWorkflowTask[]
 }
@@ -86,6 +88,8 @@ export type PurchaseRequisitionAllocation = {
   itemId: string
   itemCode: string
   inventoryName: string
+  // The unit's own specs in Item Master Data, shown to the GSO Head next to the requester's specs.
+  description?: string | null
   quantity: number
   fulfilledQuantity: number
   status: 'Reserved' | 'Fulfilled' | 'Released'
@@ -185,6 +189,8 @@ export type ServiceRequest = {
   labelsAllPrinted?: boolean
   /** Job / Service Request lifecycle fields supplied by the service workflow API. */
   serviceWorkflow?: ServiceWorkflow
+  /** Photos on a Job / Service Request. Only the single-request view includes them. */
+  photos?: ServicePhoto[]
   routeTeam?: ServiceRouteTeam
   serviceCategory?: string
   priority?: string

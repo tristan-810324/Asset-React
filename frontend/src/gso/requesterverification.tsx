@@ -28,9 +28,9 @@ export default function RequesterVerification() {
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | number | null>(null)
-  const [error, setError] = useState('')
+  const [, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [retryDecision, setRetryDecision] = useState<{ profile: RequesterIdentity; status: 'Verified' | 'Needs Correction' | 'Rejected' } | null>(null)
+  const [, setRetryDecision] = useState<{ profile: RequesterIdentity; status: 'Verified' | 'Needs Correction' | 'Rejected' } | null>(null)
   const [rejectingKey, setRejectingKey] = useState<string | null>(null)
   const [pictures, setPictures] = useState<Record<string, string>>({})
   const [masterDepartments, setMasterDepartments] = useState<string[]>([])
@@ -220,7 +220,6 @@ export default function RequesterVerification() {
           <label className="block"><span className="mb-1.5 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-500">Verification status</span><select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100">{statuses.map((status) => <option key={status} value={status}>{status === 'all' ? 'All statuses' : status}</option>)}</select></label>
         </div>
 
-        {error && <div role="alert" className="mx-4 mt-4 flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700 sm:mx-5 sm:flex-row sm:items-center sm:justify-between"><span>{error}</span><button type="button" onClick={() => retryDecision ? void decide(retryDecision.profile, retryDecision.status) : void loadProfiles()} disabled={loading || busyId !== null} className="shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-extrabold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60">{busyId !== null ? 'Retrying…' : retryDecision ? retryDecision.status === 'Verified' ? 'Retry approval' : 'Retry correction' : loading ? 'Checking connection…' : 'Retry connection'}</button></div>}
         {notice && <p role="status" className="mx-4 mt-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-800 sm:mx-5">{notice}</p>}
         {loading && <p className="p-8 text-center text-sm font-semibold text-slate-500">Loading requester profiles…</p>}
         {!loading && !filteredProfiles.length && (
@@ -276,7 +275,7 @@ export default function RequesterVerification() {
               {profile.status !== 'Verified' && <div className="w-full xl:max-w-xs">
                 {rejectingKey === key ? (
                   <div className="rounded-xl border border-rose-200 bg-rose-50 p-3.5">
-                    <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-rose-900">Bakit nireject ang account na ito?</span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="Ito ang makikita ng requester." className="w-full resize-y rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100" /></label>
+                    <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-rose-900">Why was this account rejected?</span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="The requester will see this." className="w-full resize-y rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-rose-400 focus:ring-4 focus:ring-rose-100" /></label>
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <button type="button" onClick={() => setRejectingKey(null)} disabled={isBusy} className="rounded-xl border-2 border-slate-200 bg-white px-3 py-3 text-sm font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>
                       <button type="button" onClick={() => void decide(profile, 'Rejected')} disabled={isBusy} className="rounded-xl bg-rose-600 px-3 py-3 text-sm font-extrabold text-white transition hover:bg-rose-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Confirm reject'}</button>
@@ -284,7 +283,7 @@ export default function RequesterVerification() {
                   </div>
                 ) : (
                   <>
-                    <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-slate-600">Review note <span className="font-medium text-slate-400">(required if the record does not match)</span></span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="Optional maliban kung may mismatch sa Employee Master Data." className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label>
+                    <label className="block"><span className="mb-1.5 block text-xs font-extrabold text-slate-600">Review note <span className="font-medium text-slate-400">(required if the record does not match)</span></span><textarea value={notes[key] ?? ''} onChange={(event) => setNotes((current) => ({ ...current, [key]: event.target.value }))} rows={3} maxLength={1000} placeholder="Optional unless there is a mismatch with Employee Master Data." className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-100" /></label>
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <button type="button" onClick={() => { setError(''); setRejectingKey(key) }} disabled={isBusy} className="rounded-xl border-2 border-rose-300 bg-white px-3 py-3 text-sm font-extrabold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">Reject</button>
                       <button type="button" onClick={() => void decide(profile, 'Verified')} disabled={isBusy} className="rounded-xl bg-blue-600 px-3 py-3 text-sm font-extrabold text-white transition hover:bg-blue-700 disabled:opacity-50">{isBusy ? 'Saving…' : 'Verify requester'}</button>

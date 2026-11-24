@@ -87,9 +87,9 @@ test('the GSO Head approves the request without a password step', async () => {
 
 test('a declined purchase item appears in the issuance records as Rejected, with its reason', async () => {
   const submitted = await routeToHead();
-  await requestsService.reviewPurchaseRequisition(submitted.id, { action: 'DECIDE', decision: 'DECLINE', note: 'Hindi na kailangan.' }, head);
+  await requestsService.reviewPurchaseRequisition(submitted.id, { action: 'DECIDE', decision: 'DECLINE', note: 'Not needed.' }, head);
   const records = await returnsService.listIssuanceRecords({});
-  const declined = records.find((record) => record.id.startsWith('requisition-') && record.itemName === 'Mouse' && record.decisionNote === 'Hindi na kailangan.');
+  const declined = records.find((record) => record.id.startsWith('requisition-') && record.itemName === 'Mouse' && record.decisionNote === 'Not needed.');
   assert.ok(declined, 'the declined item is listed');
   assert.equal(declined.status, 'Rejected');
   assert.equal(declined.employeeName, 'Requester One');

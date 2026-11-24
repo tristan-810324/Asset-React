@@ -24,7 +24,7 @@ export default function AdminRoles() {
       setPermissionCatalog(permissions)
       setDrafts(Object.fromEntries(data.map((role) => [role.roleKey, role.permissions.map((permission) => permission.key)])))
     }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang roles and permissions.')
+      if (active) setError(reason instanceof Error ? reason.message : 'Could not load roles and permissions.')
     }).finally(() => { if (active) setLoading(false) })
     listSystemSecurityEvents().then((events) => { if (active) setSecurityEvents(events) }).catch(() => { if (active) setSecurityEvents([]) })
     return () => { active = false }
@@ -46,7 +46,7 @@ export default function AdminRoles() {
       setDrafts(Object.fromEntries(updated.map((role) => [role.roleKey, role.permissions.map((permission) => permission.key)])))
       setNotice(`${roleKey} permissions saved. API access changes immediately.`)
       try { setSecurityEvents(await listSystemSecurityEvents()) } catch { /* The permission change succeeded; leave the current log list visible. */ }
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Hindi na-save ang permission assignments.') }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save the permission assignments.') }
     finally { setSavingRole('') }
   }
 

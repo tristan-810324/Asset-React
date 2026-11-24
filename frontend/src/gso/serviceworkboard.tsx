@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { getCurrentUser } from '../auth/authApi'
 import { SERVICE_CATEGORY_LABELS } from '../requesters/serviceWorkflow'
+import { PhotoGallery, PhotoPicker } from '../components/servicePhotos'
 import {
   claimServiceWorkOrder,
   completeServiceWorkOrder,
+  progressServiceWorkOrder,
   notFinishServiceWorkOrder,
   forwardServiceWorkOrder,
   getServiceWorkOrder,
@@ -22,7 +24,7 @@ import {
 } from './serviceWorkboardApi'
 
 type IconName = 'arrow' | 'calendar' | 'check' | 'clock' | 'close' | 'document' | 'info' | 'location' | 'search' | 'tool' | 'transfer' | 'user' | 'warning'
-type DialogKind = 'forward' | 'start' | 'complete' | 'takeover' | 'reject'
+type DialogKind = 'forward' | 'start' | 'progress' | 'complete' | 'takeover' | 'reject'
 type QuickAction = 'claim' | 'start'
 type JobButton = {
   key: string
@@ -220,10 +222,20 @@ function jobButtons(order: ServiceWorkOrder, viewerId: string, otherLabel: strin
   }
 }
 
+// How a job was resolved. The codes are stored and counted in reports; the labels are what staff see.
+const RESOLUTION_OPTIONS = [
+  { value: 'FIXED', label: 'Fixed' },
+  { value: 'REPLACED', label: 'Replaced' },
+  { value: 'NOT_FIXED', label: 'Not fixed' },
+  { value: 'REFERRED', label: 'Referred to another office' },
+]
+const RESOLUTION_LABELS: Record<string, string> = Object.fromEntries(RESOLUTION_OPTIONS.map((option) => [option.value, option.label]))
+
 function dialogCopy(kind: DialogKind, otherLabel: string) {
   switch (kind) {
     case 'forward': return { heading: `Forward to ${otherLabel}`, description: 'Use this when the job belongs to the other team. It returns to the New Jobs queue there.', label: 'Handoff note (optional)', placeholder: 'What the other team should know.', required: false, submit: `Forward to ${otherLabel}` }
     case 'start': return { heading: 'Start work', description: 'The job moves to In Progress and the requester is told that work has started.', label: 'Start note (optional)', placeholder: 'e.g. Materials are on the way.', required: false, submit: 'Start work' }
+    case 'progress': return { heading: 'Add progress update', description: 'The requester sees this note in the job history right away. Use it for what was done, what is next, or what the requester should know.', label: 'Progress note', placeholder: 'e.g. Replacement starter arrived. Installing it tomorrow morning.', required: true, submit: 'Post update' }
     case 'complete': return { heading: 'Mark work completed', description: 'Confirm the job is finished. The requester is then asked to confirm the result.', label: '', placeholder: '', required: false, submit: 'Yes, mark completed' }
     case 'takeover': return { heading: 'Take over this job', description: 'The job moves to you. The reason stays in the job history.', label: 'Reason for taking over', placeholder: 'e.g. The assigned staff member is on leave.', required: true, submit: 'Take over job' }
     case 'reject': return { heading: 'Reject this job', description: 'Use this when the job is not for this team or cannot be done. The requester receives the reason.', label: 'Reason for rejection', placeholder: 'Explain why this job cannot be handled.', required: true, submit: 'Reject job' }
@@ -266,6 +278,11 @@ function activityOf(entry: WorkOrderHistoryItem): ActivityView {
   const pending = note.match(/^Not finished yet\. Reason: (.*?)(?:\. Expected finish: (\d{4}-\d{2}-\d{2}))?\.?$/)
   if (pending) return { title: 'Not finished yet', tone: 'amber', icon: 'clock', reason: pending[1], expected: pending[2] }
   if (/^Claimed by /i.test(note)) return { title: 'Claimed by staff', tone: 'blue', icon: 'user', detail: note.replace(/\.$/, '') }
+  // Progress and requester updates are saved under the current status, so they are matched before the status title.
+  const progress = note.match(/^Progress update: ([\s\S]*)$/)
+  if (progress) return { title: 'Progress update', tone: 'blue', icon: 'clock', detail: progress[1] }
+  const added = note.match(/^Requester added information: ([\s\S]*)$/)
+  if (added) return { title: 'Requester added information', tone: 'amber', icon: 'document', detail: added[1] }
   const mapped = STATUS_ACTIVITY[entry.status ?? '']
   if (mapped) return { ...mapped, detail: mapped.keepNote && note ? note : undefined }
   return { title: 'Job updated', tone: 'slate', icon: 'clock', detail: note || undefined }
@@ -384,7 +401,7 @@ function ActionDialogPanel({
   order: ServiceWorkOrder
   otherLabel: string
   onDismiss: () => void
-  onSubmit: (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished: boolean; expectedDate: string }) => void
+  onSubmit: (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished: boolean; expectedDate: string; photos: string[] }) => void
   busy: boolean
   error: string
 }) {
@@ -395,6 +412,8 @@ function ActionDialogPanel({
   const [finished, setFinished] = useState(true)
   const [reasonChoice, setReasonChoice] = useState('')
   const [expectedDate, setExpectedDate] = useState('')
+  const [photos, setPhotos] = useState<string[]>([])
+  const [photoError, setPhotoError] = useState('')
   const copy = dialogCopy(kind, otherLabel)
   const isComplete = kind === 'complete'
   const notFinished = isComplete && !finished
@@ -410,7 +429,7 @@ function ActionDialogPanel({
     event.preventDefault()
     if (!canSubmit || busy) return
     // The completion note field was replaced by a yes/no confirmation; the backend still needs a note, so a fixed one is sent.
-    onSubmit({ note: isComplete && !notFinished ? 'Work finished.' : note.trim(), tasks, incompleteReason: notFinished ? reasonText : incompleteReason.trim(), finished: !notFinished, expectedDate })
+    onSubmit({ note: isComplete && !notFinished ? 'Work finished.' : note.trim(), tasks, incompleteReason: notFinished ? reasonText : incompleteReason.trim(), finished: !notFinished, expectedDate, photos })
   }
 
   return (
@@ -482,6 +501,14 @@ function ActionDialogPanel({
             <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">{copy.label}</span>
             <textarea autoFocus={copy.required} value={note} onChange={(event) => setNote(event.target.value)} rows={4} maxLength={1000} placeholder={copy.placeholder} className={fieldClass} />
           </label>}
+
+        {(kind === 'progress' || (isComplete && !notFinished)) && (
+          <div className="mt-4">
+            <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Photos (optional)</span>
+            <PhotoPicker photos={photos} onChange={setPhotos} onError={setPhotoError} disabled={busy} />
+            {photoError && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{photoError}</p>}
+          </div>
+        )}
 
         {error && <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700">{error}</p>}
 
@@ -606,7 +633,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
     }
   }
 
-  const submitDialog = async (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished?: boolean; expectedDate?: string }) => {
+  const submitDialog = async (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished?: boolean; expectedDate?: string; photos?: string[] }) => {
     if (!selected || !dialog) return
     setBusyId(selected.id)
     setActionError('')
@@ -625,10 +652,14 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
       } else if (dialog === 'complete') {
         updated = await completeServiceWorkOrder(selected.id, {
           completionNote: input.note,
+          photos: input.photos ?? [],
           taskUpdates: input.tasks.map((task) => ({ id: task.id, completed: Boolean(task.completed) })),
           ...(input.incompleteReason ? { incompleteReason: input.incompleteReason } : {}),
         })
         message = 'Completion sent. The requester has been asked to confirm.'
+      } else if (dialog === 'progress') {
+        updated = await progressServiceWorkOrder(selected.id, input.note, input.photos ?? [])
+        message = 'Progress update posted. The requester has been told.'
       } else if (dialog === 'takeover') {
         updated = await takeOverServiceWorkOrder(selected.id, input.note)
         message = 'You are now handling this job.'
@@ -753,8 +784,16 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
               <section className={`${boxClass} p-4 shadow-slate-300/20`}>
                 <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-black text-slate-900">Work checklist</h3><p className="mt-0.5 text-[0.65rem] font-medium text-slate-500">{selected.checklist?.length ? `${completedTasks(selected)} of ${selected.checklist.length} done` : 'No checklist items'}</p></div></div>
                 {selected.checklist?.length ? <ul className="mt-3 space-y-2">{selected.checklist.map((task) => <li key={task.id} className="flex items-start gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5"><span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full ${task.completed ? 'bg-emerald-600 text-white' : 'border-2 border-slate-300 bg-white'}`}>{task.completed && <Icon name="check" className="h-2.5 w-2.5" />}</span><span className="min-w-0"><span className={`block text-xs font-semibold ${task.completed ? 'text-slate-500 line-through' : 'text-slate-800'}`}>{task.title}</span>{task.details && <span className="mt-0.5 block text-[0.65rem] font-medium leading-relaxed text-slate-500">{task.details}</span>}</span></li>)}</ul> : null}
-                {selected.completionNote && <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 px-3.5 py-3"><p className="text-[0.62rem] font-extrabold uppercase tracking-widest text-emerald-700">Completion note</p><p className="mt-1 whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-700">{selected.completionNote}</p></div>}
+                {selected.completionNote && <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 px-3.5 py-3"><p className="text-[0.62rem] font-extrabold uppercase tracking-widest text-emerald-700">Completion note</p><p className="mt-1 whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-700">{selected.completionNote}</p>{selected.resolutionType && <p className="mt-2 text-xs font-extrabold text-emerald-900">Resolution: {RESOLUTION_LABELS[selected.resolutionType] ?? selected.resolutionType}</p>}</div>}
               </section>
+
+              {selected.photos && selected.photos.length > 0 && (
+                <section className={`${boxClass} p-4 shadow-slate-300/20`}>
+                  <h3 className="text-sm font-black text-slate-900">Photos</h3>
+                  <p className="mt-0.5 text-[0.65rem] font-medium text-slate-500">Photos from the requester and from the team, in the order they were added.</p>
+                  <div className="mt-3"><PhotoGallery photos={selected.photos} /></div>
+                </section>
+              )}
 
               {selected.transfers && selected.transfers.length > 0 && (
                 <section className={`${boxClass} p-4 shadow-slate-300/20`}>

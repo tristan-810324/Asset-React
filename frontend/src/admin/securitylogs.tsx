@@ -12,7 +12,7 @@ export default function SecurityLogs() {
   useEffect(() => {
     let active = true
     listSystemSecurityEvents().then((data) => { if (active) setEvents(data) }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : 'Hindi ma-load ang security events.')
+      if (active) setError(reason instanceof Error ? reason.message : 'Could not load security events.')
     }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [])

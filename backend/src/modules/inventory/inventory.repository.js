@@ -211,14 +211,20 @@ function stockUsageJoin(includeRequesterInventory) {
           WHERE asset.item_id = i.id AND request.status IN ('Issued', 'Return Requested', 'For Repair')
        ), 0)`
     : '0';
+  // Units a purchase requisition reserved (GSO Staff routed them to the GSO Head) and has not issued yet.
+  const requisitionReserved = `COALESCE((
+         SELECT SUM(allocation.quantity - allocation.fulfilled_quantity)
+           FROM purchase_requisition_line_allocations AS allocation
+          WHERE allocation.item_id = i.id AND allocation.status = 'Reserved'
+       ), 0)`;
   return `LEFT JOIN LATERAL (
     SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)::INTEGER AS pending_quantity,
-           (${borrowerReserved})::INTEGER AS reserved_quantity,
+           (${borrowerReserved} + ${requisitionReserved})::INTEGER AS reserved_quantity,
            (COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)
              + (${borrowerIssued}))::INTEGER AS issued_quantity,
            (COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
              + COALESCE(SUM(issue.quantity - issue.returned_quantity) FILTER (WHERE issue.status = 'Issued'), 0)
-             + (${borrowerReserved}) + (${borrowerIssued}))::INTEGER AS active_quantity,
+             + (${borrowerReserved}) + (${borrowerIssued}) + ${requisitionReserved})::INTEGER AS active_quantity,
            CASE
              WHEN NOT EXISTS (SELECT 1 FROM asset_unit_tags AS existing_tag WHERE existing_tag.item_id = i.id)
                   AND i.condition IN ('Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired')
@@ -271,6 +277,29 @@ function currentBorrowersColumn(includeRequesterInventory) {
          WHERE asset.item_id = i.id
            AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')`
     : '';
+  // A requisition's reserved units are listed as borrowers too, so this list agrees with availableQuantity.
+  const requisitionBorrowers = `UNION ALL
+
+        SELECT 'requisition-' || allocation.id::TEXT AS id,
+               requester.name AS borrower_name,
+               request.reference_no AS reference,
+               profile.department,
+               'Reserved'::TEXT AS state,
+               allocation.quantity - allocation.fulfilled_quantity AS quantity,
+               to_char(allocation.updated_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD"T"HH24:MI') AS issued_at,
+               request.form_data->>'requiredDate' AS use_at,
+               NULL::TEXT AS expected_return_at,
+               NULL::TEXT AS use_location,
+               request.form_data->>'purpose' AS purpose,
+               FALSE AS is_overdue
+          FROM purchase_requisition_line_allocations AS allocation
+          JOIN purchase_requisition_lines AS line ON line.id = allocation.line_id
+          JOIN service_requests AS request ON request.id = line.request_id
+          JOIN users AS requester ON requester.id = request.requested_by_user_id
+          LEFT JOIN requester_identity_profiles AS profile ON profile.user_id = requester.id
+         WHERE allocation.item_id = i.id
+           AND allocation.status = 'Reserved'
+           AND allocation.quantity > allocation.fulfilled_quantity`;
   return `COALESCE((
     SELECT json_agg(json_build_object(
       'id', borrower.id,
@@ -308,6 +337,8 @@ function currentBorrowersColumn(includeRequesterInventory) {
            AND issue.quantity > issue.returned_quantity
 
         ${requesterBorrowers}
+
+        ${requisitionBorrowers}
       ) AS borrower
      WHERE i.tracking_mode = 'quantity'
        AND i.issue_behavior = 'returnable'
@@ -433,7 +464,7 @@ async function createItem({
     );
 
     if (!result.rows[0]) {
-      throw Object.assign(new Error('Hindi na makita ang piniling category. I-refresh ang page at pumili muli.'), {
+      throw Object.assign(new Error('The selected category was not found. Refresh the page and choose again.'), {
         code: 'CATEGORY_NOT_FOUND',
       });
     }
@@ -523,7 +554,7 @@ async function createItems(items, { createdByUserId }) {
       );
 
       if (!result.rows[0]) {
-        throw Object.assign(new Error('Hindi na makita ang piniling category. I-refresh ang page at pumili muli.'), {
+        throw Object.assign(new Error('The selected category was not found. Refresh the page and choose again.'), {
           code: 'CATEGORY_NOT_FOUND',
         });
       }
@@ -606,7 +637,7 @@ async function updateItem(id, item, { changedByUserId }) {
     );
     const previous = previousResult.rows[0];
     if (!previous) {
-      throw Object.assign(new Error('Hindi na makita ang item na ie-edit.'), { status: 404 });
+      throw Object.assign(new Error('The item to edit was not found.'), { status: 404 });
     }
 
     const activeIssuanceQuantityResult = await client.query(
@@ -628,12 +659,12 @@ async function updateItem(id, item, { changedByUserId }) {
       : item.issueBehavior ?? previous.issue_behavior ?? 'returnable';
     const trackingModeChanged = nextTrackingMode !== (previous.tracking_mode ?? 'individual');
     if (nextTrackingMode === 'individual' && nextIssueBehavior === 'consumable') {
-      throw Object.assign(new Error('Ang item na tina-track nang paisa-isa ay dapat ibinabalik bilang individual item.'), { status: 400 });
+      throw Object.assign(new Error('An item tracked one by one must be returned as an individual item.'), { status: 400 });
     }
     if (nextIssueBehavior === 'consumable'
       && previous.issue_behavior !== 'consumable'
       && activeIssuanceQuantity > 0) {
-      throw Object.assign(new Error('Hindi maaaring markahang consumable habang may pending o naka-issue pang quantity. Ibalik muna ang mga ito.'), { status: 409 });
+      throw Object.assign(new Error('You cannot mark it as consumable while it has pending or issued quantity. Return those first.'), { status: 409 });
     }
     const tagCountResult = await client.query(
       'SELECT COUNT(*)::INTEGER AS count FROM asset_unit_tags WHERE item_id = $1',
@@ -669,20 +700,20 @@ async function updateItem(id, item, { changedByUserId }) {
         || issuanceHistoryResult.rows[0]?.used
         || hasRequesterHistory
         || hasMovementHistory) {
-        throw Object.assign(new Error('Hindi na mababago ang tracking mode matapos magkaroon ng asset tags o issuance history ang item.'), { status: 409 });
+        throw Object.assign(new Error('You cannot change the tracking mode after the item has asset tags or issuance history.'), { status: 409 });
       }
     }
     if (nextTrackingMode === 'individual'
       && existingTagCount > 0
       && item.quantity !== Number(previous.quantity)) {
-      throw Object.assign(new Error('Magdagdag ng bagong item record sa halip na baguhin ang quantity ng item na may barcode tags na.'), { status: 409 });
+      throw Object.assign(new Error('Add a new item record instead of changing the quantity of an item that already has barcode tags.'), { status: 409 });
     }
 
     const costOrQuantityChanged = Number(previous.unit_cost) !== item.unitCost
       || Number(previous.quantity) !== item.quantity;
     const calculatedAcquisitionCost = Math.round((item.unitCost * item.quantity + Number.EPSILON) * 100) / 100;
     if (!Number.isFinite(calculatedAcquisitionCost) || calculatedAcquisitionCost > 9999999999.99) {
-      throw Object.assign(new Error('Acquisition cost ay lampas sa pinapayagang halaga.'), { status: 400 });
+      throw Object.assign(new Error('The acquisition cost is over the allowed amount.'), { status: 400 });
     }
     const acquisitionCost = costOrQuantityChanged
       ? calculatedAcquisitionCost
@@ -734,7 +765,7 @@ async function updateItem(id, item, { changedByUserId }) {
       ],
     );
     if (!updateResult.rows[0]) {
-      throw Object.assign(new Error('Hindi na makita ang piniling category. I-refresh ang page at pumili muli.'), {
+      throw Object.assign(new Error('The selected category was not found. Refresh the page and choose again.'), {
         code: 'CATEGORY_NOT_FOUND',
       });
     }
@@ -805,23 +836,23 @@ async function restockItem(id, receipt) {
       [id],
     );
     const previous = itemResult.rows[0];
-    if (!previous) throw Object.assign(new Error('Hindi na makita ang inventory item.'), { status: 404 });
+    if (!previous) throw Object.assign(new Error('Inventory item not found.'), { status: 404 });
     if (previous.tracking_mode !== 'quantity') {
-      throw Object.assign(new Error('Mga item na naka-track as quantity lamang ang maaaring i-restock sa SKU na ito.'), { status: 409 });
+      throw Object.assign(new Error('Only items tracked by quantity can be restocked under this SKU.'), { status: 409 });
     }
     if (previous.condition !== receipt.condition) {
-      throw Object.assign(new Error('Magkaiba ang condition ng kasalukuyang stock na naka-track as quantity at bagong delivery. Gumawa ng hiwalay na stock record.'), { status: 409 });
+      throw Object.assign(new Error('The condition of the current stock and the new delivery is different. Create a separate stock record.'), { status: 409 });
     }
 
     const previousQuantity = Number(previous.quantity);
     const nextQuantity = previousQuantity + receipt.quantity;
     if (!Number.isInteger(nextQuantity) || nextQuantity > 2147483647) {
-      throw Object.assign(new Error('Lampas sa pinapayagang inventory quantity ang restock.'), { status: 400 });
+      throw Object.assign(new Error('The restock goes over the allowed inventory quantity.'), { status: 400 });
     }
     const receiptTotal = Math.round((receipt.quantity * receipt.unitCost + Number.EPSILON) * 100) / 100;
     const acquisitionCost = Math.round((Number(previous.acquisition_cost) + receiptTotal + Number.EPSILON) * 100) / 100;
     if (!Number.isFinite(acquisitionCost) || acquisitionCost > 9999999999.99) {
-      throw Object.assign(new Error('Acquisition cost ay lampas sa pinapayagang halaga.'), { status: 400 });
+      throw Object.assign(new Error('The acquisition cost is over the allowed amount.'), { status: 400 });
     }
     const unitCost = Math.round((acquisitionCost / nextQuantity + Number.EPSILON) * 100) / 100;
     const currentValue = previous.current_value === null
@@ -938,7 +969,7 @@ async function renameCategory(id, { name, reason, changedByUserId }) {
     );
     const previous = previousResult.rows[0];
     if (!previous) {
-      throw Object.assign(new Error('Hindi na makita ang category na babaguhin.'), { status: 404 });
+      throw Object.assign(new Error('The category to change was not found.'), { status: 404 });
     }
 
     const renamedResult = await client.query(
@@ -988,12 +1019,12 @@ async function deleteCategory(id, { reason, changedByUserId }) {
     );
     const category = categoryResult.rows[0];
     if (!category) {
-      throw Object.assign(new Error('Hindi na makita ang category na buburahin.'), { status: 404 });
+      throw Object.assign(new Error('The category to delete was not found.'), { status: 404 });
     }
 
     const categoryCountResult = await client.query('SELECT COUNT(*)::INTEGER AS count FROM item_categories');
     if (categoryCountResult.rows[0].count <= 1) {
-      throw Object.assign(new Error('Kailangang may matirang kahit isang inventory category.'), { status: 409 });
+      throw Object.assign(new Error('At least one inventory category must remain.'), { status: 409 });
     }
 
     const usageResult = await client.query(
@@ -1001,7 +1032,7 @@ async function deleteCategory(id, { reason, changedByUserId }) {
       [id],
     );
     if (usageResult.rows[0].count > 0) {
-      throw Object.assign(new Error('May inventory item pang gumagamit sa category na ito. Ilipat muna ang mga item sa ibang category bago ito burahin.'), {
+      throw Object.assign(new Error('An inventory item still uses this category. Move the items to another category before you delete it.'), {
         status: 409,
       });
     }
@@ -1034,7 +1065,8 @@ async function listCategoryItemNames() {
             item_name.staff_issue_max_quantity AS "staffIssueMaxQuantity",
             item_name.policy_updated_at AS "policyUpdatedAt",
             editor.name AS "policyUpdatedBy",
-            item_name.created_at AS "createdAt"
+            item_name.created_at AS "createdAt",
+            item_name.code_sequence AS "codeSequence"
        FROM item_category_item_names AS item_name
        JOIN item_categories AS category ON category.id = item_name.category_id
        LEFT JOIN users AS editor ON editor.id = item_name.policy_updated_by_user_id
@@ -1050,11 +1082,11 @@ async function createCategoryItemName(categoryId, { name, createdByUserId }) {
      SELECT category.id, $2, $3
        FROM item_categories AS category
       WHERE category.id = $1
-     RETURNING id, category_id AS "categoryId", name, created_at AS "createdAt"`,
+     RETURNING id, category_id AS "categoryId", name, created_at AS "createdAt", code_sequence AS "codeSequence"`,
     [categoryId, name, createdByUserId],
   );
   if (!result.rows[0]) {
-    throw Object.assign(new Error('Hindi na makita ang piniling category.'), { code: 'CATEGORY_NOT_FOUND' });
+    throw Object.assign(new Error('The selected category was not found.'), { code: 'CATEGORY_NOT_FOUND' });
   }
   return result.rows[0];
 }
@@ -1067,7 +1099,7 @@ async function deleteCategoryItemName(id) {
     [id],
   );
   if (!result.rows[0]) {
-    throw Object.assign(new Error('Hindi na makita ang item name na buburahin.'), { status: 404 });
+    throw Object.assign(new Error('The item name to delete was not found.'), { status: 404 });
   }
   return result.rows[0];
 }

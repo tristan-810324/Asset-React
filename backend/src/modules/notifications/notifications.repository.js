@@ -49,7 +49,7 @@ async function markRead(id, user) {
       RETURNING notification.id`,
     [id, user.id, user.roles],
   );
-  if (!result.rowCount) throw Object.assign(new Error('Hindi makita ang notification.'), { status: 404 });
+  if (!result.rowCount) throw Object.assign(new Error('Notification not found.'), { status: 404 });
 }
 
 async function markAllRead(user) {

@@ -94,8 +94,8 @@ async function payCharge({ kind, ref, receiptData, receiptName, note, userId }) 
   try {
     await client.query('BEGIN');
     const charge = await findCharge(client, kind, ref);
-    if (!charge) throw httpError(404, 'Hindi makita ang charge na ito.');
-    if (charge.paid) throw httpError(409, 'Naka-Paid na ang charge na ito.');
+    if (!charge) throw httpError(404, 'Charge not found.');
+    if (charge.paid) throw httpError(409, 'This charge is already paid.');
 
     await client.query(
       `INSERT INTO charge_receipts (source_kind, source_ref, receipt_data, receipt_name, note, uploaded_by_user_id)

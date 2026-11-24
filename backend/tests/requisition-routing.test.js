@@ -127,12 +127,12 @@ test('each item takes its own route, and the GSO Head decides only the items sen
   // An item without enough stock cannot be issued straight away.
   await rejects(requestsService.staffReviewPurchaseRequisition(submitted.id, {
     action: 'ROUTE', routes: { ...routesFor(queued), [lineByName(queued, 'Webcam').id]: 'ISSUE' },
-  }, staff), /Nagbago ang stock ng Webcam/, 409);
+  }, staff), /The stock for Webcam changed/, 409);
   assert.equal(await available(101), 20);
 
   // The staff member issues the mice and asks the GSO Head about the laptops.
   const routes = { ...routesFor(queued), [lineByName(queued, 'Laptop').id]: 'HEAD_ISSUE' };
-  const { request: routed } = await requestsService.staffReviewPurchaseRequisition(submitted.id, { action: 'ROUTE', routes, note: 'Para sa bagong lab.' }, staff);
+  const { request: routed } = await requestsService.staffReviewPurchaseRequisition(submitted.id, { action: 'ROUTE', routes, note: 'For the new lab.' }, staff);
   assert.equal(routed.status, 'Under Review');
   assert.equal(routed.staffReviewedBy, 'GSO Staff One');
   assert.deepEqual(routed.purchaseLines.map((line) => [line.routeStatus, line.reservedQuantity, line.financeQuantity]), [
@@ -146,12 +146,12 @@ test('each item takes its own route, and the GSO Head decides only the items sen
   // Every waiting item needs a decision, and a decline needs a reason.
   const laptop = lineByName(routed, 'Laptop').id;
   const webcam = lineByName(routed, 'Webcam').id;
-  await rejects(requestsService.reviewPurchaseRequisition(submitted.id, { action: 'DECIDE', decisions: [{ lineId: laptop, decision: 'APPROVE' }] }, head), /bawat item/, 409);
-  await rejects(requestsService.reviewPurchaseRequisition(submitted.id, { action: 'DECIDE', decisions: [{ lineId: laptop, decision: 'DECLINE' }] }, head), /dahilan/, 400);
+  await rejects(requestsService.reviewPurchaseRequisition(submitted.id, { action: 'DECIDE', decisions: [{ lineId: laptop, decision: 'APPROVE' }] }, head), /Choose whether to approve or decline/, 409);
+  await rejects(requestsService.reviewPurchaseRequisition(submitted.id, { action: 'DECIDE', decisions: [{ lineId: laptop, decision: 'DECLINE' }] }, head), /reason for declining/, 400);
 
   const { request: decided } = await requestsService.reviewPurchaseRequisition(submitted.id, {
     action: 'DECIDE',
-    decisions: [{ lineId: laptop, decision: 'DECLINE', note: 'May laptop pa ang department.' }, { lineId: webcam, decision: 'APPROVE' }],
+    decisions: [{ lineId: laptop, decision: 'DECLINE', note: 'The department still has a laptop.' }, { lineId: webcam, decision: 'APPROVE' }],
   }, head);
   assert.equal(decided.status, 'GSO Endorsed');
   assert.deepEqual(decided.purchaseLines.map((line) => [line.routeStatus, line.reservedQuantity, line.financeQuantity]), [
@@ -226,7 +226,7 @@ test('a bought item is linked after GSO Staff hands the signed requisition to Fi
   assert.equal(approved.purchaseLines[0].routeStatus, 'WAITING_FINANCE');
 
   // Nothing can be linked before GSO Staff records the printed handoff to Finance.
-  await rejects(link('OR-1001', [webcam, '103', 2]), /Hindi pa naihahand-off sa Finance/, 409);
+  await rejects(link('OR-1001', [webcam, '103', 2]), /has not been handed off to Finance yet/, 409);
 
   // GSO Staff hands the signed printed PDF to Finance. Finance gives the money outside the app, so nothing is waiting for a reply.
   const sent = await requestsRepository.completePhysicalFinanceHandoff({ id: submitted.id, changedBy: '1' });
@@ -235,7 +235,7 @@ test('a bought item is linked after GSO Staff hands the signed requisition to Fi
 
   // Until the bought units are in Item Master Data there is nothing to link.
   assert.deepEqual(await requestsService.listAwaitingPurchaseDeliveries({ itemIds: '103' }), []);
-  await rejects(link('OR-1001', [webcam, '103', 2]), /Hindi sapat ang available na Webcam/, 409);
+  await rejects(link('OR-1001', [webcam, '103', 2]), /Not enough available Webcam/, 409);
   await pool.query('UPDATE item_catalog SET quantity = quantity + 2 WHERE id = 103');
   const [waiting] = await requestsService.listAwaitingPurchaseDeliveries({});
   assert.deepEqual(
@@ -284,7 +284,7 @@ test('one restock fills several requests at once, oldest first, and never more t
   assert.ok(waiting.every((entry) => entry.candidates.length === 1 && entry.candidates[0].availableQuantity === 6));
 
   // 5 + 3 is more than the 6 in stock: nothing is saved.
-  await rejects(link('OR-2001', [first.lineId, '104', 5], [second.lineId, '104', 3]), /Hindi sapat ang available na Headset/, 409);
+  await rejects(link('OR-2001', [first.lineId, '104', 5], [second.lineId, '104', 3]), /Not enough available Headset/, 409);
   assert.equal((await fresh(first.id)).purchaseLines[0].routeStatus, 'WAITING_FOR_PURCHASE');
   assert.equal(await available(104), 6);
 
@@ -315,7 +315,7 @@ test('two staff members cannot link the same units or the same item twice', asyn
   assert.equal(race.filter((outcome) => outcome.status === 'fulfilled').length, 1);
   const lost = race.find((outcome) => outcome.status === 'rejected').reason;
   assert.equal(lost.status, 409);
-  assert.match(lost.message, /Hindi sapat ang available na Speaker/);
+  assert.match(lost.message, /Not enough available Speaker/);
   assert.equal(await available(108), 0);
 
   // Both staff record the same item with plenty of stock: the second one is told it was already linked.
@@ -323,7 +323,7 @@ test('two staff members cannot link the same units or the same item twice', asyn
   await pool.query('UPDATE item_catalog SET quantity = quantity + 20 WHERE id = 108');
   const twice = await Promise.allSettled([link('OR-3003', [same.lineId, '108', 2]), link('OR-3004', [same.lineId, '108', 2])]);
   assert.equal(twice.filter((outcome) => outcome.status === 'fulfilled').length, 1);
-  assert.match(twice.find((outcome) => outcome.status === 'rejected').reason.message, /Na-link na ang delivery ng Speaker/);
+  assert.match(twice.find((outcome) => outcome.status === 'rejected').reason.message, /The delivery of Speaker is already linked/);
   assert.equal((await fresh(same.id)).purchaseLines[0].receipts.length, 1);
 });
 
@@ -336,9 +336,9 @@ test('a similar name needs the staff member to confirm it, and another category 
   const waiting = (await requestsService.listAwaitingPurchaseDeliveries({})).find((entry) => entry.lineId === request.lineId);
   assert.deepEqual(waiting.candidates.map((candidate) => [candidate.itemCode, candidate.match]), [['MIC-9', 'SIMILAR']]);
 
-  await rejects(link('', [request.lineId, '105', 2]), /Magkaiba ang pangalan ng "Microphone" at "USB Microphone Pro"/, 409);
-  await rejects(link('', [request.lineId, '106', 2, true]), /Dapat tugma ang item name at category/, 409);
-  await rejects(link('', [request.lineId, '107', 2, true]), /Dapat tugma ang item name at category/, 409);
+  await rejects(link('', [request.lineId, '105', 2]), /The names "Microphone" and "USB Microphone Pro" are different/, 409);
+  await rejects(link('', [request.lineId, '106', 2, true]), /The item name and category of the inventory record must match/, 409);
+  await rejects(link('', [request.lineId, '107', 2, true]), /The item name and category of the inventory record must match/, 409);
   const [confirmed] = await link('', [request.lineId, '105', 2, true]);
   assert.equal(confirmed.status, 'Approved');
   assert.match(confirmed.history.at(-2).note, /Name confirmed by staff: "USB Microphone Pro" counted as "Microphone"/);

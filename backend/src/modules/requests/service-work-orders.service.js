@@ -17,8 +17,11 @@ const {
   validateNeedInfo,
   validateForward,
   validateComplete,
+  validateProgress,
+  validateRequesterInfo,
   validateReopen,
   validateReject,
+  RESOLUTION_LABELS,
 } = require('./service-work-orders.validation');
 
 // History notes that start with this prefix are the transfer history shown on the job.
@@ -95,6 +98,7 @@ function presentWorkOrder(workOrder) {
     autoCloseAt: workOrder.autoCloseAt || null,
     requesterConfirmedAt: workOrder.requesterConfirmedAt || null,
     closureType: workOrder.closureType || null,
+    resolutionType: workOrder.resolutionType || null,
     completionNote: workOrder.completionNote || '',
     incompleteReason: workOrder.incompleteReason || '',
     reopenCount: Number(workOrder.reopenCount || 0),
@@ -112,6 +116,8 @@ function presentWorkOrder(workOrder) {
       id: workOrder.requesterId,
       name: workOrder.requesterName,
       email: workOrder.requesterEmail,
+      // The department the requester typed on this job request, not the profile's department.
+      department: workOrder.formData?.departmentOrganization || null,
     },
   };
 }
@@ -231,7 +237,7 @@ async function listWorkOrders(query, user) {
 
 async function getWorkOrder(idValue, user) {
   const id = requestId(idValue);
-  const workOrder = await repository.getWorkOrder(null, id);
+  const workOrder = await repository.getWorkOrder(null, id, { withPhotos: true });
   if (!workOrder) invalid('Service work order not found.', 404);
   assertCurrentTeamAccess(user, workOrder);
   return presentWorkOrder(workOrder);
@@ -384,9 +390,33 @@ async function startWork(idValue, input, user) {
   return workOrder;
 }
 
+// A progress note while work is in progress, with optional photos. The requester sees it in the job history right away.
+async function progressWork(idValue, input, user) {
+  const id = requestId(idValue);
+  const { note, photos } = validateProgress(input);
+  const result = await repository.withLockedWorkOrder(id, async (client, current) => {
+    assertCurrentTeamAccess(user, current);
+    assertNonTerminal(current);
+    assertAssignedTo(user, current);
+    if (current.status !== 'In Progress') invalid('Progress updates can be added only while work is in progress.', 409);
+    await repository.insertPhotos(client, id, photos, { source: 'STAFF_PROGRESS', userId: user.id });
+    await repository.insertHistory(client, {
+      requestId: id,
+      previousStatus: current.status,
+      status: 'In Progress',
+      note: `Progress update: ${note}`,
+      changedByUserId: user.id,
+    });
+  });
+  const workOrder = presentWorkOrder(result.workOrder);
+  await notifyRequester(workOrder, 'Progress update', note, `service-progress:${id}:${Date.now()}`);
+  await writeAudit(workOrder, user, { reason: `Service work progress update. ${note}`, oldValues: { status: result.current.status } });
+  return workOrder;
+}
+
 async function completeWork(idValue, input, user) {
   const id = requestId(idValue);
-  const { completionNote, incompleteReason, taskUpdates } = validateComplete(input);
+  const { completionNote, resolutionType, incompleteReason, taskUpdates, photos } = validateComplete(input);
   const result = await repository.withLockedWorkOrder(id, async (client, current) => {
     assertCurrentTeamAccess(user, current);
     assertAssignedTo(user, current);
@@ -403,14 +433,16 @@ async function completeWork(idValue, input, user) {
       awaitingConfirmationAt: now,
       autoCloseAt: new Date(now.getTime() + (2 * 24 * 60 * 60 * 1000)),
       requesterRemindedAt: null,
+      resolutionType: resolutionType || null,
       completionNote,
       incompleteReason,
     });
+    await repository.insertPhotos(client, id, photos, { source: 'STAFF_COMPLETION', userId: user.id });
     await repository.insertHistory(client, {
       requestId: id,
       previousStatus: current.status,
       status: 'Awaiting Requester Confirmation',
-      note: `Work marked complete. ${completionNote}${incompleteReason ? ` Remaining-task note: ${incompleteReason}` : ''}`,
+      note: `Work marked complete.${resolutionType ? ` Resolution: ${RESOLUTION_LABELS[resolutionType]}.` : ''} ${completionNote}${incompleteReason ? ` Remaining-task note: ${incompleteReason}` : ''}`,
       changedByUserId: user.id,
     });
   });
@@ -561,6 +593,7 @@ async function reopenService(idValue, input, user) {
       closedAt: null,
       closedByUserId: null,
       closureType: null,
+      resolutionType: null,
       completionNote: '',
       incompleteReason: '',
       reopenCount: Number(current.reopenCount || 0) + 1,
@@ -580,6 +613,28 @@ async function reopenService(idValue, input, user) {
     reason: `Requester reopened the service request: ${message}`,
     oldValues: { status: result.current.status },
   });
+  return workOrder;
+}
+
+// The requester adds details after submitting, such as the exact room or a photo of the problem. Open jobs only.
+async function addRequesterInfo(idValue, input, user) {
+  const id = requestId(idValue);
+  const { message, photos } = validateRequesterInfo(input);
+  const result = await repository.withLockedWorkOrder(id, async (client, current) => {
+    if (String(current.requesterId) !== String(user.id)) invalid('You can only add information to your own service request.', 403);
+    assertNonTerminal(current);
+    await repository.insertPhotos(client, id, photos, { source: 'REQUESTER_UPDATE', userId: user.id });
+    await repository.insertHistory(client, {
+      requestId: id,
+      previousStatus: current.status,
+      status: current.status,
+      note: `Requester added information: ${message}`,
+      changedByUserId: user.id,
+    });
+  });
+  const workOrder = presentWorkOrder(result.workOrder);
+  await notifyTeam(workOrder, 'Requester added information', message, `service-requester-info:${id}:${Date.now()}`, { assignedOnly: true });
+  await writeAudit(workOrder, user, { reason: `Requester added information to the service request. ${message}`, oldValues: { status: result.current.status } });
   return workOrder;
 }
 
@@ -611,9 +666,9 @@ async function notifyRequesterReply(request) {
   await notifyTeam(workOrder, 'Requester replied', 'The requester supplied the requested information. Continue the review.', `service-requester-reply:${workOrder.id}:${Date.now()}`, { assignedOnly: true });
 }
 
-async function enrichRequest(request) {
+async function enrichRequest(request, { withPhotos = false } = {}) {
   if (!request || request.requestType !== 'JOB_REQUEST') return request;
-  const raw = await repository.getWorkOrder(null, request.id);
+  const raw = await repository.getWorkOrder(null, request.id, { withPhotos });
   const workOrder = presentWorkOrder(raw);
   if (!workOrder) return request;
   return {
@@ -627,6 +682,8 @@ async function enrichRequest(request) {
     assignedStaff: workOrder.assignedStaffName || null,
     checklist: workOrder.checklist,
     transfers: workOrder.transfers,
+    // Only the single-request view asks for photos, so the request lists stay small.
+    ...(withPhotos ? { photos: workOrder.photos || [] } : {}),
   };
 }
 
@@ -675,12 +732,14 @@ module.exports = {
   requestMoreInformation,
   forwardWorkOrder,
   startWork,
+  progressWork,
   completeWork,
   notFinishWork,
   takeOverWorkOrder,
   rejectWorkOrder,
   confirmService,
   reopenService,
+  addRequesterInfo,
   notifyNewWorkOrder,
   notifyCancelled,
   notifyRequesterReply,

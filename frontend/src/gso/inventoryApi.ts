@@ -15,6 +15,8 @@ export type InventoryCategoryItemName = {
   policyUpdatedAt?: string
   policyUpdatedBy?: string | null
   createdAt: string
+  // The item name's number inside its category; the middle part of the item code (2026-CPP-001-0001).
+  codeSequence?: number | null
 }
 
 export type InventoryChangeRecord = {

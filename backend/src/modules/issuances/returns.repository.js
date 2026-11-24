@@ -81,10 +81,10 @@ async function createPendingReturn({
     );
     const issued = issuedResult.rows[0];
     if (!issued) {
-      throw notFound('Hindi na active at naka-issue sa employee ang item na ito. I-refresh at subukan muli.');
+      throw notFound('This item is no longer active or issued to the employee. Refresh and try again.');
     }
     if (issued.issue_behavior === 'consumable') {
-      throw conflict('Consumable stock ay hindi ibinabalik sa return flow. I-record lamang ang aktuwal na quantity na natira sa GSO.');
+      throw conflict('Consumable stock is not returned in the return flow. Record only the actual quantity left at GSO.');
     }
 
     const pendingQuantityResult = await client.query(
@@ -154,7 +154,7 @@ async function createPendingReturn({
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505' && error.constraint === 'employee_issuance_returns_one_pending_idx') {
-      throw conflict('May pending return approval na para sa item na ito.');
+      throw conflict('This item already has a pending return approval.');
     }
     throw error;
   } finally {
@@ -200,10 +200,10 @@ async function confirmReturnByGso({
     );
     const issued = issuedResult.rows[0];
     if (!issued) {
-      throw notFound('Hindi na active at naka-issue sa employee ang item na ito. I-refresh at subukan muli.');
+      throw notFound('This item is no longer active or issued to the employee. Refresh and try again.');
     }
     if (issued.issue_behavior === 'consumable') {
-      throw conflict('Consumable stock ay hindi ibinabalik sa return flow. I-record lamang ang aktuwal na quantity na natira sa GSO.');
+      throw conflict('Consumable stock is not returned in the return flow. Record only the actual quantity left at GSO.');
     }
 
     const outstandingQuantity = Number(issued.quantity) - Number(issued.returned_quantity);
@@ -225,7 +225,7 @@ async function confirmReturnByGso({
       )
       : { rowCount: 0 };
     if (otpUse.rowCount !== 1) {
-      throw conflict('Nag-expire o nagamit na ang code ng employee. Magpadala ng bagong code.');
+      throw conflict('The employee code expired or was already used. Send a new code.');
     }
     const confirmationMethod = 'employee_code';
     const confirmationText = 'Employee confirmed the quantity and condition with an emailed one-time code.';
@@ -271,7 +271,7 @@ async function confirmReturnByGso({
       [issued.issuance_id, returnQuantity],
     );
     if (issuanceUpdate.rowCount !== 1) {
-      throw conflict('Hindi na active ang item issuance. I-refresh ang employee at inventory records.');
+      throw conflict('This item issuance is no longer active. Refresh the employee and inventory records.');
     }
 
     // Quantity-tracked stock keeps one shared condition, so damaged units are set aside by count instead of
@@ -369,12 +369,12 @@ async function createReturnOtp({ tagCode, otpHash, requestedByUserId }) {
       [tagCode],
     );
     const tag = tagResult.rows[0];
-    if (!tag) throw notFound('Walang item o barcode na tumutugma sa code na ito.');
+    if (!tag) throw notFound('No item or barcode matches this code.');
     if (tag.custody_status !== 'Issued' || !tag.issuance_id) {
-      throw conflict('Hindi kasalukuyang naka-issue sa employee ang item na ito.');
+      throw conflict('This item is not currently issued to the employee.');
     }
     if (!tag.employee_email) {
-      throw conflict('Walang email ang employee na may hawak nito, kaya hindi mapapadalhan ng code. Idagdag muna ang email niya sa Employee Master Data.');
+      throw conflict('The employee holding this item has no email, so no code can be sent. Add their email in Employee Master Data first.');
     }
 
     // A new code replaces any earlier unused code for this unit.
@@ -472,13 +472,13 @@ async function createBulkReturnOtp({ issuanceId, quantity, condition, otpHash, r
     );
     const issued = issuedResult.rows[0];
     if (!issued || issued.status !== 'Issued') {
-      throw notFound('Hindi na active at naka-issue sa employee ang item na ito. I-refresh at subukan muli.');
+      throw notFound('This item is no longer active or issued to the employee. Refresh and try again.');
     }
     if (issued.issue_behavior === 'consumable') {
-      throw conflict('Consumable stock ay hindi ibinabalik sa return flow.');
+      throw conflict('Consumable stock is not returned in the return flow.');
     }
     if (!issued.employee_email) {
-      throw conflict('Walang email ang employee na may hawak nito, kaya hindi mapapadalhan ng code. Idagdag muna ang email niya sa Employee Master Data.');
+      throw conflict('The employee holding this item has no email, so no code can be sent. Add their email in Employee Master Data first.');
     }
     const outstandingQuantity = Number(issued.quantity) - Number(issued.returned_quantity);
     if (quantity > outstandingQuantity) {
@@ -573,19 +573,19 @@ async function confirmScannedTagReturn({
       [tagCode],
     );
     const tag = tagResult.rows[0];
-    if (!tag) throw notFound('Walang item o barcode na tumutugma sa code na ito.');
+    if (!tag) throw notFound('No item or barcode matches this code.');
     if (tag.custody_status !== 'Issued' || !tag.issuance_id || !tag.assigned_employee_id) {
-      throw conflict('Hindi kasalukuyang naka-issue sa employee ang item na ito. I-check ang custody status bago mag-return.');
+      throw conflict('This item is not currently issued to the employee. Check the custody status before you return it.');
     }
     if (tag.lifecycle_status === 'Disposed') {
-      throw conflict('Disposed na ang item na ito at hindi na puwedeng i-return sa stock.');
+      throw conflict('This item is disposed and cannot be returned to stock.');
     }
     // The serial printed on the unit itself catches a label copied or moved onto another unit.
     const serialTail = String(tag.serial_number || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(-4);
     if (!isLost && serialTail && serialLast4 !== serialTail) {
       throw Object.assign(new Error(serialLast4
-        ? 'Hindi tugma ang serial number ng unit sa record ng barcode na ito. Baka ibang unit ito o napalitan ang label. Huwag munang tanggapin ang return at ipaalam sa GSO head.'
-        : 'Ilagay ang huling 4 na character ng serial number na nakasulat sa mismong unit.'), { status: 400 });
+        ? 'The serial number does not match this barcode. Do not accept the return. Tell the GSO head.'
+        : 'Enter the last 4 characters of the serial number printed on the unit.'), { status: 400 });
     }
 
     const issuanceResult = await client.query(
@@ -603,11 +603,11 @@ async function confirmScannedTagReturn({
     );
     const issuance = issuanceResult.rows[0];
     if (!issuance || issuance.status !== 'Issued') {
-      throw conflict('Hindi na active ang issuance na nakatala sa barcode na ito. I-refresh ang item records.');
+      throw conflict('The issuance linked to this barcode is no longer active. Refresh the item records.');
     }
     const outstandingQuantity = Number(issuance.quantity) - Number(issuance.returned_quantity);
     if (outstandingQuantity < 1) {
-      throw conflict('Wala nang outstanding na item quantity sa issuance na ito.');
+      throw conflict('This issuance has no outstanding item quantity left.');
     }
 
     // Every return needs the borrower's one-time code for this unit and issuance, used once: a scan
@@ -622,7 +622,7 @@ async function confirmScannedTagReturn({
       )
       : { rowCount: 0 };
     if (otpUse.rowCount !== 1) {
-      throw conflict('Nag-expire o nagamit na ang code ng employee. Magpadala ng bagong code.');
+      throw conflict('The employee code expired or was already used. Send a new code.');
     }
     const confirmationMethod = entryMethod === 'scan' ? 'employee_code' : 'typed_code';
 
@@ -721,7 +721,7 @@ async function confirmScannedTagReturn({
         [tag.tag_id, condition, destination, requestedByUserId, reason],
       );
     if (issuanceUpdate.rowCount !== 1 || tagUpdate.rowCount !== 1) {
-      throw conflict('Nagbago ang custody record habang kinukumpirma ang return. I-scan muli ang barcode.');
+      throw conflict('The custody record changed while the return was being confirmed. Scan the barcode again.');
     }
     if (isLost) {
       // The lost unit is gone from stock; replacing it later adds it back.
@@ -801,7 +801,23 @@ async function confirmScannedTagReturn({
   }
 }
 
-async function completeTaggedAssetRepair({ tagCode, changedByUserId, repairedByName }) {
+// When no other unit of the item still needs repair, the item row takes the condition its repaired unit went back with.
+// The row is a summary that can still show a pre-return condition, so whatever it says is replaced; a retired item stays retired.
+async function syncItemConditionAfterRepair(client, itemId, condition) {
+  await client.query(
+    `UPDATE item_catalog
+        SET condition = $2
+      WHERE id = $1
+        AND condition <> 'Retired'
+        AND NOT EXISTS (
+          SELECT 1 FROM asset_unit_tags AS tag
+           WHERE tag.item_id = $1 AND tag.custody_status = 'Available' AND tag.lifecycle_status <> 'Disposed'
+             AND tag.condition IN ('Needs Repair', 'Under Maintenance', 'Unserviceable'))`,
+    [itemId, condition],
+  );
+}
+
+async function completeTaggedAssetRepair({ tagCode, changedByUserId, repairedByName, condition = 'Good' }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -816,16 +832,16 @@ async function completeTaggedAssetRepair({ tagCode, changedByUserId, repairedByN
       [tagCode],
     );
     const tag = tagResult.rows[0];
-    if (!tag) throw notFound('Walang item o barcode na tumutugma sa code na ito.');
+    if (!tag) throw notFound('No item or barcode matches this code.');
     if (tag.custody_status !== 'Available' || tag.lifecycle_status !== 'Active'
       || !['Needs Repair', 'Under Maintenance', 'Unserviceable'].includes(tag.condition)) {
-      throw conflict('Hindi na nasa active repair queue ang unit na ito. I-refresh ang repair records.');
+      throw conflict('This unit is no longer in the active repair queue. Refresh the repair records.');
     }
 
-    const repairCompletionReason = 'Repair completed from the To Be Repaired module; item condition updated to Good.';
+    const repairCompletionReason = `Repair completed from the To Be Repaired module; item condition updated to ${condition}.`;
     await client.query(
       `UPDATE asset_unit_tags
-          SET condition = 'Good',
+          SET condition = $5,
               location = 'GSO Storage',
               last_inspected_at = NOW(),
               last_inspected_by_user_id = $2,
@@ -833,8 +849,9 @@ async function completeTaggedAssetRepair({ tagCode, changedByUserId, repairedByN
               repaired_by_name = $4,
               updated_at = NOW()
         WHERE id = $1`,
-      [tag.id, changedByUserId, repairCompletionReason, repairedByName],
+      [tag.id, changedByUserId, repairCompletionReason, repairedByName, condition],
     );
+    await syncItemConditionAfterRepair(client, tag.item_id, condition);
     const inventoryStatus = await refreshInventoryStatus(client, tag.item_id);
     await writeReturnAuditLog(client, {
       item_id: tag.item_id,
@@ -853,7 +870,7 @@ async function completeTaggedAssetRepair({ tagCode, changedByUserId, repairedByN
       },
       newValues: {
         tagCode: tag.tag_code,
-        condition: 'Good',
+        condition,
         lifecycleStatus: tag.lifecycle_status,
         custodyStatus: tag.custody_status,
         location: 'GSO Storage',
@@ -862,7 +879,7 @@ async function completeTaggedAssetRepair({ tagCode, changedByUserId, repairedByN
     });
 
     await client.query('COMMIT');
-    return { tagCode: tag.tag_code, condition: 'Good', location: 'GSO Storage' };
+    return { tagCode: tag.tag_code, condition, location: 'GSO Storage' };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -1038,7 +1055,7 @@ async function resolveReturnApproval({ tokenHash, action }) {
     }
 
     if (row.issuance_status !== 'Issued') {
-      throw conflict('Hindi na active ang item issuance. Makipag-ugnayan sa GSO para ma-check ang return request.');
+      throw conflict('This item issuance is no longer active. Contact GSO to check the return request.');
     }
 
     const decisionNote = 'Return confirmed by employee using the email approval link.';
@@ -1062,7 +1079,7 @@ async function resolveReturnApproval({ tokenHash, action }) {
       [row.item_id, row.return_condition],
     );
     if (issuanceUpdate.rowCount !== 1 || itemUpdate.rowCount !== 1) {
-      throw conflict('Hindi na active ang item issuance. Makipag-ugnayan sa GSO para ma-check ang return request.');
+      throw conflict('This item issuance is no longer active. Contact GSO to check the return request.');
     }
     await client.query(
       `WITH units_to_return AS (
@@ -1206,7 +1223,7 @@ async function lockReturnForFollowUp(client, returnId) {
     [returnId],
   );
   const record = result.rows[0];
-  if (!record) throw notFound('Hindi makita ang return record.');
+  if (!record) throw notFound('Return record not found.');
   if (record.asset_unit_tag_id) {
     const tag = await client.query(
       `SELECT COALESCE($2, tag_code) AS tag_code, custody_status, lifecycle_status, condition
@@ -1231,35 +1248,38 @@ function isAwaitingSettlement(record) {
 }
 
 // Closes a damaged return in To Be Repaired: the units go back to stock or leave it for good.
-async function applyRepairOutcome(client, record, { outcome, note, userId, approvalText = '', writeOff = null }) {
+async function applyRepairOutcome(client, record, { outcome, note, userId, approvalText = '', writeOff = null, condition = 'Good' }) {
   if (!isAwaitingRepair(record)) {
-    throw conflict(record.repair_resolved_at ? 'Tapos na ang repair record na ito.' : 'Hindi ito return na nasa repair.');
+    throw conflict(record.repair_resolved_at ? 'This repair record is already complete.' : 'This return is not in repair.');
   }
   const quantity = Number(record.quantity);
 
   if (record.tag) {
     if (record.tag.custody_status !== 'Available' || record.tag.lifecycle_status === 'Disposed'
       || !repairReturnConditions.includes(record.tag.condition)) {
-      throw conflict('Hindi na nasa repair queue ang unit na ito. I-refresh ang repair records.');
+      throw conflict('This unit is no longer in the repair queue. Refresh the repair records.');
     }
     await client.query(
       outcome === 'Repaired'
         ? `UPDATE asset_unit_tags
-              SET condition = 'Good', location = 'GSO Storage', last_inspected_at = NOW(),
+              SET condition = $4, location = 'GSO Storage', last_inspected_at = NOW(),
                   last_inspected_by_user_id = $2, last_inspection_note = $3, updated_at = NOW()
             WHERE id = $1`
         : `UPDATE asset_unit_tags
               SET lifecycle_status = 'Disposed', disposal_reason = $3, location = 'Written Off',
                   last_inspected_at = NOW(), last_inspected_by_user_id = $2, last_inspection_note = $3, updated_at = NOW()
             WHERE id = $1`,
-      [record.asset_unit_tag_id, userId, note || `${outcome} from the To Be Repaired module.`],
+      outcome === 'Repaired'
+        ? [record.asset_unit_tag_id, userId, note || `${outcome} from the To Be Repaired module.`, condition]
+        : [record.asset_unit_tag_id, userId, note || `${outcome} from the To Be Repaired module.`],
     );
+    if (outcome === 'Repaired') await syncItemConditionAfterRepair(client, record.item_id, condition);
     if (outcome === 'Written Off') {
       await client.query('UPDATE item_catalog SET quantity = GREATEST(quantity - 1, 0) WHERE id = $1', [record.item_id]);
     }
   } else {
-    // A quantity-tracked item whose whole stock was marked for repair before individual counts existed is
-    // cleared back to Good when its units are repaired, as the old repair step did.
+    // A quantity-tracked item whose whole stock was marked for repair before individual counts existed takes
+    // the condition its repaired units went back with.
     await client.query(
       outcome === 'Repaired'
         ? `UPDATE item_catalog
@@ -1267,13 +1287,13 @@ async function applyRepairOutcome(client, record, { outcome, note, userId, appro
                   condition = CASE
                     WHEN condition IN ('Needs Repair', 'Under Maintenance', 'Unserviceable')
                      AND NOT EXISTS (SELECT 1 FROM asset_unit_tags WHERE item_id = $1)
-                    THEN 'Good' ELSE condition END
+                    THEN $3 ELSE condition END
             WHERE id = $1`
         : `UPDATE item_catalog
               SET repair_quantity = GREATEST(repair_quantity - $2, 0),
                   quantity = GREATEST(quantity - $2, 0)
             WHERE id = $1`,
-      [record.item_id, quantity],
+      outcome === 'Repaired' ? [record.item_id, quantity, condition] : [record.item_id, quantity],
     );
   }
 
@@ -1294,9 +1314,9 @@ async function applyRepairOutcome(client, record, { outcome, note, userId, appro
   const inventoryStatus = await refreshInventoryStatus(client, record.item_id);
   await writeReturnAuditLog(client, record, {
     changedByUserId: userId,
-    reason: `Return #${record.id}: ${unitLabel(record)} of ${record.description} ${outcome === 'Repaired' ? 'repaired and returned to stock' : 'written off and removed from stock'}.${approvalText ? ` ${approvalText}` : ''}${note ? ` ${note}` : ''}`,
+    reason: `Return #${record.id}: ${unitLabel(record)} of ${record.description} ${outcome === 'Repaired' ? `repaired and returned to stock as ${condition}` : 'written off and removed from stock'}.${approvalText ? ` ${approvalText}` : ''}${note ? ` ${note}` : ''}`,
     oldValues: { repairOutcome: null, condition: record.return_condition },
-    newValues: { repairOutcome: outcome, inventoryStatus, returnId: String(record.id), assetTagCode: record.tag?.tag_code || null },
+    newValues: { repairOutcome: outcome, inventoryStatus, returnId: String(record.id), assetTagCode: record.tag?.tag_code || null, condition: outcome === 'Repaired' ? condition : null },
   });
   return {
     returnId: String(record.id),
@@ -1311,8 +1331,8 @@ async function applyRepairOutcome(client, record, { outcome, note, userId, appro
   };
 }
 
-async function resolveReturnRepair({ returnId, outcome, note, userId, writeOff = null }) {
-  return inTransaction(async (client) => applyRepairOutcome(client, await lockReturnForFollowUp(client, returnId), { outcome, note, userId, writeOff }));
+async function resolveReturnRepair({ returnId, outcome, note, userId, writeOff = null, condition = 'Good' }) {
+  return inTransaction(async (client) => applyRepairOutcome(client, await lockReturnForFollowUp(client, returnId), { outcome, note, userId, writeOff, condition }));
 }
 
 // The sign-in account with this email, so the requester can be notified in the app.
@@ -1323,7 +1343,7 @@ async function findAccountIdByEmail(email) {
 }
 
 async function applySettlement(client, record, { status, note, userId, approvalText = '' }) {
-  if (!isAwaitingSettlement(record)) throw conflict('Wala nang nakabinbing settlement ang record na ito.');
+  if (!isAwaitingSettlement(record)) throw conflict('This record has no pending settlement left.');
   await client.query(
     `UPDATE employee_issuance_returns
         SET settlement_status = $2, settlement_note = $3, settled_at = NOW(), settled_by_user_id = $4
@@ -1354,10 +1374,10 @@ async function requestReturnApproval({ returnId, action, note, userId }) {
     const record = await lockReturnForFollowUp(client, returnId);
     if (action === 'Written Off' ? !isAwaitingRepair(record) : !isAwaitingSettlement(record)) {
       throw conflict(action === 'Written Off'
-        ? 'Nasa repair queue lamang na item ang puwedeng i-request na i-write off.'
-        : 'Wala nang nakabinbing settlement ang record na ito.');
+        ? 'Only an item in the repair queue can be requested for write-off.'
+        : 'This record has no pending settlement left.');
     }
-    if (record.approval_action) throw conflict('May hinihintay nang desisyon ng IT Admin para sa record na ito.');
+    if (record.approval_action) throw conflict('This record is already waiting for an IT Admin decision.');
     await client.query(
       `UPDATE employee_issuance_returns
           SET approval_action = $2, approval_note = $3, approval_requested_by_user_id = $4,
@@ -1381,9 +1401,9 @@ async function decideApprovalRequest({ returnId, decision, note, userId }) {
     const record = await lockReturnForFollowUp(client, returnId);
     const action = record.approval_action;
     const isOpen = action === 'Written Off' ? isAwaitingRepair(record) : Boolean(action) && isAwaitingSettlement(record);
-    if (!isOpen) throw conflict('Wala nang hinihintay na approval ang record na ito. I-refresh ang listahan.');
+    if (!isOpen) throw conflict('This record is no longer waiting for approval. Refresh the list.');
     if (String(record.approval_requested_by_user_id) === String(userId)) {
-      throw Object.assign(new Error('Ibang tao ang dapat mag-approve ng request na ikaw mismo ang gumawa.'), { status: 403 });
+      throw Object.assign(new Error('Another person must approve a request that you made.'), { status: 403 });
     }
 
     if (decision === 'reject') {

@@ -36,6 +36,8 @@ const workOrders = require('../src/modules/requests/service-work-orders.service'
 
 const requester = { id: '3', name: 'Requester One', email: 'requester@invalid', roles: ['BORROWER'] };
 const gsoOne = { id: '1', name: 'GSO Staff One', roles: ['GSO_STAFF'] };
+// A 1x1 PNG, enough to pass the photo format check.
+const tinyPhoto = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const gsoTwo = { id: '2', name: 'GSO Staff Two', roles: ['GSO_STAFF'] };
 const itStaff = { id: '4', name: 'IT Staff One', roles: ['IT_STAFF'] };
 const itAdmin = { id: '5', name: 'IT Admin One', roles: ['IT_ADMIN'] };
@@ -203,10 +205,12 @@ test('a completed job waits for the requester, who confirms it, and the record k
   const task = await firstTask(request.id, gsoOne);
   await rejects(workOrders.completeWork(request.id, {
     completionNote: 'Checked.',
+    resolutionType: 'FIXED',
     taskUpdates: [{ id: task.id, completed: false }],
   }, gsoOne), /Complete every task/, 400);
   const done = await workOrders.completeWork(request.id, {
     completionNote: 'Replaced the tube and tested the switch.',
+    resolutionType: 'REPLACED',
     taskUpdates: [{ id: task.id, completed: true }],
   }, gsoOne);
   assert.equal(done.status, 'Awaiting Requester Confirmation');
@@ -229,6 +233,7 @@ test('an unfinished checklist can be completed when the remaining item is explai
   const tasks = (await workOrders.getWorkOrder(request.id, gsoOne)).tasks;
   const done = await workOrders.completeWork(request.id, {
     completionNote: 'Light A is fixed.',
+    resolutionType: 'FIXED',
     taskUpdates: [{ id: tasks[0].id, completed: true }, { id: tasks[1].id, completed: false }],
     incompleteReason: 'Light B needs a new starter that is on order.',
   }, gsoOne);
@@ -242,6 +247,7 @@ test('a reopened job returns to In Progress and the reopen count is kept', async
   await workOrders.startWork(request.id, {}, gsoOne);
   await workOrders.completeWork(request.id, {
     completionNote: 'Fixed.',
+    resolutionType: 'FIXED',
     taskUpdates: [{ id: (await firstTask(request.id, gsoOne)).id, completed: true }],
   }, gsoOne);
   const reopened = await requestsService.reopenServiceMine(request.id, { message: 'The light still flickers.' }, requester);
@@ -255,6 +261,7 @@ test('a requester who does not answer gets one reminder, then the completed job 
   await workOrders.startWork(request.id, {}, gsoOne);
   await workOrders.completeWork(request.id, {
     completionNote: 'Fixed.',
+    resolutionType: 'FIXED',
     taskUpdates: [{ id: (await firstTask(request.id, gsoOne)).id, completed: true }],
   }, gsoOne);
 
@@ -317,8 +324,20 @@ test('a job without a work checklist is accepted, and it completes with only the
   assert.equal(request.checklist.length, 0);
   await workOrders.claimWorkOrder(request.id, gsoOne);
   await workOrders.startWork(request.id, {}, gsoOne);
-  const done = await workOrders.completeWork(request.id, { completionNote: 'Replaced the bulb and tested the switch.' }, gsoOne);
+  const done = await workOrders.completeWork(request.id, { completionNote: 'Replaced the bulb and tested the switch.', resolutionType: 'FIXED' }, gsoOne);
   assert.equal(done.status, 'Awaiting Requester Confirmation');
+});
+
+test('completion accepts no resolution type, rejects an unknown one, and progress and requester photos must be images', async () => {
+  const request = await submitJob({ tasks: [] });
+  await workOrders.claimWorkOrder(request.id, gsoOne);
+  await workOrders.startWork(request.id, {}, gsoOne);
+  await rejects(workOrders.completeWork(request.id, { completionNote: 'Done.', resolutionType: 'MAYBE' }, gsoOne), /Choose a valid resolution/, 400);
+  await rejects(workOrders.progressWork(request.id, { note: 'Checking.', photos: ['https://example.invalid/a.jpg'] }, gsoOne), /JPG, PNG, or WebP/, 400);
+  const progressed = await workOrders.progressWork(request.id, { note: 'Waiting for the part.', photos: [tinyPhoto] }, gsoOne);
+  assert.equal(progressed.status, 'In Progress');
+  const withInfo = await workOrders.addRequesterInfo(request.id, { message: 'It is Room 201, the projector near the door.', photos: [tinyPhoto] }, requester);
+  assert.ok(withInfo.photos.some((photo) => photo.source === 'REQUESTER_UPDATE'));
 });
 
 test('Others goes to GSO, keeps the description the requester typed, and needs that description', async () => {

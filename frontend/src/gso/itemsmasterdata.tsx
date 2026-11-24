@@ -92,7 +92,7 @@ type InventoryItem = {
   changeHistory?: InventoryChangeRecord[]
 }
 
-const conditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired']
+const conditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Unserviceable']
 const addItemConditionOptions = ['New', 'Good', 'Fair']
 
 type UnitGroup = { label?: string; units: string[] }
@@ -149,6 +149,7 @@ type StockFormFields = {
   trackingMode: InventoryTrackingMode
   issueBehavior: InventoryIssueBehavior
   unitOfMeasure: string
+  unitChosen?: boolean
 }
 
 function sameStockRecords(form: StockFormFields, inventoryItems: InventoryItem[]) {
@@ -172,14 +173,21 @@ function existingUnitFor(form: StockFormFields, inventoryItems: InventoryItem[])
   return (recordWithSameDescription(form, inventoryItems) || sameStockRecords(form, inventoryItems)[0])?.unit || ''
 }
 
-// Runs when the item or stock type changes. A unit the user picked is kept while it still fits;
-// a unit that was only filled in from the previous item is not carried over.
+// Runs when the item or stock type changes. A unit the user picked stays while the new item still offers it;
+// otherwise the existing stock with this name decides, and a unit only filled in from the previous item is dropped.
 function unitAfterStockChange(previous: StockFormFields, next: StockFormFields, inventoryItems: InventoryItem[]) {
+  const unitIsListed = unitGroupsFor(next.trackingMode, next.issueBehavior).some((group) => group.units.includes(previous.unitOfMeasure))
+  if (previous.unitChosen && unitIsListed) return previous.unitOfMeasure
   const existingUnit = existingUnitFor(next, inventoryItems)
   if (existingUnit) return existingUnit
   const unitCameFromPreviousStock = previous.unitOfMeasure === existingUnitFor(previous, inventoryItems)
-  const unitIsListed = unitGroupsFor(next.trackingMode, next.issueBehavior).some((group) => group.units.includes(previous.unitOfMeasure))
   return unitCameFromPreviousStock || !unitIsListed ? 'piece' : previous.unitOfMeasure
+}
+
+// The unit after a change, and whether it is still the unit the user picked.
+function stockUnitAfterChange(previous: StockFormFields, next: StockFormFields, inventoryItems: InventoryItem[]) {
+  const unitOfMeasure = unitAfterStockChange(previous, next, inventoryItems)
+  return { unitOfMeasure, unitChosen: previous.unitChosen === true && unitOfMeasure === previous.unitOfMeasure }
 }
 
 function categoryItemNameOptionsFor(
@@ -201,16 +209,30 @@ function categoryInitials(category: string) {
 
 const MAX_INDIVIDUAL_ITEMS_PER_SAVE = 500
 
-function inventoryItemCodeRange(category: string, quantity: number, inventoryItems: InventoryItem[]) {
-  if (!category || !Number.isInteger(quantity) || quantity < 1) return null
-  const prefix = `AST-${categoryInitials(category)}-`
-  const codePattern = new RegExp(`^${prefix}(\\d+)(?:\\s*[–-]\\s*${prefix}(\\d+))?$`, 'i')
+// Item code: year added, category initials, the item name's number in its category, then the unit number (2026-CPP-001-0001).
+function currentCodeYear() {
+  return new Intl.DateTimeFormat('en-PH', { year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date())
+}
+
+// The chosen item name's number in its category, or null while no item name is chosen.
+function itemNameCodeSequence(categories: InventoryCategory[], itemNames: InventoryCategoryItemName[], categoryName: string, itemName: string) {
+  const categoryId = categories.find((category) => category.name === categoryName)?.id
+  const match = itemNames.find((entry) => entry.categoryId === categoryId && entry.name.trim().toLowerCase() === itemName.trim().toLowerCase())
+  return match?.codeSequence ?? null
+}
+
+function inventoryItemCodeRange(category: string, codeSequence: number | null, quantity: number, inventoryItems: InventoryItem[]) {
+  if (!category || codeSequence === null || !Number.isInteger(quantity) || quantity < 1) return null
+  const group = `${categoryInitials(category)}-${String(codeSequence).padStart(3, '0')}`
+  // Matches one code or a stored range ("2026-CPP-001-0001 – 2026-CPP-001-0005"). The year is ignored so unit numbers keep counting.
+  const codePattern = new RegExp(`^\\d{4}-${group}-(\\d{4})(?:\\s*[–-]\\s*\\d{4}-${group}-(\\d{4}))?$`, 'i')
   const highestNumber = inventoryItems.reduce((highest, item) => {
     const match = item.code.match(codePattern)
     return match ? Math.max(highest, Number(match[2] || match[1])) : highest
   }, 0)
   const firstNumber = highestNumber + 1
   const lastNumber = highestNumber + quantity
+  const prefix = `${currentCodeYear()}-${group}-`
   const formatCode = (number: number) => `${prefix}${String(number).padStart(4, '0')}`
   const firstCode = formatCode(firstNumber)
   const lastCode = formatCode(lastNumber)
@@ -224,15 +246,15 @@ function inventoryItemCodeRange(category: string, quantity: number, inventoryIte
   }
 }
 
-function inventoryItemCodes(category: string, quantity: number, inventoryItems: InventoryItem[]) {
+function inventoryItemCodes(category: string, codeSequence: number | null, quantity: number, inventoryItems: InventoryItem[]) {
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_INDIVIDUAL_ITEMS_PER_SAVE) return []
-  const range = inventoryItemCodeRange(category, quantity, inventoryItems)
+  const range = inventoryItemCodeRange(category, codeSequence, quantity, inventoryItems)
   if (!range) return []
   return Array.from({ length: quantity }, (_, index) => `${range.prefix}${String(range.firstNumber + index).padStart(4, '0')}`)
 }
 
-function nextInventoryItemCode(category: string, inventoryItems: InventoryItem[]) {
-  return inventoryItemCodeRange(category, 1, inventoryItems)?.firstCode || ''
+function nextInventoryItemCode(category: string, codeSequence: number | null, inventoryItems: InventoryItem[]) {
+  return inventoryItemCodeRange(category, codeSequence, 1, inventoryItems)?.firstCode || ''
 }
 
 function calculateAcquisitionCost(quantity: string | number, unitCost: string | number) {
@@ -261,6 +283,17 @@ function unitStateFor(tag: InventoryAssetTag): { label: string; detail: string; 
   return { label: tag.condition, detail: '', tone: toneForCondition(tag.condition) }
 }
 
+// The condition a unit (or, without a tag code, the item) last went back to stock with after a repair, from the item history.
+function latestRepairCondition(changes: InventoryChangeRecord[], tagCode?: string) {
+  const repairs = changes
+    .filter((change) => (change.newValues.repairOutcome === 'Repaired'
+      || String(change.reason || '').includes('Repair completed from the To Be Repaired module'))
+      && typeof change.newValues.condition === 'string'
+      && (!tagCode || change.newValues.tagCode === tagCode || change.newValues.assetTagCode === tagCode))
+    .sort((left, right) => new Date(right.changedAt).getTime() - new Date(left.changedAt).getTime())
+  return repairs.length ? String(repairs[0].newValues.condition) : undefined
+}
+
 function toneForCondition(condition: string) {
   const tones: Record<string, string> = {
     New: 'bg-sky-50 text-sky-700',
@@ -278,20 +311,20 @@ function unserviceableUnitCount(item: Pick<InventoryItem, 'assetTags'>) {
   return item.assetTags.filter((tag) => tag.condition === 'Unserviceable').length
 }
 
+// Each tracked unit keeps its own condition, so when they all share one, that is the condition the list shows.
 function currentConditionForList(item: Pick<InventoryItem, 'condition' | 'assetTags'>) {
-  return item.assetTags.length > 0 && item.assetTags.every((tag) => tag.condition === 'Unserviceable')
-    ? 'Unserviceable'
-    : item.condition
+  const unitConditions = Array.from(new Set(item.assetTags.map((tag) => tag.condition)))
+  return unitConditions.length === 1 ? unitConditions[0] : item.condition
 }
 
-function assignedCustodianForList(item: Pick<InventoryItem, 'assignedTo' | 'condition'>) {
+function assignedCustodianForList(item: Pick<InventoryItem, 'assignedTo' | 'condition' | 'assetTags'>) {
   const hasCustodian = item.assignedTo.trim() !== ''
     && item.assignedTo !== 'In Storage'
     && item.assignedTo !== '—'
 
   if (hasCustodian) return item.assignedTo
 
-  const condition = item.condition.trim().toLowerCase()
+  const condition = currentConditionForList(item).trim().toLowerCase()
   if (condition === 'needs repair') return 'For Repair'
   if (condition === 'under maintenance') return 'Under Maintenance'
   if (condition === 'unserviceable' || condition === 'retired') return '—'
@@ -332,7 +365,7 @@ function downloadInventoryFile(fileName: string, content: BlobPart[], mimeType: 
   window.setTimeout(() => URL.revokeObjectURL(fileUrl), 0)
 }
 
-function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: string, onEmpty: (message: string) => void) {
+function generateInventorySpreadsheet(data: InventoryItem[], filters: string[], onEmpty: (message: string) => void) {
   if (data.length === 0) {
     onEmpty('There is no inventory data to export to Excel.')
     return
@@ -348,7 +381,7 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
   const totalQuantity = data.reduce((total, item) => total + (Number(item.quantityValue ?? item.quantity) || 0), 0)
   const availableQuantity = data.reduce((total, item) => total + (Number(item.availableQuantity) || 0), 0)
   const needsAttentionCount = data.filter((item) => {
-    const condition = item.condition.toLowerCase()
+    const condition = currentConditionForList(item).toLowerCase()
     return condition.includes('repair') || condition.includes('maintenance') || condition === 'unserviceable'
   }).length
   const generatedAt = new Intl.DateTimeFormat('en-PH', {
@@ -359,22 +392,23 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
 
   const reportRows = data.map((item, index) => {
     const rowBackground = index % 2 === 0 ? '#ffffff' : '#f1f5f9'
-    const conditionColor = item.conditionTone.includes('emerald')
+    const conditionToneClass = toneForCondition(currentConditionForList(item))
+    const conditionColor = conditionToneClass.includes('emerald')
       ? '#047857'
-      : item.conditionTone.includes('sky')
+      : conditionToneClass.includes('sky')
         ? '#0369a1'
-        : item.conditionTone.includes('amber')
+        : conditionToneClass.includes('amber')
           ? '#b45309'
-          : item.conditionTone.includes('rose')
+          : conditionToneClass.includes('rose')
             ? '#be123c'
             : '#475569'
-    const conditionBackground = item.conditionTone.includes('emerald')
+    const conditionBackground = conditionToneClass.includes('emerald')
       ? '#ecfdf5'
-      : item.conditionTone.includes('sky')
+      : conditionToneClass.includes('sky')
         ? '#f0f9ff'
-        : item.conditionTone.includes('amber')
+        : conditionToneClass.includes('amber')
           ? '#fffbeb'
-          : item.conditionTone.includes('rose')
+          : conditionToneClass.includes('rose')
             ? '#fff1f2'
             : '#f1f5f9'
     const statusStyle = item.statusTone.includes('emerald')
@@ -402,7 +436,7 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
       </td>
       <td style="width:220px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong>${escapeHTML(item.availableQuantity)} available / ${escapeHTML(item.quantity)} total ${escapeHTML(item.unit)}</strong><br>
-        <span style="display:inline-block;margin-top:5px;padding:4px 7px;background:${conditionBackground};color:${conditionColor};font-weight:bold;">${escapeHTML(item.condition)}</span>
+        <span style="display:inline-block;margin-top:5px;padding:4px 7px;background:${conditionBackground};color:${conditionColor};font-weight:bold;">${escapeHTML(currentConditionForList(item))}</span>
       </td>
       <td style="width:260px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeHTML(assignedCustodianForList(item))}</td>
       <td style="width:140px;padding:10px;border:1px solid #dbe3ef;vertical-align:top;">
@@ -411,8 +445,8 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
     </tr>`
   }).join('')
 
-  const dateSummary = selectedDate
-    ? `Filtered by acquisition date: ${escapeHTML(formatAcquiredDate(selectedDate))}`
+  const dateSummary = filters.length
+    ? `Filtered by ${filters.map(escapeHTML).join(' · ')}`
     : 'Includes the records matching the selected filters'
   const workbookHTML = `<!DOCTYPE html>
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -466,7 +500,7 @@ function generateInventorySpreadsheet(data: InventoryItem[], selectedDate: strin
   )
 }
 
-function generateInventoryWord(data: InventoryItem[], selectedDate: string, onEmpty: (message: string) => void) {
+function generateInventoryWord(data: InventoryItem[], filters: string[], onEmpty: (message: string) => void) {
   if (data.length === 0) {
     onEmpty('There is no inventory data to export to Word.')
     return
@@ -489,13 +523,14 @@ function generateInventoryWord(data: InventoryItem[], selectedDate: string, onEm
 
   const reportRows = data.map((item, index) => {
     const rowBackground = index % 2 === 0 ? '#ffffff' : '#f8fafc'
-    const conditionTone = item.conditionTone.includes('emerald')
+    const conditionToneClass = toneForCondition(currentConditionForList(item))
+    const conditionTone = conditionToneClass.includes('emerald')
       ? { background: '#ecfdf5', color: '#047857' }
-      : item.conditionTone.includes('sky')
+      : conditionToneClass.includes('sky')
         ? { background: '#f0f9ff', color: '#0369a1' }
-        : item.conditionTone.includes('amber')
+        : conditionToneClass.includes('amber')
           ? { background: '#fffbeb', color: '#b45309' }
-          : item.conditionTone.includes('rose')
+          : conditionToneClass.includes('rose')
             ? { background: '#fff1f2', color: '#be123c' }
             : { background: '#f1f5f9', color: '#475569' }
     const statusColor = item.statusTone.includes('emerald')
@@ -523,15 +558,15 @@ function generateInventoryWord(data: InventoryItem[], selectedDate: string, onEm
       </td>
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">
         <strong>${escapeHTML(item.availableQuantity)} available / ${escapeHTML(item.quantity)} total ${escapeHTML(item.unit)}</strong><br>
-        <span style="display:inline-block;margin-top:5px;padding:3px 7px;background:${conditionTone.background};color:${conditionTone.color};font-weight:bold;">${escapeHTML(item.condition)}</span>
+        <span style="display:inline-block;margin-top:5px;padding:3px 7px;background:${conditionTone.background};color:${conditionTone.color};font-weight:bold;">${escapeHTML(currentConditionForList(item))}</span>
       </td>
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;">${escapeHTML(assignedCustodianForList(item))}</td>
       <td style="padding:9px;border:1px solid #dbe3ef;vertical-align:top;color:${statusColor};font-weight:bold;">${escapeHTML(item.status)}</td>
     </tr>`
   }).join('')
 
-  const dateSummary = selectedDate
-    ? `Filtered by acquisition date: ${escapeHTML(formatAcquiredDate(selectedDate))}`
+  const dateSummary = filters.length
+    ? `Filtered by ${filters.map(escapeHTML).join(' · ')}`
     : 'Includes all acquisition dates'
   const documentHTML = `<!DOCTYPE html>
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
@@ -916,7 +951,7 @@ export default function ItemsMasterData() {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('all')
   const [selectedItemNameFilter, setSelectedItemNameFilter] = useState('all')
   const [selectedConditionStatusFilter, setSelectedConditionStatusFilter] = useState('all')
-  const [selectedTrackingModeFilter, setSelectedTrackingModeFilter] = useState<'all' | 'individual' | 'consumable'>('all')
+  const [selectedTrackingModeFilter, setSelectedTrackingModeFilter] = useState<'all' | 'individual' | 'group' | 'consumable'>('all')
   const [selectedInventoryDate, setSelectedInventoryDate] = useState('')
 
   // Add Item form state
@@ -934,6 +969,7 @@ export default function ItemsMasterData() {
     acquisitionCost: '0.00',
     quantity: '1',
     unitOfMeasure: 'piece',
+    unitChosen: false,
     condition: '',
   })
   // Items list state
@@ -1085,9 +1121,9 @@ export default function ItemsMasterData() {
               ...current,
               category: prefilledCategory?.name || '',
               itemName: prefilledItemName?.name || '',
-              itemCode: prefilledCategory ? nextInventoryItemCode(prefilledCategory.name, savedItems) : '',
+              itemCode: prefilledCategory ? nextInventoryItemCode(prefilledCategory.name, prefilledItemName?.codeSequence ?? null, savedItems) : '',
             }
-            return { ...next, unitOfMeasure: unitAfterStockChange(current, next, savedItems) }
+            return { ...next, ...stockUnitAfterChange(current, next, savedItems) }
           }
           const selectedCategory = categoryRecords.some((category) => category.name === current.category)
             ? current.category
@@ -1095,7 +1131,7 @@ export default function ItemsMasterData() {
           return {
             ...current,
             category: selectedCategory,
-            itemCode: nextInventoryItemCode(selectedCategory, savedItems),
+            itemCode: nextInventoryItemCode(selectedCategory, null, savedItems),
           }
         })
         if (prefill) {
@@ -1127,6 +1163,7 @@ export default function ItemsMasterData() {
     }
     setFormData((previous) => {
       const next = { ...previous, [name]: value }
+      if (name === 'unitOfMeasure') next.unitChosen = true
       if (name === 'trackingMode') {
         // Radio values: individual, group (quantity kept and returned after use), consumable.
         next.trackingMode = value === 'individual' ? 'individual' : 'quantity'
@@ -1134,12 +1171,16 @@ export default function ItemsMasterData() {
       }
       if (name === 'category') {
         next.itemName = ''
-        next.itemCode = nextInventoryItemCode(value, items)
+        next.itemCode = nextInventoryItemCode(value, null, items)
+      }
+      if (name === 'itemName') {
+        next.itemCode = nextInventoryItemCode(previous.category, itemNameCodeSequence(categories, itemNameOptions, previous.category, value), items)
       }
       if (['category', 'itemName', 'trackingMode'].includes(name)) {
-        next.unitOfMeasure = unitAfterStockChange(previous, next, items)
+        Object.assign(next, stockUnitAfterChange(previous, next, items))
       }
-      if (name === 'description') {
+      // A unit the user picked is not replaced by the unit of a record with the same description.
+      if (name === 'description' && !previous.unitChosen) {
         next.unitOfMeasure = recordWithSameDescription(next, items)?.unit || previous.unitOfMeasure
       }
       if (name === 'unitCost' || name === 'quantity') {
@@ -1179,7 +1220,7 @@ export default function ItemsMasterData() {
     setBulkRestockItemId('')
     setPrefilledRestockCost('')
     setFormData({
-      itemCode: nextInventoryItemCode(categoryName, inventoryItems),
+      itemCode: nextInventoryItemCode(categoryName, null, inventoryItems),
       category: categoryName,
       itemName: '',
       description: '',
@@ -1192,6 +1233,7 @@ export default function ItemsMasterData() {
       acquisitionCost: '0.00',
       quantity: '1',
       unitOfMeasure: 'piece',
+      unitChosen: false,
       condition: '',
     })
   }
@@ -1215,7 +1257,7 @@ export default function ItemsMasterData() {
       setFormData((prev) => ({
         ...prev,
         category: category.name,
-        itemCode: nextInventoryItemCode(category.name, items),
+        itemCode: nextInventoryItemCode(category.name, null, items),
         itemName: '',
       }))
       setNewCategoryName('')
@@ -1244,10 +1286,10 @@ export default function ItemsMasterData() {
           const next = {
             ...current,
             category: category.name,
-            itemCode: nextInventoryItemCode(category.name, items),
+            itemCode: nextInventoryItemCode(category.name, itemName.codeSequence ?? null, items),
             itemName: itemName.name,
           }
-          return { ...next, unitOfMeasure: unitAfterStockChange(current, next, items) }
+          return { ...next, ...stockUnitAfterChange(current, next, items) }
         })
       }
       notifyAction('Item name added', `Item name "${itemName.name}" was added.`)
@@ -1293,7 +1335,7 @@ export default function ItemsMasterData() {
       setItems((current) => current.map((item) => item.category === category.name ? { ...item, category: renamed.name } : item))
       setSelectedItem((current) => current?.category === category.name ? { ...current, category: renamed.name } : current)
       setFormData((current) => current.category === category.name
-        ? { ...current, category: renamed.name, itemCode: nextInventoryItemCode(renamed.name, items), itemName: '' }
+        ? { ...current, category: renamed.name, itemCode: nextInventoryItemCode(renamed.name, null, items), itemName: '' }
         : current)
       setEditFormData((current) => current.category === category.name ? { ...current, category: renamed.name } : current)
       setSelectedCategoryFilter((current) => current === category.name ? renamed.name : current)
@@ -1326,7 +1368,7 @@ export default function ItemsMasterData() {
       setSelectedCategoryFilter((current) => current === categoryToDelete.name ? 'all' : current)
       setItemNameCategoryId((current) => current === categoryToDelete.id ? fallback?.id || '' : current)
       setFormData((current) => current.category === categoryToDelete.name
-        ? { ...current, category: fallbackCategory, itemCode: nextInventoryItemCode(fallbackCategory, items), itemName: '' }
+        ? { ...current, category: fallbackCategory, itemCode: nextInventoryItemCode(fallbackCategory, null, items), itemName: '' }
         : current)
       setEditFormData((current) => current.category === categoryToDelete.name ? { ...current, category: fallbackCategory } : current)
       setCategoryToDelete(null)
@@ -1567,12 +1609,13 @@ export default function ItemsMasterData() {
         return
       }
 
+      const saveCodeSequence = itemNameCodeSequence(categories, itemNameOptions, formData.category, formData.itemName)
       const bulkCodeRange = isIndividualTracking
         ? null
-        : inventoryItemCodeRange(formData.category, quantity, items)
+        : inventoryItemCodeRange(formData.category, saveCodeSequence, quantity, items)
       const codeCount = isIndividualTracking ? quantity : 1
       const itemCodes = isIndividualTracking
-        ? inventoryItemCodes(formData.category, quantity, items)
+        ? inventoryItemCodes(formData.category, saveCodeSequence, quantity, items)
         : bulkCodeRange ? [bulkCodeRange.display] : []
       if (itemCodes.length !== codeCount) {
         throw new Error('Unable to generate item codes. Please check the quantity and try again.')
@@ -1653,11 +1696,12 @@ export default function ItemsMasterData() {
     const matchesItemName = selectedItemNameFilter === 'all'
       || item.name.toLocaleLowerCase() === selectedItemNameFilter.toLocaleLowerCase()
     const [conditionStatusType, conditionStatusValue] = selectedConditionStatusFilter.split(':', 2)
-    const matchesCondition = conditionStatusType !== 'condition' || item.condition === conditionStatusValue
+    const matchesCondition = conditionStatusType !== 'condition' || currentConditionForList(item) === conditionStatusValue
       || (conditionStatusValue === 'Unserviceable' && unserviceableUnitCount(item) > 0)
     const matchesStatus = conditionStatusType !== 'status' || item.status === conditionStatusValue
     const matchesTrackingMode = selectedTrackingModeFilter === 'all'
       || (selectedTrackingModeFilter === 'individual' && item.trackingMode === 'individual')
+      || (selectedTrackingModeFilter === 'group' && item.trackingMode === 'quantity' && item.issueBehavior === 'returnable')
       || (selectedTrackingModeFilter === 'consumable' && item.trackingMode === 'quantity' && item.issueBehavior === 'consumable')
 
     return matchesSearch && matchesCategory && matchesItemName && matchesCondition && matchesStatus && matchesTrackingMode
@@ -1665,6 +1709,17 @@ export default function ItemsMasterData() {
   const fullInventoryItems = selectedInventoryDate
     ? filteredItems.filter((item) => item.dateAcquiredValue?.slice(0, 10) === selectedInventoryDate)
     : filteredItems
+  // The filters on screen, written into the Excel and Word exports so each file says what it covers.
+  const inventoryExportFilters = [
+    searchQuery.trim() ? `search: ${searchQuery.trim()}` : '',
+    selectedCategoryFilter !== 'all' ? `category: ${selectedCategoryFilter}` : '',
+    selectedItemNameFilter !== 'all' ? `item name: ${selectedItemNameFilter}` : '',
+    selectedConditionStatusFilter !== 'all' ? selectedConditionStatusFilter.replace(':', ': ') : '',
+    selectedTrackingModeFilter !== 'all'
+      ? `inventory type: ${selectedTrackingModeFilter === 'individual' ? 'Track each item' : selectedTrackingModeFilter === 'group' ? 'Group (returned)' : 'Consumable'}`
+      : '',
+    selectedInventoryDate ? `acquisition date: ${formatAcquiredDate(selectedInventoryDate)}` : '',
+  ].filter(Boolean)
   const displayedItems = fullInventoryItems
   const selectedItemAvatarIndex = selectedItem
     ? displayedItems.findIndex((item) => selectedItem.id ? item.id === selectedItem.id : item.code === selectedItem.code)
@@ -1700,9 +1755,10 @@ export default function ItemsMasterData() {
     : []
   const formRestockTarget = formRestockCandidates.find((item) => item.id === bulkRestockItemId) || null
   const formItemCodeCount = formData.trackingMode === 'individual' ? requestedItemCount : 1
-  const formItemCodes = inventoryItemCodes(formData.category, formItemCodeCount, items)
+  const formCodeSequence = itemNameCodeSequence(categories, itemNameOptions, formData.category, formData.itemName)
+  const formItemCodes = inventoryItemCodes(formData.category, formCodeSequence, formItemCodeCount, items)
   const formBulkCodeRange = formData.trackingMode === 'quantity'
-    ? inventoryItemCodeRange(formData.category, requestedItemCount, items)
+    ? inventoryItemCodeRange(formData.category, formCodeSequence, requestedItemCount, items)
     : null
   const itemCodePreview = formRestockTarget?.code
     || (formData.trackingMode === 'quantity'
@@ -1761,7 +1817,7 @@ export default function ItemsMasterData() {
     },
     {
       label: 'Needs attention',
-      value: items.filter((item) => /repair|maintenance/i.test(item.condition) || item.condition === 'Unserviceable').length,
+      value: items.filter((item) => /repair|maintenance/i.test(currentConditionForList(item)) || currentConditionForList(item) === 'Unserviceable').length,
       hint: 'For repair, maintenance, or unserviceable',
       icon: <><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></>,
     },
@@ -2013,10 +2069,9 @@ export default function ItemsMasterData() {
               <fieldset>
               <legend className={editFieldLabelClass}>Inventory type <span className="text-rose-600">*</span></legend>
               <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">How GSO tracks this item.</p>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2">
                 {([
                   { value: 'individual' as const, title: 'Track each item', description: 'Each item gets its own barcode.' },
-                  { value: 'group' as const, title: 'Group (returned)', description: 'One shared count. Borrowing lowers it; returns add back.' },
                   { value: 'consumable' as const, title: 'Consumable', description: 'Used up, not returned.' },
                 ]).map((option) => (
                   <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${selectedInventoryType === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
@@ -2061,7 +2116,9 @@ export default function ItemsMasterData() {
                   ? `Locked to match ${formRestockTarget.code}.`
                   : formExistingUnits.includes(formData.unitOfMeasure)
                     ? `Matches your existing ${formData.itemName.trim()} stock.`
-                    : unitHintFor(formData.trackingMode, formData.issueBehavior)}
+                    : formExistingUnits.length > 0
+                      ? `Your existing ${formData.itemName.trim()} stock is in ${Array.from(new Set(formExistingUnits)).join(', ')}.`
+                      : unitHintFor(formData.trackingMode, formData.issueBehavior)}
               </span>
             </label>
 
@@ -2334,8 +2391,8 @@ export default function ItemsMasterData() {
                               const category = categories.find((entry) => entry.id === itemName.categoryId)
                               if (category) {
                                 setFormData((current) => {
-                                  const next = { ...current, category: category.name, itemCode: nextInventoryItemCode(category.name, items), itemName: itemName.name }
-                                  return { ...next, unitOfMeasure: unitAfterStockChange(current, next, items) }
+                                  const next = { ...current, category: category.name, itemCode: nextInventoryItemCode(category.name, itemName.codeSequence ?? null, items), itemName: itemName.name }
+                                  return { ...next, ...stockUnitAfterChange(current, next, items) }
                                 })
                               }
                               setShowMasterDataModal(false)
@@ -2576,7 +2633,7 @@ export default function ItemsMasterData() {
                 )}
                 <button
                   type="button"
-                  onClick={() => generateInventorySpreadsheet(fullInventoryItems, selectedInventoryDate, (message) => showActionAlert(message, 'Nothing to export'))}
+                  onClick={() => generateInventorySpreadsheet(fullInventoryItems, inventoryExportFilters, (message) => showActionAlert(message, 'Nothing to export'))}
                   className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#138548] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#0f7440] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2"
                 >
                   <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -2587,7 +2644,7 @@ export default function ItemsMasterData() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => generateInventoryWord(fullInventoryItems, selectedInventoryDate, (message) => showActionAlert(message, 'Nothing to export'))}
+                  onClick={() => generateInventoryWord(fullInventoryItems, inventoryExportFilters, (message) => showActionAlert(message, 'Nothing to export'))}
                   className="inline-flex min-h-9 min-w-40 items-center justify-center gap-1.5 rounded-lg bg-[#2d5aa3] px-4 py-2 text-[0.65rem] font-extrabold uppercase tracking-wide text-white shadow-md transition-all hover:-translate-y-0.5 hover:bg-[#264e8e] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 focus-visible:ring-offset-2"
                 >
                   <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -2660,15 +2717,10 @@ export default function ItemsMasterData() {
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="all">All conditions &amp; statuses</option>
-                <optgroup label="Condition">
+                <optgroup label="Condition and Status">
                   {conditions.map((condition) => <option key={`condition:${condition}`} value={`condition:${condition}`}>{condition}</option>)}
-                </optgroup>
-                <optgroup label="Status">
                   <option value="status:Available">Available</option>
                   <option value="status:Issued">Issued</option>
-                  <option value="status:Pending Approval">Pending Approval</option>
-                  <option value="status:Reserved">Reserved</option>
-                  <option value="status:Borrowed">Borrowed</option>
                 </optgroup>
               </select>
             </label>
@@ -2677,12 +2729,13 @@ export default function ItemsMasterData() {
               <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">Inventory type</span>
               <select
                 value={selectedTrackingModeFilter}
-                onChange={(event) => setSelectedTrackingModeFilter(event.target.value as 'all' | 'individual' | 'consumable')}
+                onChange={(event) => setSelectedTrackingModeFilter(event.target.value as 'all' | 'individual' | 'group' | 'consumable')}
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="all">All inventory</option>
-                <option value="individual">Track each item separately</option>
-                <option value="consumable">Consumable stocks</option>
+                <option value="individual">Track each item</option>
+                <option value="group">Group (returned)</option>
+                <option value="consumable">Consumable</option>
               </select>
             </label>
           </div>
@@ -2874,6 +2927,9 @@ export default function ItemsMasterData() {
                     <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + (selectedItem.conditionAfterReturn ? toneForCondition(selectedItem.conditionAfterReturn) : 'bg-slate-100 text-slate-500')}>
                       Condition after return: {selectedItem.conditionAfterReturn || 'Not returned yet'}
                     </span>
+                    {latestRepairCondition(selectedItem.changeHistory ?? []) && <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-extrabold text-emerald-800">
+                      Condition after repair: {latestRepairCondition(selectedItem.changeHistory ?? [])}
+                    </span>}
                     <span className={'rounded-full px-3 py-1.5 text-sm font-extrabold ' + selectedItem.statusTone}>
                       Status: {selectedItem.status}
                     </span>
@@ -2893,7 +2949,7 @@ export default function ItemsMasterData() {
                           <p className="text-xs font-extrabold text-slate-900">{tag.tagCode} <span className="font-semibold text-slate-500">· Item {tag.unitNumber}</span></p>
                           <p className="mt-1 text-[0.68rem] text-slate-600">{tag.location || 'Location not recorded'}{tag.serialNumber ? ` · Serial ${tag.serialNumber}` : ''}</p>
                           {state.detail && <p className="mt-0.5 text-[0.68rem] font-semibold text-slate-700">{state.detail}</p>}
-                          {tag.repairedByName && <p className="mt-0.5 text-[0.68rem] font-semibold text-emerald-800">Repaired by {tag.repairedByName}</p>}
+                          {tag.repairedByName && <p className="mt-0.5 text-[0.68rem] font-semibold text-emerald-800">Repaired by {tag.repairedByName}{latestRepairCondition(selectedItem.changeHistory ?? [], tag.tagCode) ? ` · condition after repair: ${latestRepairCondition(selectedItem.changeHistory ?? [], tag.tagCode)}` : ''}</p>}
                           {tag.lastInspectedBy && <p className="mt-0.5 text-[0.68rem] font-semibold text-blue-800">Last checked by {tag.lastInspectedBy}{tag.lastInspectedAt ? ` · ${formatCreatedAt(tag.lastInspectedAt)}` : ''}</p>}
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">

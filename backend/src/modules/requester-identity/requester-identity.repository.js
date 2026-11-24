@@ -177,7 +177,7 @@ async function resolveApprovedDepartment(client, name, addIfMissing, createdByUs
   );
   if (existing.rows[0]) return existing.rows[0].name;
   if (!addIfMissing) {
-    throw Object.assign(new Error('Napili na department / office ay wala na sa master data. I-refresh ang page at pumili ulit.'), { status: 409 });
+    throw Object.assign(new Error('The chosen department / office is no longer in master data. Refresh the page and choose again.'), { status: 409 });
   }
   const inserted = await client.query(
     `INSERT INTO departments (name, created_by_user_id)
@@ -192,7 +192,7 @@ async function resolveApprovedDepartment(client, name, addIfMissing, createdByUs
     [name],
   );
   if (concurrent.rows[0]) return concurrent.rows[0].name;
-  throw Object.assign(new Error('Hindi naidagdag ang department / office. I-refresh at subukan ulit.'), { status: 409 });
+  throw Object.assign(new Error('The department / office could not be added. Refresh and try again.'), { status: 409 });
 }
 
 async function resolveApprovedPosition(client, name, addIfMissing, createdByUserId) {
@@ -202,7 +202,7 @@ async function resolveApprovedPosition(client, name, addIfMissing, createdByUser
   );
   if (existing.rows[0]) return existing.rows[0].name;
   if (!addIfMissing) {
-    throw Object.assign(new Error('Napiling position ay wala na sa master data. I-refresh ang page at pumili ulit.'), { status: 409 });
+    throw Object.assign(new Error('The chosen position is no longer in master data. Refresh the page and choose again.'), { status: 409 });
   }
   const inserted = await client.query(
     `INSERT INTO employee_positions (name, created_by_user_id)
@@ -217,7 +217,7 @@ async function resolveApprovedPosition(client, name, addIfMissing, createdByUser
     [name],
   );
   if (concurrent.rows[0]) return concurrent.rows[0].name;
-  throw Object.assign(new Error('Hindi naidagdag ang position. I-refresh at subukan ulit.'), { status: 409 });
+  throw Object.assign(new Error('The position could not be added. Refresh and try again.'), { status: 409 });
 }
 
 async function review(userId, { status, note, department, position, addDepartment, addPosition, reviewedByUserId }) {
@@ -261,7 +261,7 @@ async function review(userId, { status, note, department, position, addDepartmen
       };
       if (!employeeName.firstName || !employeeName.lastName) {
         throw Object.assign(
-          new Error('Kailangang may first name at surname ang requester bago ito maidagdag sa Employee Master Data.'),
+          new Error('The requester needs a first name and surname before this can be added to Employee Master Data.'),
           { status: 400 },
         );
       }
@@ -287,7 +287,7 @@ async function review(userId, { status, note, department, position, addDepartmen
           && existingEmployee.position.trim().toLowerCase() === identity.position.trim().toLowerCase();
         if (!employeeRecordMatch && !note.trim()) {
           throw Object.assign(
-            new Error('Maglagay ng review note kung mano-manong ive-verify ang profile na hindi eksaktong tumugma sa Employee Master Data.'),
+            new Error('Enter a review note if the profile is verified by hand and does not exactly match Employee Master Data.'),
             { status: 400 },
           );
         }
@@ -307,7 +307,7 @@ async function review(userId, { status, note, department, position, addDepartmen
         );
         if (emailResult.rows[0]) {
           throw Object.assign(
-            new Error(`Ang email na ito ay naka-link na sa employee code ${emailResult.rows[0].employee_code}. Suriin ang employee number bago mag-approve.`),
+            new Error(`This email is already linked to employee code ${emailResult.rows[0].employee_code}. Check the employee number before you approve.`),
             { status: 409 },
           );
         }
@@ -399,10 +399,10 @@ async function review(userId, { status, note, department, position, addDepartmen
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505' && error.constraint === 'employees_employee_code_lower_unique_idx') {
-      throw Object.assign(new Error('May employee record na gumagamit na ng employee number na ito. I-refresh ang queue at suriin ang record.'), { status: 409 });
+      throw Object.assign(new Error('An employee record already uses this employee number. Refresh the queue and check the record.'), { status: 409 });
     }
     if (error.code === '23505' && error.constraint === 'employees_email_lower_unique_idx') {
-      throw Object.assign(new Error('May employee record na gumagamit na ng email na ito. Suriin ang Employee Master Data bago mag-approve.'), { status: 409 });
+      throw Object.assign(new Error('An employee record already uses this email. Check Employee Master Data before you approve.'), { status: 409 });
     }
     throw error;
   } finally {

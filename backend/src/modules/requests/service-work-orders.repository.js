@@ -27,6 +27,7 @@ const WORK_ORDER_SELECT = `
          work.requester_confirmed_at AS "requesterConfirmedAt",
          work.closed_at AS "closedAt",
          work.closure_type AS "closureType",
+         work.resolution_type AS "resolutionType",
          work.completion_note AS "completionNote",
          work.incomplete_reason AS "incompleteReason",
          work.reopen_count AS "reopenCount",
@@ -111,6 +112,7 @@ const WORK_ORDER_COLUMNS = Object.freeze({
   closedAt: 'closed_at',
   closedByUserId: 'closed_by_user_id',
   closureType: 'closure_type',
+  resolutionType: 'resolution_type',
   completionNote: 'completion_note',
   incompleteReason: 'incomplete_reason',
   reopenCount: 'reopen_count',
@@ -148,7 +150,7 @@ function queueCondition(queue, values, userId) {
   }
 }
 
-async function createForJobRequest(client, { requestId, formData }) {
+async function createForJobRequest(client, { requestId, formData, userId }) {
   const created = await client.query(
     `INSERT INTO service_work_orders (request_id, route_team, service_category, priority, target_date)
      VALUES ($1, $2, $3, $4, $5::DATE)
@@ -163,12 +165,43 @@ async function createForJobRequest(client, { requestId, formData }) {
       [requestId, index + 1, task.quantity, task.particulars, task.natureOfWork, task.remarks || ''],
     );
   }
+  await insertPhotos(client, requestId, formData.photos || [], { source: 'REQUEST', userId });
   return created.rows[0];
 }
 
-async function getWorkOrder(queryable, requestId) {
-  const result = await (queryable || pool).query(`${WORK_ORDER_SELECT} WHERE request.id = $1`, [requestId]);
-  return result.rows[0] || null;
+// Photos are sent as data URLs. They are read only for the single-job screens, never for the lists.
+async function getWorkOrder(queryable, requestId, { withPhotos = false } = {}) {
+  const db = queryable || pool;
+  const result = await db.query(`${WORK_ORDER_SELECT} WHERE request.id = $1`, [requestId]);
+  const workOrder = result.rows[0] || null;
+  if (workOrder && withPhotos) workOrder.photos = await listPhotos(db, requestId);
+  return workOrder;
+}
+
+async function listPhotos(queryable, requestId) {
+  const result = await (queryable || pool).query(
+    `SELECT photo.id::TEXT AS id,
+            photo.source,
+            photo.photo_data AS "dataUrl",
+            uploader.name AS "addedBy",
+            photo.created_at AS "createdAt"
+       FROM service_work_order_photos AS photo
+       LEFT JOIN users AS uploader ON uploader.id = photo.added_by_user_id
+      WHERE photo.request_id = $1
+      ORDER BY photo.created_at, photo.id`,
+    [requestId],
+  );
+  return result.rows;
+}
+
+async function insertPhotos(client, requestId, photos, { source, userId }) {
+  for (const photo of photos) {
+    await client.query(
+      `INSERT INTO service_work_order_photos (request_id, source, photo_data, added_by_user_id)
+       VALUES ($1, $2, $3, $4)`,
+      [requestId, source, photo, userId || null],
+    );
+  }
 }
 
 async function listWorkOrders({ team, queue, search, limit, offset, userId }) {
@@ -255,7 +288,7 @@ async function withLockedWorkOrder(requestId, work) {
     const current = result.rows[0];
     if (!current) throw httpError(404, 'Service work order not found.');
     const value = await work(client, current);
-    const workOrder = await getWorkOrder(client, requestId);
+    const workOrder = await getWorkOrder(client, requestId, { withPhotos: true });
     await client.query('COMMIT');
     return { current, workOrder, value };
   } catch (error) {
@@ -434,6 +467,7 @@ module.exports = {
   updateRequestStatus,
   updateWorkOrder,
   insertHistory,
+  insertPhotos,
   updateTasks,
   countOpenTasks,
   autoCloseEligible,

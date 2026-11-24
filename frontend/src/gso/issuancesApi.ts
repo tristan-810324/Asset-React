@@ -269,10 +269,10 @@ export async function listHoldings(employeeCode?: string) {
 }
 
 // Puts repaired units back in stock; a write-off goes through requestReturnApproval instead.
-export async function markReturnRepaired(returnId: string) {
+export async function markReturnRepaired(returnId: string, condition: string) {
   const result = await apiRequest<{ result: { returnId: string; outcome: string } }>(
     `/issuances/returns/${encodeURIComponent(returnId)}/repair`,
-    { method: 'POST', body: JSON.stringify({ outcome: 'Repaired' }) },
+    { method: 'POST', body: JSON.stringify({ outcome: 'Repaired', condition }) },
   )
   return result.result
 }
@@ -558,6 +558,8 @@ export type UnitLabel = {
   unitNumber: number
   itemCode: string
   itemName: string
+  // The item's full description (specs), printed on the label instead of the short name.
+  itemDescription?: string | null
   holderCode: string
   holderName: string
   batchEmployeeName?: string | null
@@ -611,10 +613,10 @@ export async function reprintUnitLabel(tagCode: string, reason: string) {
   return result.label
 }
 
-export async function completeTaggedAssetRepair(tagCode: string, repairedByName: string) {
+export async function completeTaggedAssetRepair(tagCode: string, repairedByName: string, condition: string) {
   const result = await apiRequest<{ result: { tagCode: string; condition: string; location: string } }>(
     `/issuances/tags/${encodeURIComponent(normalizeAssetTagRequestCode(tagCode))}/repair-complete`,
-    { method: 'PATCH', body: JSON.stringify({ repairedByName }) },
+    { method: 'PATCH', body: JSON.stringify({ repairedByName, condition }) },
   )
   return result.result
 }

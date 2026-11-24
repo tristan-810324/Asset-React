@@ -13,7 +13,7 @@ import {
 } from './issuancesApi'
 import { listEmployees, type EmployeeProfile } from './employeesApi'
 import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
-import { getStaffPurchaseRequisition, listStaffPurchaseRequisitions, swapRequisitionUnit, type StorageUnit } from './purchaseRequisitionsApi'
+import { getStaffPurchaseRequisition, listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
 import { linesOf, formText, purchaseLineReadyForIssuance, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
 import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
 import type { PurchaseRequisitionLine, ServiceRequest } from '../requesters/requesterApi'
@@ -458,7 +458,7 @@ export default function MainIssuance() {
   const [requisitionSearch, setRequisitionSearch] = useState('')
   const [isRequisitionPickerOpen, setIsRequisitionPickerOpen] = useState(false)
   const isRequisitionIssuance = Boolean(selectedPurchaseRequisitionId)
-  const showRequisitionStep = !batchIdFromUrl && (readyRequisitions.length > 0 || isRequisitionIssuance)
+  const showRequisitionStep = !batchIdFromUrl
   const visibleInventoryTypeOptions = isRequisitionIssuance
     ? inventoryTypeOptions
     : [{ value: 'consumable' as const, label: 'Consumable stock' }]
@@ -478,8 +478,6 @@ export default function MainIssuance() {
   const [recipientAssignmentChecks, setRecipientAssignmentChecks] = useState<Record<string, EmployeeIssuanceRecord['assignedItems']>>({})
   const [recipientAssignmentErrors, setRecipientAssignmentErrors] = useState<Record<string, string>>({})
   const [purchaseRequisitionLineIds, setPurchaseRequisitionLineIds] = useState<Record<string, string>>({})
-  const [storageCandidates, setStorageCandidates] = useState<StorageUnit[]>([])
-  const [swapBusyId, setSwapBusyId] = useState('')
   const [purchaseRequisitionReference, setPurchaseRequisitionReference] = useState('')
   const [purchaseRequisitionOtherTypeCount, setPurchaseRequisitionOtherTypeCount] = useState(0)
   const [purchaseRequisitionReusableCount, setPurchaseRequisitionReusableCount] = useState(0)
@@ -538,7 +536,6 @@ export default function MainIssuance() {
         setRecipientAssignmentChecks({})
         setRecipientAssignmentErrors({})
         setPurchaseRequisitionLineIds({})
-        setStorageCandidates([])
         setPurchaseRequisitionOtherTypeCount(0)
         setPurchaseRequisitionReusableCount(0)
         setItemSearch('')
@@ -570,8 +567,6 @@ export default function MainIssuance() {
             .filter(([itemId]) => itemIds.has(itemId))
             .map(([itemId, reservation]) => [itemId, String(reservation.quantity)]))
           setInventory(items)
-          // Units in storage that are free now (the server leaves out units reserved for another request).
-          setStorageCandidates(purchaseRequisition?.storageCandidates ?? [])
           setSelectedQuantities(quantities)
           setPurchaseRequisitionLineIds(Object.fromEntries([...reservedByItem.entries()]
             .filter(([itemId]) => itemIds.has(itemId))
@@ -601,12 +596,7 @@ export default function MainIssuance() {
           setInventoryTypeFilter('all')
         } else {
           setRecipientAllocations({})
-          setInventory(inventoryResult.filter((item) => (
-            item.status.toLowerCase() === 'available'
-            && item.availableQuantity > 0
-            && item.trackingMode === 'quantity'
-            && item.issueBehavior === 'consumable'
-          )))
+          setInventory([])
           setPurchaseRequisitionLineIds({})
           setPurchaseRequisitionReference('')
           setPurchaseRequisitionOtherTypeCount(0)
@@ -781,25 +771,6 @@ export default function MainIssuance() {
       reservedUnits,
     }
   }, [readyRequisitions, selectedPurchaseRequisitionId])
-  // Swaps the reserved unit of the same category for the chosen storage unit, then reloads so every list is fresh.
-  async function useStorageUnit(unit: StorageUnit) {
-    const reserved = inventory.find((item) => purchaseRequisitionLineIds[item.id] && item.category.trim() === unit.category.trim())
-    const lineId = reserved ? purchaseRequisitionLineIds[reserved.id] : undefined
-    if (!reserved || !lineId) {
-      setSubmitError('There is no reserved unit of this category to replace.')
-      return
-    }
-    setSubmitError('')
-    setSwapBusyId(unit.itemId)
-    try {
-      await swapRequisitionUnit({ lineId, fromItemId: reserved.id, toItemId: unit.itemId })
-      window.location.reload()
-    } catch (reason) {
-      setSubmitError(reason instanceof Error ? reason.message : 'Unable to reserve this unit.')
-      setSwapBusyId('')
-    }
-  }
-
   const inventoryById = useMemo(() => new Map(inventory.map((item) => [item.id, item])), [inventory])
   const selectedItems = useMemo<SelectedInventoryItem[]>(() => Object.entries(selectedQuantities).flatMap(([itemId, quantityText]) => {
     const item = inventoryById.get(itemId)
@@ -932,6 +903,8 @@ export default function MainIssuance() {
       : activeSubmittedBarcodeLabels.length > 0 ? 'All labels printed' : 'No active labels'
   // A sent batch replaces the empty review form until the staff selects another item or starts over.
   const isShowingSentBatch = Boolean(submittedBatch) && selectedItems.length === 0
+  // Steps 2 to 4 open once an approved request is chosen, or while a sent batch is shown.
+  const showIssuanceForm = isRequisitionIssuance || Boolean(batchIdFromUrl) || Boolean(submittedBatch)
   const isEmployeeStepDone = Boolean(selectedEmployee)
   const isItemsStepDone = selectedItems.length > 0 && !hasInvalidQuantity && !hasMixedItemTypes
   const stepTotal = showRequisitionStep ? 4 : 3
@@ -1113,7 +1086,7 @@ export default function MainIssuance() {
 
   async function recordManualHandover() {
     if (!submittedBatch || !handoverReference.trim()) {
-      setHandoverError('Ilagay ang receipt reference o pangalan ng authorized recipient.')
+      setHandoverError('Enter the receipt reference or the authorized recipient name.')
       return
     }
     setIsRecordingHandover(true)
@@ -1127,7 +1100,7 @@ export default function MainIssuance() {
       setSubmittedBatch({ ...submittedBatchFromDetails(batch), emailSent: submittedBatch.emailSent })
       setHandoverReference('')
     } catch (error) {
-      setHandoverError(error instanceof Error ? error.message : 'Hindi maitala ang handover.')
+      setHandoverError(error instanceof Error ? error.message : 'Could not record the handover.')
     } finally {
       setIsRecordingHandover(false)
     }
@@ -1278,21 +1251,12 @@ export default function MainIssuance() {
             max-width: 100%; margin: 0 !important; color: #000 !important; line-height: 1.15;
             letter-spacing: normal; white-space: nowrap !important; overflow: visible !important; text-overflow: clip !important;
           }
-          body.printing-asset-labels .asset-barcode-label .label-barcode-value { font-size: 4mm !important; font-weight: 800; letter-spacing: 0.02mm; line-height: 1 !important; }
-          body.printing-asset-labels .asset-barcode-label .label-removal-warning {
-            font-size: 2mm !important; font-weight: 900; letter-spacing: 0.12mm; line-height: 1 !important;
-          }
-          body.printing-asset-labels .asset-barcode-label .label-item-details {
-            max-width: 49mm; font-size: 1.7mm !important; font-weight: 700; line-height: 1 !important;
-          }
+          body.printing-asset-labels .asset-barcode-label .label-removal-warning { font-size: 2mm !important; font-weight: 900; letter-spacing: 0.12mm; line-height: 1 !important; }
           body.printing-asset-labels .asset-barcode-label .label-item-name {
-            display: inline-block; max-width: 32mm; overflow: hidden !important; text-overflow: ellipsis !important;
-            vertical-align: bottom;
+            display: inline-block; max-width: 47mm; overflow: hidden !important; text-overflow: ellipsis !important; vertical-align: bottom;
           }
           body.printing-asset-labels .asset-barcode-label .barcode-preview,
-          body.printing-asset-labels .asset-barcode-label .label-barcode-value,
-          body.printing-asset-labels .asset-barcode-label .label-removal-warning,
-          body.printing-asset-labels .asset-barcode-label .label-item-details { flex: 0 0 auto; }
+          body.printing-asset-labels .asset-barcode-label .label-removal-warning { flex: 0 0 auto; }
           body.printing-asset-labels .barcode-preview { width: 49mm !important; max-width: 100% !important; margin: 0 auto !important; }
           body.printing-asset-labels .barcode-preview svg {
             display: block !important; width: 100% !important; height: auto !important; max-width: 49mm !important;
@@ -1306,7 +1270,7 @@ export default function MainIssuance() {
           <div className="relative">
           <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff issuance</span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Main Issuance</h1>
-          <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">Issue reserved requests, or give consumable stock to an employee.</p>
+          <p className="mt-2 max-w-3xl text-sm font-medium leading-relaxed text-blue-100">Issue reserved requests to an employee.</p>
           <RequisitionIssuanceShortcuts active="issuance" />
           </div>
         </section>
@@ -1316,27 +1280,12 @@ export default function MainIssuance() {
           <StepHeader
             step={1}
             totalSteps={stepTotal}
-            status="done"
+            status={isRequisitionIssuance ? 'done' : 'current'}
             titleId="issuance-source-title"
-            title="Choose issuance source"
-            description="Pick a ready request or issue consumables."
+            title="Choose approved request"
+            description="Pick a request to issue its reserved items."
           />
-          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(15rem,0.72fr)_minmax(0,1.28fr)]">
-            <button
-              type="button"
-              aria-pressed={!isRequisitionIssuance}
-              disabled={isSubmitting}
-              onClick={() => selectPurchaseRequisition('')}
-              className={`flex min-h-36 flex-col items-start justify-between rounded-2xl border-2 p-4 text-left shadow-md shadow-slate-300/35 transition disabled:opacity-60 ${!isRequisitionIssuance ? 'border-emerald-400 bg-emerald-50 ring-2 ring-emerald-100' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5 hover:border-emerald-300 hover:bg-emerald-50/40'}`}
-            >
-              <span>
-                <span className="block text-sm font-extrabold text-slate-900">Direct consumables</span>
-                <span className="mt-1 block text-xs leading-relaxed text-slate-600">Stock with no request needed.</span>
-              </span>
-              <span className={`mt-4 inline-flex items-center rounded-full px-2.5 py-1 text-[0.65rem] font-extrabold ${!isRequisitionIssuance ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
-                {!isRequisitionIssuance ? 'Selected' : 'Issue stock directly'}
-              </span>
-            </button>
+          <div className="mt-4">
             <div className={`min-w-0 rounded-2xl border-2 p-3 sm:p-4 shadow-md shadow-slate-300/35 ${isRequisitionIssuance ? 'border-blue-300 bg-blue-50/40 ring-2 ring-blue-100' : 'border-slate-300/80 bg-white ring-1 ring-slate-900/5'}`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -1476,7 +1425,7 @@ export default function MainIssuance() {
           </div>,
           document.body,
         )}
-        <form onSubmit={handleSubmit} className="mt-5 grid gap-5 xl:grid-cols-2" aria-label="Issue consumables or prepare approved item handovers">
+        {showIssuanceForm && <form onSubmit={handleSubmit} className="mt-5 grid gap-5 xl:grid-cols-2" aria-label="Issue consumables or prepare approved item handovers">
           <div className="flex min-w-0 flex-col rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
             <section aria-labelledby="employee-section-title" className="border-b border-slate-200 p-4 sm:p-5">
               <StepHeader
@@ -1570,7 +1519,7 @@ export default function MainIssuance() {
               )}
               {employeeCodeFromUrl && !isLoading && !selectedEmployee && (
                 <p role="status" className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm font-semibold text-amber-900">
-                  Hindi makita sa Employee Master Data ang employee code na {employeeCodeFromUrl}. Pumili ng employee sa listahan para magpatuloy.
+                  Employee code {employeeCodeFromUrl} was not found in Employee Master Data. Choose an employee from the list to continue.
                 </p>
               )}
             </section>
@@ -1587,25 +1536,6 @@ export default function MainIssuance() {
                   : 'Pick consumable stock for the employee.'}
               />
 
-              {isRequisitionIssuance && storageCandidates.length > 0 && (
-                <div className="mt-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
-                  <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-indigo-800">Other units in storage · same category</p>
-                  <p className="mt-1 text-[0.68rem] text-slate-600">Compare the specs with the requester's request. Use a unit to reserve it in place of the reserved one.</p>
-                  <ul className="mt-2 space-y-2">
-                    {storageCandidates.map((unit) => (
-                      <li key={unit.itemId} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-slate-800">{unit.itemCode} · {unit.name}</p>
-                          <p className="mt-0.5 text-[0.68rem] leading-relaxed text-slate-600">{unit.description || 'No specs entered'}</p>
-                        </div>
-                        <button type="button" disabled={swapBusyId !== ''} onClick={() => void useStorageUnit(unit)} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-extrabold text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50">
-                          {swapBusyId === unit.itemId ? 'Reserving…' : 'Use this unit'}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
               <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(11rem,0.55fr)]">
                 <label className="block">
                   <span className="sr-only">Search inventory by item name, code, description, or category</span>
@@ -2129,7 +2059,7 @@ export default function MainIssuance() {
             )}
             {isShowingSentBatch && submitErrorAlert}
           </section>
-        </form>
+        </form>}
       </div>
       {labelsToPrint.length > 0 && !shouldOpenPrintDialog && (
         <div className="fixed inset-0 z-100 flex items-center justify-center bg-slate-950/70 p-4" role="dialog" aria-modal="true" aria-labelledby="barcode-preview-title">
@@ -2146,9 +2076,9 @@ export default function MainIssuance() {
                 {labelsToPrint.map((label) => (
                   <article key={label.tagCode} className="mx-auto flex h-[30mm] w-[50mm] box-border flex-col items-center justify-start gap-[0.2mm] bg-white px-[0.5mm] pb-0 pt-[0.3mm] text-center shadow-md">
                     <div className="w-[49mm] flex-none"><BarcodeSvg value={label.tagCode} height={64} className="mx-auto h-auto w-full max-h-[19mm] max-w-full object-contain" /></div>
-                    <p className="max-w-[49mm] flex-none whitespace-nowrap text-[4mm] font-extrabold leading-none text-black">{label.tagCode}</p>
-                    <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">DYCI · ITEM {label.unitNumber}</p>
-                    <p className="label-item-details flex-none whitespace-nowrap text-[1.7mm] font-bold leading-none text-black"><span className="label-item-name inline-block max-w-[32mm] truncate align-bottom">{label.itemName}</span> - {label.itemCode}</p>
+                    <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">DYCI PROPERTY:DO NOT REMOVE</p>
+                    <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">{label.itemCode}</p>
+                    <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black"><span className="label-item-name inline-block max-w-[47mm] truncate align-bottom">{label.itemName.toUpperCase()}</span></p>
                   </article>
                 ))}
               </div>
@@ -2170,9 +2100,9 @@ export default function MainIssuance() {
         {labelsToPrint.map((label) => (
           <article key={label.tagCode} className="asset-barcode-label bg-white text-center">
             <div className="barcode-preview"><BarcodeSvg value={label.tagCode} height={64} /></div>
-            <p className="label-barcode-value">{label.tagCode}</p>
-            <p className="label-removal-warning">DYCI · ITEM {label.unitNumber}</p>
-            <p className="label-item-details"><span className="label-item-name">{label.itemName}</span> - {label.itemCode}</p>
+            <p className="label-removal-warning">DYCI PROPERTY:DO NOT REMOVE</p>
+            <p className="label-removal-warning">{label.itemCode}</p>
+            <p className="label-removal-warning"><span className="label-item-name">{label.itemName.toUpperCase()}</span></p>
           </article>
         ))}
       </div>,

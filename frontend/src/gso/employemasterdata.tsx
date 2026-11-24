@@ -1028,7 +1028,7 @@ export default function EmployeeMasterData() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="employee-details-title"
-            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
+            className="flex max-h-[94vh] min-h-0 w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
           >
             {/* Modal Header */}
             <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
@@ -1057,7 +1057,7 @@ export default function EmployeeMasterData() {
 
             {/* Employee Quick Info Cards */}
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-100/80 px-4 py-5 sm:px-8 sm:py-6">
-              <div className="mx-auto max-w-4xl space-y-4">
+              <div className="mx-auto max-w-5xl space-y-4">
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="min-w-0 rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                     <span className="block text-xs font-extrabold uppercase tracking-wide text-slate-600">School email</span>
@@ -1122,8 +1122,8 @@ export default function EmployeeMasterData() {
 
                   {/* Table of Issued Items */}
                   <div className="mt-4 overflow-x-auto rounded-xl border-2 border-slate-300 shadow-sm">
-                    <table className="w-full min-w-190 text-left text-sm">
-                      <thead className="bg-slate-100 text-xs font-extrabold uppercase tracking-wide text-slate-700">
+                    <table className="w-full text-left text-base">
+                      <thead className="bg-slate-100 text-sm font-extrabold uppercase tracking-wide text-slate-700">
                         <tr className="divide-x divide-slate-300 border-b-2 border-slate-300">
                           <th className="whitespace-nowrap px-4 py-3.5">Asset code</th>
                           <th className="px-4 py-3.5">Item name</th>
@@ -1137,7 +1137,7 @@ export default function EmployeeMasterData() {
                         {selectedEmployee.assignedItems.slice(0, 2).map((item) => (
                           <tr key={item.id} className="divide-x divide-slate-200 bg-white transition-colors hover:bg-blue-50/50">
                             <td className="whitespace-nowrap px-4 py-3 font-bold text-slate-600">{item.code}</td>
-                            <td className="px-4 py-3 font-extrabold text-slate-900">{item.name}</td>
+                            <td className="min-w-44 px-4 py-3 font-extrabold text-slate-900">{item.name}</td>
                             <td className="px-4 py-3 align-top"><AssignmentCell item={item} holder={`${selectedEmployee.firstName} ${selectedEmployee.lastName}`} departmentHead={selectedEmployee.departmentHead} /></td>
                             <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-700">{item.quantity} {item.unitOfMeasure}</td>
                             <td className="whitespace-nowrap px-4 py-3 align-middle">
@@ -1265,7 +1265,7 @@ export default function EmployeeMasterData() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="employee-history-dialog-title"
-            className="flex max-h-[90vh] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
+            className="flex max-h-[90vh] min-h-0 w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/30"
           >
             <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
               <div className="min-w-0">
@@ -1315,9 +1315,14 @@ export default function EmployeeMasterData() {
                     </button>
                   ))}
                 </div>
+                <p className="mb-4 text-base font-semibold text-slate-700">
+                  {historyFilter === 'issued'
+                    ? 'Every item given to this employee, with its issue date.'
+                    : 'Items already brought back to GSO, with their return condition.'}
+                </p>
                 {(historyFilter === 'issued' ? issuedHistoryRows : returnedHistoryRows).length > 0 ? (
                   <div className="overflow-x-auto rounded-xl border-2 border-slate-400 bg-white shadow-md">
-                    <table className="w-full min-w-200 text-left text-base">
+                    <table className="w-full text-left text-base">
                       <thead className="bg-slate-100 text-sm font-extrabold uppercase tracking-wide text-slate-800">
                         <tr className="divide-x divide-slate-300 border-b-2 border-slate-300">
                           <th className="whitespace-nowrap px-5 py-4">Asset code</th>
@@ -1335,7 +1340,7 @@ export default function EmployeeMasterData() {
                               {log.code}
                               {log.assetTagCode && <span className="mt-1 block font-mono text-[0.65rem] font-semibold text-blue-700">{log.assetTagCode}</span>}
                             </td>
-                            <td className="px-5 py-4 font-extrabold text-slate-950">{log.item}</td>
+                            <td className="min-w-56 px-5 py-4 font-extrabold text-slate-950">{log.item}</td>
                             <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-800">{log.quantity} {log.unitOfMeasure}</td>
                             <td className="whitespace-nowrap px-5 py-4">
                               <span className={`inline-flex rounded-full px-3 py-1.5 text-sm font-extrabold ${historyEventTone(log.event)}`}>{log.event}</span>

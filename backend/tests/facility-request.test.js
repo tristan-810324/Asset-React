@@ -298,7 +298,7 @@ test('a released venue stays booked, so the same slot cannot be approved twice',
   const first = await submit([{ itemId: '3', quantity: 1 }]);
   const asset = await approveAndRelease(first);
   const second = await submit([]);
-  await rejects(requestsService.updateStatus(second.id, { status: 'Approved' }, gso), /naka-approve/, 409);
+  await rejects(requestsService.updateStatus(second.id, { status: 'Approved' }, gso), /approved request already exists/, 409);
   await requestsService.updateStatus(first.id, { status: 'Returned', returns: [{ assetId: asset.id, returned: 1, condition: 'Good' }] }, gso);
   assert.equal((await one('SELECT status FROM service_requests WHERE id = $1', [first.id])).status, 'Completed');
 });

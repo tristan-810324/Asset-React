@@ -81,6 +81,66 @@ async function setSystemUserActive(userId, isActive) {
   return result.rows[0] || null;
 }
 
+async function getSystemUserForEdit(userId) {
+  const result = await pool.query(
+    `SELECT u.id, u.name, u.email, u.position,
+            COALESCE(array_agg(r.role_key ORDER BY r.role_key) FILTER (WHERE r.role_key IS NOT NULL), ARRAY[]::TEXT[]) AS roles
+       FROM users u
+       LEFT JOIN user_roles ur ON ur.user_id = u.id
+       LEFT JOIN roles r ON r.id = ur.role_id
+      WHERE u.id = $1
+      GROUP BY u.id`,
+    [userId],
+  );
+  return result.rows[0] || null;
+}
+
+// A new email must verify again and the old sessions are signed out (token_version). The identity profile keeps its
+// verification status; a profile created here starts as Verified, the same result as an IT-created account on create.
+// A role change replaces the roles.
+async function updateSystemUser({ userId, name, email, roleKey, emailChanged, roleChanged, identity }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE users
+          SET name = $2, email = $3, position = $4,
+              email_verified_at = CASE WHEN $5::BOOLEAN THEN NULL ELSE email_verified_at END,
+              token_version = CASE WHEN $5::BOOLEAN THEN token_version + 1 ELSE token_version END,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, name, email, position`,
+      [userId, name, email, identity.position, emailChanged],
+    );
+    await client.query(
+      `INSERT INTO requester_identity_profiles
+         (user_id, employee_code, first_name, middle_name, last_name, suffix, department, position, contact_number, verification_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Verified')
+       ON CONFLICT (user_id) DO UPDATE
+         SET employee_code = EXCLUDED.employee_code, first_name = EXCLUDED.first_name,
+             middle_name = EXCLUDED.middle_name, last_name = EXCLUDED.last_name, suffix = EXCLUDED.suffix,
+             department = EXCLUDED.department, position = EXCLUDED.position, contact_number = EXCLUDED.contact_number,
+             updated_at = NOW()`,
+      [userId, identity.employeeCode, identity.firstName, identity.middleName, identity.lastName, identity.suffix,
+        identity.department, identity.position, identity.contactNumber],
+    );
+    if (roleChanged) {
+      await client.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
+      await client.query(
+        'INSERT INTO user_roles (user_id, role_id) SELECT $1, id FROM roles WHERE role_key = $2',
+        [userId, roleKey],
+      );
+    }
+    await client.query('COMMIT');
+    return updated.rows[0] || null;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // Removes the sign-in tokens and role links first. Requests and issuance batches still reference the
 // account (ON DELETE RESTRICT), so the delete fails with 23503 when the account has any history.
 async function deleteSystemUser(userId) {
@@ -100,4 +160,4 @@ async function deleteSystemUser(userId) {
   }
 }
 
-module.exports = { listSystemUsers, listAccountPositions, createSystemUser, setSystemUserActive, deleteSystemUser };
+module.exports = { listSystemUsers, listAccountPositions, createSystemUser, setSystemUserActive, getSystemUserForEdit, updateSystemUser, deleteSystemUser };

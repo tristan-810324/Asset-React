@@ -32,7 +32,12 @@ const writeOffRequestedTone = 'bg-rose-50 text-rose-700'
 
 const TAGGED_WRITE_OFF_REASONS = ['Beyond repair', 'Missing parts', 'Water or fire damage', 'Broken or cracked', 'Electrical fault', 'Other']
 
-const repairCompletionReason = 'Repair completed from the To Be Repaired module; item condition updated to Good.'
+// A repaired unit goes back to stock as Good or Fair, never New.
+const repairedConditions = ['Good', 'Fair'] as const
+type RepairedCondition = (typeof repairedConditions)[number]
+// History entries start with this text, so an entry matches whatever condition it recorded.
+const repairCompletionReasonStart = 'Repair completed from the To Be Repaired module; item condition updated to'
+const repairCompletionReason = (condition: RepairedCondition) => `${repairCompletionReasonStart} ${condition}.`
 
 function repairHistoryTimestamp(value: string) {
   const directTimestamp = new Date(value).getTime()
@@ -119,6 +124,8 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
   const [confirmRepaired, setConfirmRepaired] = useState(false)
   // Who did the repair, typed by GSO before the unit is saved as repaired.
   const [repairedByName, setRepairedByName] = useState('')
+  // Condition the repaired unit goes back to stock with: Good unless GSO Staff or IT Admin picks Fair.
+  const [repairedCondition, setRepairedCondition] = useState<RepairedCondition>('Good')
   const [tagWriteOffReason, setTagWriteOffReason] = useState('')
   const [tagWriteOffDecision, setTagWriteOffDecision] = useState<'waive' | 'charge' | ''>('')
   // Same as the facility check: a waiver needs the GSO staff who checked the item and why.
@@ -259,7 +266,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
             const condition = conditionFromReturnNote(entry.note, item?.condition || '')
             const tagCode = entry.assetTagCode || null
             const completionRecords = item?.changeHistory.filter((change) =>
-              change.reason === repairCompletionReason
+              String(change.reason || '').startsWith(repairCompletionReasonStart)
               && (!tagCode || change.newValues.assetTagCode === tagCode),
             ) ?? []
             const latestCompletionRecord = [...completionRecords].sort(
@@ -363,6 +370,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
     setWriteOffNote('')
     setTagWaiverNote('')
     setCompletionChoice('repaired')
+    setRepairedCondition('Good')
     setRepairCompletionItem(item)
   }
 
@@ -411,6 +419,11 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
 
   const handleMarkAsRepaired = async () => {
     if (!repairCompletionItem || isCompletingRepair) return
+    if (!repairedCondition) {
+      setRepairActionError('Choose the condition after repair.')
+      return
+    }
+    const condition = repairedCondition
 
     const inventoryItem = inventoryItems.find((item) => item.itemCode.toLowerCase() === repairCompletionItem.itemCode.toLowerCase())
     if (!inventoryItem) {
@@ -424,9 +437,9 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
       let completionTimestamp = new Date().toISOString()
       if (repairCompletionItem.returnId) {
         // Puts exactly the units of this return back in stock.
-        await markReturnRepaired(repairCompletionItem.returnId)
+        await markReturnRepaired(repairCompletionItem.returnId, condition)
       } else if (repairCompletionItem.tagCode) {
-        await completeTaggedAssetRepair(repairCompletionItem.tagCode, repairedByName.trim())
+        await completeTaggedAssetRepair(repairCompletionItem.tagCode, repairedByName.trim(), condition)
       } else {
         const updatedInventoryItem = await updateInventoryItem(inventoryItem.id, {
           itemCode: inventoryItem.itemCode,
@@ -442,11 +455,11 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
           currentValue: inventoryItem.currentValue === null ? null : Number(inventoryItem.currentValue),
           quantity: inventoryItem.quantity,
           unitOfMeasure: inventoryItem.unitOfMeasure,
-          condition: 'Good',
-          reason: repairCompletionReason,
+          condition,
+          reason: repairCompletionReason(condition),
         })
         setInventoryItems((currentItems) => currentItems.map((item) => item.id === updatedInventoryItem.id ? updatedInventoryItem : item))
-        const completionRecords = updatedInventoryItem.changeHistory.filter((change) => change.reason === repairCompletionReason)
+        const completionRecords = updatedInventoryItem.changeHistory.filter((change) => String(change.reason || '').startsWith(repairCompletionReasonStart))
         const latestCompletionRecord = [...completionRecords].sort(
           (left, right) => repairHistoryTimestamp(left.changedAt) - repairHistoryTimestamp(right.changedAt),
         )[completionRecords.length - 1]
@@ -466,7 +479,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
       }
       setRepairHistoryItems((currentItems) => [completedRepair, ...currentItems.filter((item) => !isSameRepair(item))])
       setRepairActionMessage(repairCompletionItem.tagCode
-        ? `${repairCompletionItem.asset} (${repairCompletionItem.tagCode}) is repaired and returned to GSO Storage.`
+        ? `${repairCompletionItem.asset} (${repairCompletionItem.tagCode}) is repaired as ${condition} and returned to GSO Storage.`
         : `${repairCompletionItem.asset} is repaired and its units are available again.`)
       setRepairCompletionItem(null)
       setWriteOffNote('')
@@ -676,7 +689,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
                       <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[0.62rem] font-extrabold text-slate-700">GSO</span>
                     </td>
                     <td className="px-5 py-4 sm:px-6">
-                      <button type="button" onClick={() => { setCompletionChoice('repaired'); setConfirmRepaired(false); setRepairedByName(''); setRepairActionError(''); setRepairCompletionItem(item) }} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
+                      <button type="button" onClick={() => { setCompletionChoice('repaired'); setConfirmRepaired(false); setRepairedByName(''); setRepairedCondition('Good'); setRepairActionError(''); setRepairCompletionItem(item) }} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
                       <p className="mt-1.5 text-[0.62rem] font-bold text-slate-500">1 left to check.</p>
                     </td>
                   </tr>
@@ -966,6 +979,20 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
             </fieldset>
 
             {completionChoice === 'repaired' && (
+              <fieldset className="mt-4" disabled={isCompletingRepair}>
+                <legend className="mb-1.5 text-[0.6rem] font-extrabold uppercase tracking-wide text-emerald-700">Condition after repair <span className="text-rose-600">*</span></legend>
+                <div className="flex flex-wrap gap-2">
+                  {repairedConditions.map((condition) => (
+                    <label key={condition} className="cursor-pointer">
+                      <input type="radio" name="repaired-condition" value={condition} checked={repairedCondition === condition} onChange={() => setRepairedCondition(condition)} className="peer sr-only" />
+                      <span className="inline-flex rounded-xl border-2 border-slate-300 bg-white px-5 py-2.5 text-sm font-extrabold text-slate-700 transition hover:border-emerald-300 peer-checked:border-blue-600 peer-checked:bg-blue-600 peer-checked:text-white peer-focus-visible:ring-4 peer-focus-visible:ring-blue-100">{condition}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
+            {completionChoice === 'repaired' && (
               <label className="mt-4 block">
                 <span className="mb-1.5 block text-[0.6rem] font-extrabold uppercase tracking-wide text-emerald-700">Who repaired it? <span className="text-rose-600">*</span></span>
                 <input value={repairedByName} onChange={(event) => setRepairedByName(event.target.value)} maxLength={200} disabled={isCompletingRepair} placeholder="e.g. Juan Dela Cruz, technician" className="h-12 w-full rounded-xl border-2 border-slate-300 bg-white px-4 text-base font-medium text-slate-900 outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-100" />
@@ -975,10 +1002,10 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
             {completionChoice === 'repaired' && confirmRepaired && (
               <div role="alert" className="mt-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/40 p-4">
                 <p className="text-sm font-black text-emerald-900">Is {repairCompletionItem.asset} ({repairCompletionItem.tagCode || repairCompletionItem.code}) really repaired?</p>
-                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">Yes puts it back in GSO Storage as Available and records your name as the checker. No keeps it in To Be Repaired.</p>
+                <p className="mt-1 text-xs font-semibold leading-relaxed text-slate-600">Yes puts it back in GSO Storage as {repairedCondition} and records your name as the checker. No keeps it in To Be Repaired.</p>
                 <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   <button type="button" disabled={isCompletingRepair} onClick={() => setConfirmRepaired(false)} className="rounded-xl border-2 border-slate-300 bg-white px-4 py-2.5 text-sm font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">No, still in repair</button>
-                  <button type="button" disabled={isCompletingRepair || !repairedByName.trim()} onClick={() => { void handleMarkAsRepaired() }} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-extrabold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50">{isCompletingRepair ? 'Saving…' : 'Yes, repaired'}</button>
+                  <button type="button" disabled={isCompletingRepair || !repairedByName.trim() || !repairedCondition} onClick={() => { void handleMarkAsRepaired() }} className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-extrabold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50">{isCompletingRepair ? 'Saving…' : 'Yes, repaired'}</button>
                 </div>
               </div>
             )}
@@ -1039,7 +1066,7 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
               </button>
               <button
                 type="button"
-                disabled={isCompletingRepair || (completionChoice === 'writeOff' && (!tagWriteOffReason || !tagWriteOffDecision || (tagWriteOffReason === 'Other' && !writeOffNote.trim()) || (tagWriteOffDecision === 'waive' && !tagWaiverNote.trim())))}
+                disabled={isCompletingRepair || (completionChoice === 'repaired' && !repairedCondition) || (completionChoice === 'writeOff' && (!tagWriteOffReason || !tagWriteOffDecision || (tagWriteOffReason === 'Other' && !writeOffNote.trim()) || (tagWriteOffDecision === 'waive' && !tagWaiverNote.trim())))}
                 onClick={() => { if (completionChoice === 'repaired') { setConfirmRepaired(true); return } void handleGsoWriteOff() }}
                 className={`rounded-xl px-6 py-3.5 text-base font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${completionChoice === 'writeOff' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-blue-600 hover:bg-blue-700'}`}
               >

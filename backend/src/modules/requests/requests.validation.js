@@ -1,4 +1,5 @@
 const { SERVICE_CATEGORIES, routeForCategory, priorityForService } = require('./service-work-order.constants');
+const { validatePhotos } = require('./service-work-orders.validation');
 
 const REQUEST_TYPES = new Set([
   'BORROWING',
@@ -21,6 +22,9 @@ const PURCHASE_CATEGORIES = new Set([
   'PUBLICATIONS',
 ]);
 
+// A consumable is used up, so its request needs no purpose; a per-unit item keeps every check.
+const ITEM_KINDS = new Set(['CONSUMABLE', 'PER_UNIT']);
+
 const PLANNED_DISTRIBUTION_DESTINATIONS = new Set([
   'employee',
   'department_location',
@@ -32,29 +36,29 @@ function invalid(message, status = 400) {
 
 function text(value, label, max = 500, { optional = false } = {}) {
   if (optional && (value === undefined || value === null || value === '')) return '';
-  if (typeof value !== 'string' || !value.trim()) invalid(`${label} ay kailangan.`);
+  if (typeof value !== 'string' || !value.trim()) invalid(`${label} is required.`);
   const normalized = value.trim();
-  if (normalized.length > max) invalid(`${label} ay hindi dapat lumampas sa ${max} characters.`);
+  if (normalized.length > max) invalid(`${label} must be ${max} characters or less.`);
   return normalized;
 }
 
 function date(value, label, { optional = false, notPast = false, notFuture = false } = {}) {
   if (optional && (value === undefined || value === null || value === '')) return '';
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) invalid(`Hindi valid ang ${label}.`);
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) invalid(`Invalid ${label}.`);
   const [year, month, day] = value.split('-').map(Number);
   const parsed = new Date(Date.UTC(year, month - 1, day));
   if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
-    invalid(`Hindi valid ang ${label}.`);
+    invalid(`Invalid ${label}.`);
   }
   if (notPast) {
     const today = new Date();
     const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    if (value < todayIso) invalid(`${label} ay hindi maaaring nasa nakaraan.`);
+    if (value < todayIso) invalid(`${label} cannot be in the past.`);
   }
   if (notFuture) {
     const today = new Date();
     const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-    if (value > todayIso) invalid(`${label} ay hindi maaaring nasa hinaharap.`);
+    if (value > todayIso) invalid(`${label} cannot be in the future.`);
   }
   return value;
 }
@@ -62,7 +66,7 @@ function date(value, label, { optional = false, notPast = false, notFuture = fal
 function integer(value, label, { optional = false, minimum = 0, maximum = 100000 } = {}) {
   if (optional && (value === undefined || value === null || value === '')) return null;
   const number = Number(value);
-  if (!Number.isInteger(number) || number < minimum || number > maximum) invalid(`${label} ay dapat whole number na ${minimum} o higit pa.`);
+  if (!Number.isInteger(number) || number < minimum || number > maximum) invalid(`${label} must be a whole number of ${minimum} or more.`);
   return number;
 }
 
@@ -73,31 +77,31 @@ function requireItems(value) {
 
 function rows(value, label, mapper, { min = 1, max = 30 } = {}) {
   if (!Array.isArray(value) || value.length < min || value.length > max) {
-    invalid(`${label}: maglagay ng ${min}${max > min ? ` hanggang ${max}` : ''} row.`);
+    invalid(`${label}: enter ${min}${max > min ? ` to ${max}` : ''} row(s).`);
   }
   return value.map((row) => {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) invalid(`May hindi valid na row sa ${label}.`);
+    if (!row || typeof row !== 'object' || Array.isArray(row)) invalid(`${label} has an invalid row.`);
     return mapper(row);
   });
 }
 
 function validateCreateRequest(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang request details.');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Invalid request details.');
   const requestType = text(input.requestType, 'request type', 40).toUpperCase();
-  if (!REQUEST_TYPES.has(requestType)) invalid('Hindi pa available ang request type na ito.');
+  if (!REQUEST_TYPES.has(requestType)) invalid('This request type is not available yet.');
   const data = input.formData;
-  if (!data || typeof data !== 'object' || Array.isArray(data)) invalid('Hindi valid ang form details.');
+  if (!data || typeof data !== 'object' || Array.isArray(data)) invalid('Invalid form details.');
 
   if (requestType === 'BORROWING') {
     const items = rows(data.items, 'Borrowing items', (row) => {
       const rawId = String(row.itemId ?? '');
-      if (!/^\d{1,20}$/.test(rawId)) invalid('Pumili ng valid na item sa inventory.');
+      if (!/^\d{1,20}$/.test(rawId)) invalid('Choose a valid item from inventory.');
       return { itemId: rawId, quantity: integer(row.quantity, 'Quantity', { minimum: 1, maximum: 2147483647 }) };
     }, { max: 25 });
-    if (new Set(items.map((item) => item.itemId)).size !== items.length) invalid('Alisin ang nadobleng inventory item.');
+    if (new Set(items.map((item) => item.itemId)).size !== items.length) invalid('Remove the duplicate inventory item.');
     const neededDate = date(data.neededDate, 'needed date', { notPast: true });
     const returnDate = date(data.returnDate, 'expected return date', { notPast: true });
-    if (returnDate < neededDate) invalid('Ang return date ay dapat kapareho o lampas sa needed date.');
+    if (returnDate < neededDate) invalid('The return date must be the same as or after the needed date.');
     const purposeOption = text(data.purpose, 'purpose', 100);
     const purpose = purposeOption === 'Other' ? `Other: ${text(data.otherPurpose, 'specific purpose', 1900)}` : purposeOption;
     const useLocation = data.specificLocation !== undefined
@@ -163,7 +167,7 @@ function validateCreateRequest(input) {
   if (requestType === 'JOB_REQUEST') {
     // The category decides the receiving team and the starting priority. The client's values are never trusted.
     const serviceCategory = text(data.serviceCategory, 'service category', 60);
-    if (!SERVICE_CATEGORIES.has(serviceCategory)) invalid('Pumili ng valid na service category.');
+    if (!SERVICE_CATEGORIES.has(serviceCategory)) invalid('Choose a valid service category.');
     const requiredDate = date(data.requiredDate, 'target date', { notPast: true });
     // "Others" needs the requester to say what the service is. The text is ignored for every other category.
     const serviceOther = serviceCategory === 'OTHERS' ? text(data.serviceOther, 'description of the service', 200) : '';
@@ -186,30 +190,40 @@ function validateCreateRequest(input) {
           remarks: text(row.remarks, 'task remarks', 500, { optional: true }),
         }), { min: 0, max: 30 }),
         remarks: text(data.remarks, 'remarks', 2000, { optional: true }),
+        // Optional photos of the problem, such as a broken projector or a Wi-Fi error screen.
+        photos: validatePhotos(data.photos),
       },
     };
   }
 
   if (requestType === 'PURCHASE_REQUISITION') {
-    if (data.requesterCertification !== true) invalid('Kumpirmahin muna na tama ang detalye at kailangan ang request ng iyong department.');
+    if (data.requesterCertification !== true) invalid('Confirm first that the details are correct and that your department needs this request.');
     const requiredDate = date(data.requiredDate, 'required date', { notPast: true });
     const urgency = data.urgency === 'Urgent' ? 'Urgent' : 'Standard';
     const urgentReason = text(data.urgentReason, 'urgent reason', 500, { optional: urgency !== 'Urgent' });
-    if (urgency === 'Urgent' && !urgentReason) invalid('Ipaliwanag kung bakit kailangan agad ang request.');
+    if (urgency === 'Urgent' && !urgentReason) invalid('Explain why the request is needed right away.');
     const items = rows(data.items, 'Purchase items', (row) => {
       const category = text(row.category, 'requisition category', 60).toUpperCase();
-      if (!PURCHASE_CATEGORIES.has(category)) invalid('Pumili ng valid requisition category.');
+      if (!PURCHASE_CATEGORIES.has(category)) invalid('Choose a valid requisition category.');
       const catalogItemId = integer(row.catalogItemId, 'catalog item id', { optional: true, minimum: 1 });
       const itemNameId = integer(row.itemNameId, 'saved item name id', { optional: true, minimum: 1 });
-      if (catalogItemId !== null && itemNameId !== null) invalid('Pumili ng isang saved item source lamang.');
+      if (catalogItemId !== null && itemNameId !== null) invalid('Choose only one saved item source.');
+      // Older payloads without a kind count as per unit, so they keep the full checks.
+      const itemKind = row.itemKind === undefined || row.itemKind === null || row.itemKind === ''
+        ? 'PER_UNIT'
+        : String(row.itemKind).trim().toUpperCase();
+      if (!ITEM_KINDS.has(itemKind)) invalid('Choose whether each item is a consumable or per unit.');
+      // A consumable is counted in the unit it is bought in; a per-unit item is counted in pieces.
+      const unitOfMeasure = itemKind === 'CONSUMABLE' ? text(row.unitOfMeasure, 'unit of measure', 40) : 'piece';
       const quantity = integer(row.quantity, 'item quantity', { minimum: 1 });
-      const plannedRecipients = rows(row.plannedRecipients, 'item assignments', (recipient) => {
+      // A consumable has no room assignment; GSO issues it to the requester by default.
+      const plannedRecipients = itemKind === 'CONSUMABLE' ? [] : rows(row.plannedRecipients, 'item assignments', (recipient) => {
         // Older payloads may omit the destination type; treat those as employee assignments.
         const destinationType = recipient.destinationType === undefined || recipient.destinationType === null || recipient.destinationType === ''
           ? 'employee'
           : text(recipient.destinationType, 'assignment destination type', 40).toLowerCase();
         if (!PLANNED_DISTRIBUTION_DESTINATIONS.has(destinationType)) {
-          invalid('Pumili ng employee o designated room bilang destination.');
+          invalid('Choose an employee or a designated room as the destination.');
         }
 
         const plannedRecipient = {
@@ -234,7 +248,7 @@ function validateCreateRequest(input) {
           const building = text(recipient.building, 'building or unit', 80);
           const room = text(recipient.room, 'room or shared area', 100);
           const useLocation = `${building} — ${room}`;
-          if (useLocation.length > 200) invalid('recipient use location ay hindi dapat lumampas sa 200 characters.');
+          if (useLocation.length > 200) invalid('recipient use location must be 200 characters or less.');
           return {
             ...plannedRecipient,
             building,
@@ -243,27 +257,29 @@ function validateCreateRequest(input) {
           };
         }
 
-        invalid('Pumili ng employee o designated room bilang destination.');
+        invalid('Choose an employee or a designated room as the destination.');
       }, { min: 1, max: 50 });
       const recipientKeys = plannedRecipients.map((recipient) => {
         if (recipient.destinationType === 'employee') return `employee:${recipient.employeeCode.trim().toLowerCase()}`;
         return `${recipient.destinationType}:${recipient.useLocation.trim().toLowerCase()}:${recipient.purpose.trim().toLowerCase()}`;
       });
       if (new Set(recipientKeys).size !== recipientKeys.length) {
-        invalid('Pagsamahin sa iisang allocation row ang parehong planned destination.');
+        invalid('Put the same planned destination in one allocation row.');
       }
       const assignedQuantity = plannedRecipients.reduce((sum, recipient) => sum + recipient.quantity, 0);
       if (assignedQuantity > quantity) {
-        invalid('Hindi puwedeng lumampas sa requested quantity ang planned recipient allocation.');
+        invalid('The planned recipient allocation cannot be more than the requested quantity.');
       }
-      if (assignedQuantity !== quantity) {
-        invalid('I-assign ang buong requested quantity sa employee o designated room bago isumite ang requisition.');
+      if (itemKind !== 'CONSUMABLE' && assignedQuantity !== quantity) {
+        invalid('Assign the full requested quantity to an employee or a designated room before you submit the requisition.');
       }
       return {
         quantity,
         category,
         catalogItemId,
         itemNameId,
+        itemKind,
+        unitOfMeasure,
         itemName: text(row.itemName, 'item name', 250),
         description: text(row.description, 'item description/specifications', 1000),
         plannedRecipients,
@@ -272,13 +288,17 @@ function validateCreateRequest(input) {
     const uniqueLineKeys = new Set();
     for (const item of items) {
       const lineKey = `${item.category}|${item.itemName.trim().toLowerCase()}`;
-      if (uniqueLineKeys.has(lineKey)) invalid('Pagsamahin sa iisang row ang parehong item para tama ang stock reservation.');
+      if (uniqueLineKeys.has(lineKey)) invalid('Put the same item in one row so the stock reservation is correct.');
       uniqueLineKeys.add(lineKey);
     }
+    // A consumable-only request has no purpose; a request with a per-unit item still needs one.
+    // A request holds either consumables or per-unit items, never both.
+    if (new Set(items.map((item) => item.itemKind)).size > 1) invalid('A request holds either consumables or per-unit items. Submit them as separate requests.');
+    const consumableOnly = items.every((item) => item.itemKind === 'CONSUMABLE');
     return {
       requestType,
       formData: {
-        purpose: text(data.purpose, 'purpose of request', 2000),
+        purpose: text(data.purpose, 'purpose of request', 2000, { optional: consumableOnly }),
         requiredDate,
         urgency,
         urgentReason,
@@ -304,7 +324,7 @@ function validateCreateRequest(input) {
   }
 
   const incidentType = text(data.incidentType, 'incident type', 20).toUpperCase();
-  if (!['LOST', 'DAMAGED'].includes(incidentType)) invalid('Pumili kung Lost o Damaged ang incident.');
+  if (!['LOST', 'DAMAGED'].includes(incidentType)) invalid('Choose whether the incident is Lost or Damaged.');
   return {
     requestType,
     formData: {
@@ -336,13 +356,13 @@ function validateCreateRequest(input) {
 }
 
 function validateRequestId(value) {
-  if (typeof value !== 'string' || !/^\d{1,20}$/.test(value)) invalid('Hindi valid ang request reference.', 404);
+  if (typeof value !== 'string' || !/^\d{1,20}$/.test(value)) invalid('Invalid request reference.', 404);
   return value;
 }
 
 function validateRequestFilters(query) {
   const requestType = query.type ? text(query.type, 'request type', 40).toUpperCase() : '';
-  if (requestType && !REQUEST_TYPES.has(requestType)) invalid('Hindi valid ang request type filter.');
+  if (requestType && !REQUEST_TYPES.has(requestType)) invalid('Invalid request type filter.');
   const status = query.status ? text(query.status, 'status', 40) : '';
   const search = query.search ? text(query.search, 'search', 100) : '';
   return { requestType, status, search };

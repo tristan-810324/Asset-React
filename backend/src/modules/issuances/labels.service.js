@@ -11,7 +11,7 @@ async function listUnitLabels() {
 
 function readTagCode(value) {
   const tagCode = typeof value === 'string' ? value.trim().toUpperCase() : '';
-  if (!/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/.test(tagCode)) throw httpError(400, 'Hindi valid ang unit barcode.');
+  if (!/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/.test(tagCode)) throw httpError(400, 'Invalid unit barcode.');
   return tagCode;
 }
 
@@ -22,7 +22,7 @@ async function recordLabelPrint(tagCodeValue, user) {
 async function recordLabelPrintBatch(input, user) {
   const rawTagCodes = input?.tagCodes;
   if (!Array.isArray(rawTagCodes) || rawTagCodes.length < 1 || rawTagCodes.length > 100) {
-    throw httpError(400, 'Pumili ng 1 hanggang 100 barcode label na ipi-print.');
+    throw httpError(400, 'Choose 1 to 100 barcode labels to print.');
   }
   const tagCodes = rawTagCodes.map(readTagCode);
   if (new Set(tagCodes).size !== tagCodes.length) {
@@ -34,8 +34,8 @@ async function recordLabelPrintBatch(input, user) {
 async function reprintUnitLabel(tagCodeValue, input, user) {
   const tagCode = readTagCode(tagCodeValue);
   const reason = typeof input?.reason === 'string' ? input.reason.trim() : '';
-  if (!reason) throw httpError(400, 'Isulat kung bakit kailangang i-reprint ang label.');
-  if (reason.length > 500) throw httpError(400, 'Hindi dapat lumampas sa 500 characters ang dahilan.');
+  if (!reason) throw httpError(400, 'Write why the label needs to be reprinted.');
+  if (reason.length > 500) throw httpError(400, 'The reason must be 500 characters or less.');
   return labelsRepository.reprintUnitLabel({ tagCode, reason, userId: user.id });
 }
 

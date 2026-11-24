@@ -66,3 +66,23 @@ test('a request with no items still builds a readable PDF', () => {
   assert.ok(text.includes('(No items recorded.) Tj'));
   assertXrefOffsets(text);
 });
+
+test('each item shows its unit of measure, and a dash when none was recorded', () => {
+  const tape = { ...keyboard, itemName: 'Correction tape', unitOfMeasure: 'roll', quantity: 2, requestedQuantity: 2, stockAvailableQuantity: 0 };
+  const wide = { ...keyboard, itemName: 'Packing tape', unitOfMeasure: 'roll of two-inch wide transparent packing tape', quantity: 1, requestedQuantity: 1, stockAvailableQuantity: 0 };
+  const text = buildPurchaseRequisitionPdf({ request: requestWith([tape, wide, printer]), endorsedBy: '', endorsedEmail: '' }).toString('latin1');
+  assert.ok(text.includes('(Unit) Tj'));
+  assert.ok(text.includes('(roll) Tj'));
+  assert.ok(text.includes('(-) Tj'), 'the printer has no unit recorded');
+  assertXrefOffsets(text);
+});
+
+test('the total row is left out when the items are in different units', () => {
+  const roll = { ...keyboard, unitOfMeasure: 'roll', quantity: 2, requestedQuantity: 2, stockAvailableQuantity: 0 };
+  const mixed = buildPurchaseRequisitionPdf({ request: requestWith([roll, { ...printer, unitOfMeasure: 'pack' }]), endorsedBy: '', endorsedEmail: '' }).toString('latin1');
+  assert.ok(!mixed.includes('(Total) Tj'));
+  assertXrefOffsets(mixed);
+  const same = buildPurchaseRequisitionPdf({ request: requestWith([roll, { ...printer, unitOfMeasure: 'roll' }]), endorsedBy: '', endorsedEmail: '' }).toString('latin1');
+  assert.ok(same.includes('(Total) Tj'));
+  assertXrefOffsets(same);
+});

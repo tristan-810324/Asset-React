@@ -5,12 +5,12 @@ async function syncUnitTags(client, { item, fromEmployeeId, toEmployeeId, toLoca
   const total = await client.query('SELECT COUNT(*)::INTEGER AS count FROM asset_unit_tags WHERE item_id = $1', [item.id]);
   const tagCount = Number(total.rows[0]?.count || 0);
   if (!tagCount) return;
-  if (tagCount < Number(item.quantity)) throw Object.assign(new Error('May unit tags ang item pero hindi pa lahat ng quantity ay natag. Kumpletuhin muna ang tags bago maglipat ng custody.'), { status: 409 });
+  if (tagCount < Number(item.quantity)) throw Object.assign(new Error('The item has unit tags, but not all quantity is tagged yet. Finish the tags before you move custody.'), { status: 409 });
   const units = await client.query(
     `SELECT id FROM asset_unit_tags
       WHERE item_id = $1 AND custody_status = 'Issued' AND assigned_employee_id = $2 AND lifecycle_status <> 'Disposed'
       ORDER BY unit_number LIMIT $3 FOR UPDATE`, [item.id, fromEmployeeId, quantity]);
-  if (units.rowCount < quantity) throw Object.assign(new Error(`Hindi ma-match ang movement sa unique tags ng source employee. Tagged units available: ${units.rowCount}.`), { status: 409 });
+  if (units.rowCount < quantity) throw Object.assign(new Error(`The movement does not match the unique tags of the source employee. Tagged units available: ${units.rowCount}.`), { status: 409 });
   if (toEmployeeId) {
     await client.query(
       `UPDATE asset_unit_tags SET assigned_employee_id = $2, issuance_id = $3, updated_at = NOW()
@@ -46,8 +46,8 @@ async function createMovement(input, actorId) {
     await client.query('BEGIN');
     const itemResult = await client.query('SELECT * FROM item_catalog WHERE id = $1 FOR UPDATE', [input.itemId]);
     const item = itemResult.rows[0];
-    if (!item) throw Object.assign(new Error('Hindi makita ang item.'), { status: 404 });
-    if (item.lifecycle_status !== 'Active') throw Object.assign(new Error('Active inventory records lamang ang maaaring ilipat.'), { status: 409 });
+    if (!item) throw Object.assign(new Error('Item not found.'), { status: 404 });
+    if (item.lifecycle_status !== 'Active') throw Object.assign(new Error('Only active inventory records can be moved.'), { status: 409 });
 
     const fromResult = input.fromEmployeeCode
       ? await client.query('SELECT id, employee_code, status FROM employees WHERE lower(employee_code) = lower($1) FOR UPDATE', [input.fromEmployeeCode])
@@ -57,14 +57,14 @@ async function createMovement(input, actorId) {
       : { rows: [] };
     const fromEmployee = fromResult.rows[0];
     const toEmployee = toResult.rows[0];
-    if (input.fromEmployeeCode && !fromEmployee) throw Object.assign(new Error('Hindi makita ang source employee.'), { status: 404 });
-    if (input.toEmployeeCode && !toEmployee) throw Object.assign(new Error('Hindi makita ang recipient employee.'), { status: 404 });
-    if (toEmployee && toEmployee.status !== 'Active') throw Object.assign(new Error('Hindi maaaring tumanggap ng asset ang inactive employee.'), { status: 409 });
-    if (fromEmployee && toEmployee && fromEmployee.id === toEmployee.id) throw Object.assign(new Error('Magkaibang employee ang source at recipient.'), { status: 400 });
+    if (input.fromEmployeeCode && !fromEmployee) throw Object.assign(new Error('Source employee not found.'), { status: 404 });
+    if (input.toEmployeeCode && !toEmployee) throw Object.assign(new Error('Recipient employee not found.'), { status: 404 });
+    if (toEmployee && toEmployee.status !== 'Active') throw Object.assign(new Error('An inactive employee cannot receive assets.'), { status: 409 });
+    if (fromEmployee && toEmployee && fromEmployee.id === toEmployee.id) throw Object.assign(new Error('The source and recipient must be different employees.'), { status: 400 });
 
     if (input.movementType === 'LOCATION_CHANGE') {
       if (input.fromLocation.toLowerCase() !== item.location.trim().toLowerCase()) {
-        throw Object.assign(new Error(`Ang kasalukuyang catalog location ay ${item.location}. I-refresh muna ang listahan.`), { status: 409 });
+        throw Object.assign(new Error(`The current catalog location is ${item.location}. Refresh the list first.`), { status: 409 });
       }
       const active = await client.query(
         `SELECT COALESCE(SUM(quantity - returned_quantity), 0)::INTEGER AS quantity
@@ -74,7 +74,7 @@ async function createMovement(input, actorId) {
            FROM service_request_assets AS asset JOIN service_requests AS request ON request.id = asset.request_id
           WHERE asset.item_id = $1 AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')`, [input.itemId]);
       if (input.quantity !== Number(item.quantity) || Number(active.rows[0]?.quantity || 0) > 0 || Number(activeBorrowings.rows[0]?.quantity || 0) > 0) {
-        throw Object.assign(new Error('Buong catalog quantity lamang ang maaaring ilipat sa ibang stockroom; ilipat muna ang mga naka-issue na unit.'), { status: 409 });
+        throw Object.assign(new Error('Only the full catalog quantity can move to another stockroom. Move the issued units first.'), { status: 409 });
       }
       await client.query('UPDATE item_catalog SET location = $2 WHERE id = $1', [input.itemId, input.toLocation]);
       await client.query('UPDATE asset_unit_tags SET location = $2, updated_at = NOW() WHERE item_id = $1 AND lifecycle_status <> \'Disposed\'', [input.itemId, input.toLocation]);
@@ -86,7 +86,7 @@ async function createMovement(input, actorId) {
           WHERE issue.item_id = $1 AND issue.employee_id = $2 AND return_request.status = 'Pending'`,
         [input.itemId, fromEmployee.id]);
       if (Number(pendingReturns.rows[0]?.count || 0) > 0) {
-        throw Object.assign(new Error('May pending return approval pa ang source employee. Kumpletuhin o tanggihan muna iyon bago mag-transfer.'), { status: 409 });
+        throw Object.assign(new Error('The source employee has a pending return approval. Complete or decline it before you transfer.'), { status: 409 });
       }
       const issueResult = await client.query(
         `SELECT id, quantity, returned_quantity
@@ -94,7 +94,7 @@ async function createMovement(input, actorId) {
           WHERE item_id = $1 AND employee_id = $2 AND status = 'Issued' AND returned_quantity < quantity
           ORDER BY decided_at, id FOR UPDATE`, [input.itemId, fromEmployee.id]);
       const available = issueResult.rows.reduce((total, issue) => total + Number(issue.quantity) - Number(issue.returned_quantity), 0);
-      if (input.quantity > available) throw Object.assign(new Error(`Hindi sapat ang active assigned quantity. Available: ${available}.`), { status: 409 });
+      if (input.quantity > available) throw Object.assign(new Error(`Not enough active assigned quantity. Available: ${available}.`), { status: 409 });
       let remaining = input.quantity;
       for (const issue of issueResult.rows) {
         if (!remaining) break;
@@ -124,7 +124,7 @@ async function createMovement(input, actorId) {
       }
     } else {
       if (input.fromLocation.toLowerCase() !== item.location.trim().toLowerCase()) {
-        throw Object.assign(new Error(`Ang kasalukuyang catalog location ay ${item.location}. I-refresh muna ang listahan.`), { status: 409 });
+        throw Object.assign(new Error(`The current catalog location is ${item.location}. Refresh the list first.`), { status: 409 });
       }
       const active = await client.query(
         `SELECT COALESCE(SUM(issue.quantity) FILTER (WHERE issue.status = 'Pending'), 0)
@@ -134,7 +134,7 @@ async function createMovement(input, actorId) {
                           WHERE asset.item_id = $1 AND request.status IN ('Approved', 'Ready for Pickup', 'Issued', 'Return Requested', 'For Repair')), 0) AS quantity
            FROM employee_issuances AS issue WHERE issue.item_id = $1 AND issue.status IN ('Pending', 'Issued')`, [input.itemId]);
       const available = Math.max(0, Number(item.quantity) - Number(active.rows[0]?.quantity || 0));
-      if (input.quantity > available) throw Object.assign(new Error(`Hindi sapat ang available stock sa location. Available: ${available}.`), { status: 409 });
+      if (input.quantity > available) throw Object.assign(new Error(`Not enough available stock in this location. Available: ${available}.`), { status: 409 });
       if (toEmployee) {
         const destinationIssuance = await client.query(
           `INSERT INTO employee_issuances (
@@ -148,7 +148,7 @@ async function createMovement(input, actorId) {
           const availableTags = await client.query(
             `SELECT id FROM asset_unit_tags WHERE item_id = $1 AND custody_status = 'Available' AND lifecycle_status = 'Active'
               ORDER BY unit_number LIMIT $2 FOR UPDATE`, [item.id, input.quantity]);
-          if (availableTags.rowCount < input.quantity) throw Object.assign(new Error('Hindi sapat ang mga available unique asset tags para sa issuance.'), { status: 409 });
+          if (availableTags.rowCount < input.quantity) throw Object.assign(new Error('Not enough available unique asset tags for the issuance.'), { status: 409 });
           await client.query(
             `UPDATE asset_unit_tags SET custody_status = 'Issued', assigned_employee_id = $2, issuance_id = $3,
                     location = $4, updated_at = NOW() WHERE id = ANY($1::BIGINT[])`,

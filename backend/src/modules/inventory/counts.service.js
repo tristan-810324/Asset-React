@@ -7,22 +7,22 @@ function invalid(message, status = 400) {
 // A blind count: GSO enters what is physically on the shelves without seeing the expected
 // numbers, and only then gets the differences. Scanned unit barcodes are checked one by one.
 async function submitCount(input, user) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang inventory count.');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Invalid inventory count.');
   const note = typeof input.note === 'string' ? input.note.trim() : '';
-  if (note.length > 1000) invalid('Hindi dapat lumampas sa 1000 characters ang notes.');
-  if (!Array.isArray(input.items) || !input.items.length || input.items.length > 5000) invalid('Ilagay ang bilang ng kahit isang item.');
+  if (note.length > 1000) invalid('Notes must be 1000 characters or less.');
+  if (!Array.isArray(input.items) || !input.items.length || input.items.length > 5000) invalid('Enter a count for at least one item.');
   const counted = new Map();
   for (const entry of input.items) {
     const itemId = String(entry?.itemId ?? '');
     const quantity = Number(entry?.countedQuantity);
-    if (!/^\d{1,20}$/.test(itemId)) invalid('Hindi valid ang item sa count.');
-    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 2147483647) invalid('Ang bilang ay dapat whole number na 0 o higit pa.');
+    if (!/^\d{1,20}$/.test(itemId)) invalid('Invalid item in the count.');
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 2147483647) invalid('The count must be a whole number, 0 or more.');
     counted.set(itemId, quantity);
   }
   const scannedTags = new Set((Array.isArray(input.scannedTagCodes) ? input.scannedTagCodes : [])
     .filter((code) => typeof code === 'string' && code.trim())
     .map((code) => code.trim().toUpperCase()));
-  if (scannedTags.size > 20000) invalid('Masyadong maraming na-scan na barcode sa isang count.');
+  if (scannedTags.size > 20000) invalid('Too many barcodes were scanned in one count.');
 
   const expected = await countsRepository.listExpectedOnHand();
   const tagsByCode = new Map(expected.tags.map((tag) => [tag.tagCode, tag]));
@@ -33,7 +33,7 @@ async function submitCount(input, user) {
       const countedQuantity = counted.get(item.itemId);
       return { ...item, expected: expectedQuantity, counted: countedQuantity, difference: countedQuantity - expectedQuantity };
     });
-  if (lines.length !== counted.size) invalid('May item sa count na wala na sa inventory. I-refresh ang listahan.');
+  if (lines.length !== counted.size) invalid('An item in the count is no longer in inventory. Refresh the list.');
 
   // Tag checks only for items whose units were scanned in this count.
   const scannedItemIds = new Set([...scannedTags].map((code) => tagsByCode.get(code)?.itemId).filter(Boolean));

@@ -21,28 +21,28 @@ function httpError(status, message, expose = status < 500) {
 function requiredText(value, label, maxLength, { optional = false } = {}) {
   if (optional && (value === undefined || value === null || value === '')) return '';
   if (typeof value !== 'string' || !value.trim()) {
-    throw httpError(400, `Pakilagay ang ${label}.`);
+    throw httpError(400, `Enter the ${label}.`);
   }
   const trimmed = value.trim();
   if (trimmed.length > maxLength) {
-    throw httpError(400, `Hindi dapat lumampas sa ${maxLength} characters ang ${label}.`);
+    throw httpError(400, `${label} must be ${maxLength} characters or less.`);
   }
   return trimmed;
 }
 
 function validateCreateIssuance(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang issuance request.');
+    throw httpError(400, 'Invalid issuance request.');
   }
   const employeeCode = requiredText(input.employeeCode, 'employee code', 40);
   if (typeof input.itemId !== 'string' && typeof input.itemId !== 'number') {
-    throw httpError(400, 'Pumili ng item mula sa inventory.');
+    throw httpError(400, 'Choose an item from inventory.');
   }
   const itemId = String(input.itemId);
-  if (!/^\d{1,20}$/.test(itemId)) throw httpError(400, 'Hindi valid ang inventory item.');
+  if (!/^\d{1,20}$/.test(itemId)) throw httpError(400, 'Invalid inventory item.');
   const quantity = Number(input.quantity ?? 1);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2147483647) {
-    throw httpError(400, 'Ang quantity na hihiramin ay dapat whole number na hindi bababa sa 1.');
+    throw httpError(400, 'The quantity to borrow must be a whole number of at least 1.');
   }
   const notes = requiredText(input.notes, 'issuance notes', 1000, { optional: true });
   return { employeeCode, itemId, quantity, notes };
@@ -50,7 +50,7 @@ function validateCreateIssuance(input) {
 
 function validateCreateIssuanceBatch(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang issuance request.');
+    throw httpError(400, 'Invalid issuance request.');
   }
   const employeeCode = requiredText(input.employeeCode, 'employee code', 40);
   const usesDetailedItems = Array.isArray(input.items);
@@ -60,41 +60,41 @@ function validateCreateIssuanceBatch(input) {
       ? input.itemIds.map((itemId) => ({ itemId, quantity: 1 }))
       : null;
   if (!requestedItems || requestedItems.length < 1 || requestedItems.length > 100) {
-    throw httpError(400, 'Pumili ng 1 hanggang 100 inventory item.');
+    throw httpError(400, 'Choose 1 to 100 inventory items.');
   }
   const items = requestedItems.map((value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw httpError(400, 'May hindi valid na inventory item sa request.');
+      throw httpError(400, 'The request has an invalid inventory item.');
     }
     const rawItemId = value.itemId;
     if (typeof rawItemId !== 'string' && typeof rawItemId !== 'number') {
-      throw httpError(400, 'May hindi valid na inventory item sa request.');
+      throw httpError(400, 'The request has an invalid inventory item.');
     }
     const itemId = String(rawItemId);
-    if (!/^\d{1,20}$/.test(itemId)) throw httpError(400, 'May hindi valid na inventory item sa request.');
+    if (!/^\d{1,20}$/.test(itemId)) throw httpError(400, 'The request has an invalid inventory item.');
     const quantity = Number(value.quantity ?? 1);
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2147483647) {
-      throw httpError(400, 'Ang quantity ng bawat item ay dapat whole number na hindi bababa sa 1.');
+      throw httpError(400, 'The quantity of each item must be a whole number of at least 1.');
     }
     const rawLineId = value.purchaseRequisitionLineId;
     const purchaseRequisitionLineId = rawLineId === undefined || rawLineId === null || rawLineId === ''
       ? null
       : String(rawLineId);
     if (purchaseRequisitionLineId !== null && !/^\d{1,20}$/.test(purchaseRequisitionLineId)) {
-      throw httpError(400, 'Hindi valid ang purchase requisition item reference.');
+      throw httpError(400, 'Invalid purchase requisition item reference.');
     }
     const rawRecipientAllocations = value.recipientAllocations;
     if (rawRecipientAllocations !== undefined && (!Array.isArray(rawRecipientAllocations) || rawRecipientAllocations.length > 100)) {
-      throw httpError(400, 'Hindi valid ang planned employee allocation para sa item.');
+      throw httpError(400, 'Invalid planned employee allocation for the item.');
     }
     const recipientAllocations = (rawRecipientAllocations || []).map((allocation) => {
       if (!allocation || typeof allocation !== 'object' || Array.isArray(allocation)) {
-        throw httpError(400, 'May hindi valid na employee allocation para sa item.');
+        throw httpError(400, 'The item has an invalid employee allocation.');
       }
       const recipientEmployeeCode = requiredText(allocation.employeeCode, 'recipient employee code', 40);
       const recipientQuantity = Number(allocation.quantity);
       if (!Number.isInteger(recipientQuantity) || recipientQuantity < 1 || recipientQuantity > quantity) {
-        throw httpError(400, 'Ang recipient quantity ay dapat whole number na hindi lalampas sa item quantity.');
+        throw httpError(400, 'The recipient quantity must be a whole number, not more than the item quantity.');
       }
       return {
         employeeCode: recipientEmployeeCode,
@@ -116,30 +116,30 @@ function validateCreateIssuanceBatch(input) {
         return recipientCode;
       });
       if (new Set(recipientKeys).size !== recipientKeys.length) {
-        throw httpError(400, 'Pagsamahin sa iisang allocation row ang parehong recipient at destination.');
+        throw httpError(400, 'Put the same recipient and destination in one allocation row.');
       }
       if (recipientAllocations.reduce((sum, allocation) => sum + allocation.quantity, 0) !== quantity) {
-        throw httpError(400, 'Dapat eksaktong tumugma ang kabuuang recipient allocation sa issuance quantity.');
+        throw httpError(400, 'The total recipient allocation must match the issuance quantity exactly.');
       }
     }
     return { itemId, quantity, purchaseRequisitionLineId, recipientAllocations };
   });
   const itemIds = items.map((item) => item.itemId);
   if (new Set(itemIds).size !== itemIds.length) {
-    throw httpError(400, 'May nadobleng inventory item sa request.');
+    throw httpError(400, 'The request has a duplicate inventory item.');
   }
   const notes = requiredText(input.notes, 'issuance notes', 1000, { optional: true });
   const purchaseRequisitionId = input.purchaseRequisitionId === undefined || input.purchaseRequisitionId === null || input.purchaseRequisitionId === ''
     ? null
     : String(input.purchaseRequisitionId);
-  if (purchaseRequisitionId !== null && !/^\d{1,20}$/.test(purchaseRequisitionId)) throw httpError(400, 'Hindi valid ang purchase requisition reference.');
+  if (purchaseRequisitionId !== null && !/^\d{1,20}$/.test(purchaseRequisitionId)) throw httpError(400, 'Invalid purchase requisition reference.');
   if (purchaseRequisitionId && items.some((item) => !item.purchaseRequisitionLineId)) {
-    throw httpError(400, 'Pumili ng mga item mula sa nakatalagang purchase requisition.');
+    throw httpError(400, 'Choose items from the assigned purchase requisition.');
   }
   let borrowDetails = null;
   if (input.borrowDetails !== undefined && input.borrowDetails !== null) {
     if (typeof input.borrowDetails !== 'object' || Array.isArray(input.borrowDetails)) {
-      throw httpError(400, 'Hindi valid ang reusable-stock borrowing details.');
+      throw httpError(400, 'Invalid reusable-stock borrowing details.');
     }
     const useLocation = requiredText(input.borrowDetails.useLocation, 'place of use', 200);
     const purpose = requiredText(input.borrowDetails.purpose, 'event or borrowing purpose', 500);
@@ -150,7 +150,7 @@ function validateCreateIssuanceBatch(input) {
     };
     const hasUseAt = input.borrowDetails.useAt !== undefined && input.borrowDetails.useAt !== null && input.borrowDetails.useAt !== '';
     const hasReturnAt = input.borrowDetails.expectedReturnAt !== undefined && input.borrowDetails.expectedReturnAt !== null && input.borrowDetails.expectedReturnAt !== '';
-    if (hasUseAt !== hasReturnAt) throw httpError(400, 'Ilagay ang petsa at oras ng hiraman at pagsoli.');
+    if (hasUseAt !== hasReturnAt) throw httpError(400, 'Enter the borrow and return date and time.');
 
     let useDate;
     let expectedReturnDate;
@@ -161,17 +161,17 @@ function validateCreateIssuanceBatch(input) {
         const localValue = requiredText(value, label, 16);
         const match = localValue.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/);
         if (!match || !isValidDate(match[1]) || Number(match[2]) > 23 || Number(match[3]) > 59) {
-          throw httpError(400, `Gumamit ng valid na petsa at oras para sa ${label}.`);
+          throw httpError(400, `Enter a valid date and time for ${label}.`);
         }
         const instant = new Date(`${localValue}:00+08:00`);
-        if (!Number.isFinite(instant.getTime())) throw httpError(400, `Gumamit ng valid na petsa at oras para sa ${label}.`);
+        if (!Number.isFinite(instant.getTime())) throw httpError(400, `Enter a valid date and time for ${label}.`);
         return { localValue, instant, databaseValue: instant.toISOString() };
       };
       const use = parseManilaDateTime(input.borrowDetails.useAt, 'hiraman');
       const expectedReturn = parseManilaDateTime(input.borrowDetails.expectedReturnAt, 'pagsoli');
-      if (use.instant.getTime() < Date.now()) throw httpError(400, 'Ang petsa at oras ng hiraman ay hindi puwedeng nakaraan na.');
+      if (use.instant.getTime() < Date.now()) throw httpError(400, 'The borrow date and time cannot be in the past.');
       if (expectedReturn.instant.getTime() <= use.instant.getTime()) {
-        throw httpError(400, 'Ang inaasahang petsa at oras ng pagsoli ay dapat mas huli sa hiraman.');
+        throw httpError(400, 'The expected return date and time must be after the borrow.');
       }
       useDate = use.localValue.slice(0, 10);
       expectedReturnDate = expectedReturn.localValue.slice(0, 10);
@@ -181,15 +181,15 @@ function validateCreateIssuanceBatch(input) {
       useDate = requiredText(input.borrowDetails.useDate, 'date of use', 10);
       expectedReturnDate = requiredText(input.borrowDetails.expectedReturnDate, 'expected return date', 10);
       if (!isValidDate(useDate) || !isValidDate(expectedReturnDate)) {
-        throw httpError(400, 'Gumamit ng valid na petsa para sa paggamit at pagsoli.');
+        throw httpError(400, 'Enter a valid date for use and return.');
       }
       const manilaDateParts = Object.fromEntries(new Intl.DateTimeFormat('en', {
         timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
       }).formatToParts(new Date()).map((part) => [part.type, part.value]));
       const todayInManila = `${manilaDateParts.year}-${manilaDateParts.month}-${manilaDateParts.day}`;
-      if (useDate < todayInManila) throw httpError(400, 'Ang petsa ng paggamit ay hindi puwedeng nakaraan na.');
+      if (useDate < todayInManila) throw httpError(400, 'The use date cannot be in the past.');
       if (expectedReturnDate < useDate) {
-        throw httpError(400, 'Ang inaasahang petsa ng pagsoli ay dapat katumbas o mas huli sa petsa ng paggamit.');
+        throw httpError(400, 'The expected return date must be the same as or after the use date.');
       }
     }
     borrowDetails = { useDate, expectedReturnDate, useAt, expectedReturnAt, useLocation, purpose };
@@ -199,7 +199,7 @@ function validateCreateIssuanceBatch(input) {
 
 function validateToken(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{40,128}$/.test(value)) {
-    throw httpError(400, 'Hindi valid o wala na ang approval link.');
+    throw httpError(400, 'This approval link is invalid or no longer exists.');
   }
   return value;
 }
@@ -256,8 +256,8 @@ async function createIssuanceBatch(input, user) {
   for (const { employeeCode: recipientCode, blockers } of recipientBlockers) {
     // Unsettled lost items no longer block a new issuance; Finance settles them on its own.
     if (!blockers.overdue) continue
-    const problems = `${blockers.overdue} overdue na hiniram na hindi pa naisasauli`;
-    throw httpError(409, `Hindi muna ma-issue-han si ${recipientCode}: may ${problems}. Ayusin muna ito sa Return Items.`);
+    const problems = `${blockers.overdue} overdue borrowed item(s) not yet returned`;
+    throw httpError(409, `Cannot issue to ${recipientCode} yet: ${problems}. Fix this in Return Items first.`);
   }
   const token = crypto.randomBytes(32).toString('base64url');
   const batch = await issuancesRepository.createPendingIssuanceBatch({
@@ -441,7 +441,7 @@ async function getMyDepartmentIssuanceSummary(user) {
 async function getIssuanceBatch(batchIdValue) {
   const batchId = requiredText(String(batchIdValue ?? ''), 'issuance request ID', 20);
   if (!/^\d{1,20}$/.test(batchId) || batchId === '0') {
-    throw httpError(400, 'Hindi valid ang issuance request ID.');
+    throw httpError(400, 'Invalid issuance request ID.');
   }
   return issuancesRepository.getIssuanceBatch(batchId);
 }
@@ -452,35 +452,35 @@ async function listApprovedIssuanceBatches() {
 
 function normalizeAssetScanCode(value) {
   const tagCode = requiredText(value, 'barcode', 40).toUpperCase();
-  if (!/^[A-Z0-9][A-Z0-9._-]{0,39}$/.test(tagCode)) throw httpError(400, 'Hindi valid ang barcode o inventory code.');
+  if (!/^[A-Z0-9][A-Z0-9._-]{0,39}$/.test(tagCode)) throw httpError(400, 'Invalid barcode or inventory code.');
   return tagCode;
 }
 
 async function getAssetTag(tagCodeValue) {
   const tagCode = normalizeAssetScanCode(tagCodeValue);
   const tag = await issuancesRepository.getAssetTagByCode(tagCode);
-  if (!tag) throw httpError(404, 'Walang item o barcode na tumutugma sa code na ito.');
+  if (!tag) throw httpError(404, 'No item or barcode matches this code.');
   if (tag.retiredLabel) {
     const retiredOn = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date(tag.replacedAt));
     throw httpError(409, tag.kind === 'return'
-      ? `Hindi na gumagana ang label na ito. Naibalik na ang ${tag.itemName} (${tag.itemCode}, item ${tag.unitNumber}) noong ${retiredOn}. Tanggalin ang lumang label; bagong label ang ipi-print kapag na-issue ulit ang unit.`
-      : `Luma na ang label na ito. Pinalitan ito noong ${retiredOn} ng label #${tag.labelVersion} para sa ${tag.itemName} (${tag.itemCode}, item ${tag.unitNumber}). I-scan ang bagong label na nasa unit, at itapon ang lumang label.`);
+      ? `This label is no longer valid. The unit was returned on ${retiredOn}. Remove the old label.`
+      : `This label is old. It was replaced on ${retiredOn}. Scan the new label on the unit and remove this one.`);
   }
   if (tag.barcodeNotGenerated) {
-    throw httpError(409, `Wala pang unit barcode ang ${tag.itemCode}. Hintayin munang maaprubahan ang issuance.`);
+    throw httpError(409, `${tag.itemCode} has no unit barcode yet. Wait for the issuance to be approved.`);
   }
   if (tag.ambiguous) {
-    throw httpError(409, `${tag.itemCode} ay may ${tag.unitCount} tagged units. I-scan ang unique AST- barcode sa mismong unit.`);
+    throw httpError(409, `${tag.itemCode} has ${tag.unitCount} tagged units. Scan the unique AST- barcode on the unit itself.`);
   }
   return tag;
 }
 
 async function inspectAssetTag(tagCodeValue, input, user) {
   const tagCode = normalizeAssetScanCode(tagCodeValue);
-  if (!/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/.test(tagCode)) throw httpError(400, 'I-scan ang unique barcode ng physical unit bago magtala ng inspection.');
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw httpError(400, 'Hindi valid ang inspection record.');
+  if (!/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/.test(tagCode)) throw httpError(400, 'Scan the unique barcode of the physical unit before you record an inspection.');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw httpError(400, 'Invalid inspection record.');
   const allowedConditions = ['New', 'Good', 'Fair', 'Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'];
-  if (!allowedConditions.includes(input.condition)) throw httpError(400, 'Pumili ng valid na item condition.');
+  if (!allowedConditions.includes(input.condition)) throw httpError(400, 'Choose a valid item condition.');
   const note = requiredText(input.note, 'inspection note', 1000);
   const tag = await issuancesRepository.updateAssetTagInspection({
     tagCode,
@@ -488,20 +488,20 @@ async function inspectAssetTag(tagCodeValue, input, user) {
     note,
     changedByUserId: user.id,
   });
-  if (!tag) throw httpError(404, 'Walang item na tumutugma sa barcode na ito.');
+  if (!tag) throw httpError(404, 'No item matches this barcode.');
   return tag;
 }
 
 async function decideMyIssuanceBatch(batchIdValue, input, user) {
   const batchId = requiredText(String(batchIdValue ?? ''), 'issuance request ID', 20);
   if (!/^\d{1,20}$/.test(batchId) || batchId === '0') {
-    throw httpError(400, 'Hindi valid ang issuance request ID.');
+    throw httpError(400, 'Invalid issuance request ID.');
   }
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang issuance decision.');
+    throw httpError(400, 'Invalid issuance decision.');
   }
   if (input.action !== 'acknowledge') {
-    throw httpError(400, 'Gamitin ang receipt acknowledgment pagkatapos aktuwal na matanggap ang item.');
+    throw httpError(400, 'Use the receipt acknowledgment after you actually receive the item.');
   }
 
   const result = await issuancesRepository.resolveApproval({
@@ -509,8 +509,8 @@ async function decideMyIssuanceBatch(batchIdValue, input, user) {
     requesterUserId: user.id,
     action: input.action,
   });
-  if (result.notFound) throw httpError(404, 'Hindi makita ang pending issuance para sa verified employee account na ito.');
-  if (result.expired) throw httpError(410, 'Nag-expire na ang issuance request at naibalik na sa available stock.');
+  if (result.notFound) throw httpError(404, 'No pending issuance was found for this verified employee account.');
+  if (result.expired) throw httpError(410, 'The issuance request expired and went back to available stock.');
   await notificationsRepository.resolveByPrefix(`requester-issue:${batchId}:`).catch(() => undefined);
   // GSO Staff should know the requester received the items, so the batch is closed on their side too.
   await notificationsRepository.createRoleNotification({
@@ -527,16 +527,16 @@ async function decideMyIssuanceBatch(batchIdValue, input, user) {
 async function recordIssuanceHandover(batchIdValue, input, user) {
   const batchId = requiredText(String(batchIdValue ?? ''), 'issuance request ID', 20);
   if (!/^\d{1,20}$/.test(batchId) || batchId === '0') {
-    throw httpError(400, 'Hindi valid ang issuance request ID.');
+    throw httpError(400, 'Invalid issuance request ID.');
   }
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang handover record.');
+    throw httpError(400, 'Invalid handover record.');
   }
   const handoverMethod = input.method;
   if (!['signed_receipt', 'authorized_handover'].includes(handoverMethod)) {
-    throw httpError(400, 'Pumili ng signed receipt o authorized handover.');
+    throw httpError(400, 'Choose a signed receipt or authorized handover.');
   }
-  const handoverNote = requiredText(input.reference, 'receipt reference o pangalan ng authorized recipient', 200);
+  const handoverNote = requiredText(input.reference, 'receipt reference or authorized recipient name', 200);
   const result = await issuancesRepository.resolveApproval({
     batchId,
     gsoUserId: user.id,
@@ -544,8 +544,8 @@ async function recordIssuanceHandover(batchIdValue, input, user) {
     handoverMethod,
     handoverNote,
   });
-  if (result.notFound) throw httpError(404, 'Hindi makita ang pending item handover.');
-  if (result.expired) throw httpError(410, 'Nag-expire na ang handover record.');
+  if (result.notFound) throw httpError(404, 'No pending item handover was found.');
+  if (result.expired) throw httpError(410, 'The handover record expired.');
   await notificationsRepository.resolveByPrefix(`requester-issue:${batchId}:`).catch(() => undefined);
   return result;
 }
@@ -553,25 +553,25 @@ async function recordIssuanceHandover(batchIdValue, input, user) {
 async function lookupApproval(tokenValue) {
   const token = validateToken(tokenValue);
   const issuance = await issuancesRepository.lookupApproval(hashToken(token));
-  if (!issuance) throw httpError(404, 'Hindi valid o wala na ang approval link.');
+  if (!issuance) throw httpError(404, 'This approval link is invalid or no longer exists.');
   return issuance;
 }
 
 async function decideApproval(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang approval decision.');
+    throw httpError(400, 'Invalid approval decision.');
   }
   const token = validateToken(input.token);
   if (input.action !== 'approve' && input.action !== 'reject') {
-    throw httpError(400, 'Pumili ng approve o reject.');
+    throw httpError(400, 'Choose approve or reject.');
   }
 
   const result = await issuancesRepository.resolveApproval({
     tokenHash: hashToken(token),
     action: input.action,
   });
-  if (result.notFound) throw httpError(404, 'Hindi valid o wala na ang approval link.');
-  if (result.expired) throw httpError(410, 'Nag-expire na ang approval link. Naibalik na sa Available ang inventory item.');
+  if (result.notFound) throw httpError(404, 'This approval link is invalid or no longer exists.');
+  if (result.expired) throw httpError(410, 'The approval link expired. The inventory item went back to Available.');
   if (result.alreadyDecided) {
     return {
       status: result.status,

@@ -161,6 +161,7 @@ const REQUEST_SELECT = `
                  'itemId', item.id::TEXT,
                  'itemCode', item.item_code,
                  'inventoryName', COALESCE(NULLIF(item.item_name, ''), item.description),
+                 'description', item.description,
                  'quantity', allocation.quantity,
                  'fulfilledQuantity', allocation.fulfilled_quantity,
                  'status', allocation.status,
@@ -443,10 +444,10 @@ async function listItemsToBuy() {
   return result.rows;
 }
 
-// Inventory records with the same item name and category, and how many units each can still give.
+// Inventory records that are the requested item (same name, or a similar name GSO Staff confirm), and how many units
+// each can still give. A laptop is never offered for a hard drive, even when both are in the same category.
 // `consumed` carries units already planned for earlier items of the same request in a preview.
 async function checkLineStock(queryable, line, { lock = false, consumed = new Map() } = {}) {
-  // GSO Staff compare the specs by hand, so every in-stock unit of the category is offered, not only the same name.
   const candidates = await queryable.query(
     `SELECT item.id, item.item_code, COALESCE(NULLIF(item.item_name, ''), item.description) AS name,
             item.description, item.category, item.quantity, item.unit_of_measure,
@@ -459,8 +460,10 @@ async function checkLineStock(queryable, line, { lock = false, consumed = new Ma
   );
   const requestedQuantity = Number(line.requestedQuantity);
   const matches = [];
+  // The preview passes mapped lines (itemName), the routing step passes raw rows (item_name).
+  const requestedName = line.itemName ?? line.item_name;
   for (const item of candidates.rows) {
-    if (!purchaseCategoryMatches(line.category, item.category)) continue;
+    if (!nameMatch(requestedName, item.name)) continue;
     const itemId = String(item.id);
     const availableQuantity = Math.max(0, await getAvailableQuantity(queryable, item) - (consumed.get(itemId) || 0));
     if (availableQuantity < 1) continue;
@@ -495,29 +498,32 @@ async function attachStaffStockChecks(requests) {
 function staffRouteSummary(counts, note) {
   const total = counts.ISSUE + counts.HEAD_ISSUE + counts.PURCHASE;
   const parts = [];
+  if (counts.REJECT > 0) parts.push(`${counts.REJECT} consumable line(s) rejected`);
   if (counts.PURCHASE > 0) {
     parts.push(`${counts.PURCHASE} item line(s) have a shortage`);
     if (counts.HEAD_ISSUE > 0) parts.push(`${counts.HEAD_ISSUE} stocked item line(s) are held`);
   } else if (counts.HEAD_ISSUE > 0) {
     parts.push(`GSO Head approval covers all ${total} item line(s)`);
-  } else {
+  } else if (counts.ISSUE > 0) {
     parts.push(`all ${counts.ISSUE} item line(s) are reserved for GSO Staff`);
   }
-  const destination = counts.PURCHASE > 0 || counts.HEAD_ISSUE > 0
-    ? 'The entire request is waiting for the GSO Head; no line may be issued separately.'
-    : 'The entire request is ready for GSO Staff issuance.';
+  const destination = total === 0
+    ? 'Nothing is left to route.'
+    : counts.PURCHASE > 0 || counts.HEAD_ISSUE > 0
+      ? 'The entire request is waiting for the GSO Head; no line may be issued separately.'
+      : 'The entire request is ready for GSO Staff issuance.';
   return `GSO Staff checked the complete request: ${parts.filter(Boolean).join('; ')}. ${destination}${note ? ` Note: ${note}` : ''}`;
 }
 
-async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits = {}, changedBy }) {
+async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits = {}, issueNowLineIds = [], rejectLineIds = [], changedBy }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const current = (await client.query(
-      'SELECT id, request_type, status FROM service_requests WHERE id = $1 FOR UPDATE',
+      'SELECT id, request_type, status, form_data FROM service_requests WHERE id = $1 FOR UPDATE',
       [id],
     )).rows[0];
-    if (!current || current.request_type !== 'PURCHASE_REQUISITION') throw httpError(404, 'Hindi makita ang purchase requisition.');
+    if (!current || current.request_type !== 'PURCHASE_REQUISITION') throw httpError(404, 'Purchase requisition not found.');
     const lines = (await client.query(
       `SELECT * FROM purchase_requisition_lines
         WHERE request_id = $1 AND route_status = 'WAITING_STAFF_REVIEW'
@@ -526,7 +532,7 @@ async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits 
       [id],
     )).rows;
     if (current.status !== 'Submitted' || lines.length === 0) {
-      throw httpError(409, 'Na-review na ang requisition na ito. I-refresh ang listahan.');
+      throw httpError(409, 'This requisition was already reviewed. Refresh the list.');
     }
 
     let historyNote;
@@ -539,19 +545,33 @@ async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits 
       );
       historyNote = `GSO Staff asked the requester for more details: ${note}`;
     } else {
-      const counts = { ISSUE: 0, HEAD_ISSUE: 0, PURCHASE: 0 };
+      const counts = { ISSUE: 0, HEAD_ISSUE: 0, PURCHASE: 0, REJECT: 0 };
       // Release every line first, then reserve only the units GSO Staff picked as matching the requester's specs.
       for (const line of lines) await releasePurchaseLineStock(client, line.id);
 
       const consumed = new Map();
       for (const line of lines) {
+        // A rejected consumable reserves nothing; its reason stays on the line for the requester.
+        if (rejectLineIds.includes(String(line.id))) {
+          const kind = (current.form_data?.items || [])[Number(line.line_number) - 1]?.itemKind;
+          if (kind !== 'CONSUMABLE') throw httpError(409, `${line.item_name} is a per-unit item. Send it to the GSO Head instead.`);
+          if (issueNowLineIds.includes(String(line.id))) throw httpError(409, `${line.item_name} cannot be issued now and rejected at the same time.`);
+          counts.REJECT += 1;
+          await client.query(
+            `UPDATE purchase_requisition_lines
+                SET route_status = 'REJECTED', reserved_quantity = 0, finance_quantity = 0, review_note = $2, updated_at = NOW()
+              WHERE id = $1`,
+            [line.id, note],
+          );
+          continue;
+        }
         const requested = Number(line.requested_quantity);
         const check = await checkLineStock(client, line, { lock: true, consumed });
         let remaining = requested;
         const chosen = [];
         for (const itemId of selectedUnits[String(line.id)] || []) {
           const match = check.matches.find((entry) => entry.itemId === String(itemId));
-          if (!match) throw httpError(409, `Nagbago ang stock ng ${line.item_name}. I-refresh at i-check muli bago mag-route.`);
+          if (!match) throw httpError(409, `The stock for ${line.item_name} changed. Refresh and check again before you route.`);
           const quantity = Math.min(match.availableQuantity, remaining);
           if (quantity < 1) continue;
           chosen.push({ itemId: match.itemId, quantity });
@@ -559,6 +579,20 @@ async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits 
           remaining -= quantity;
         }
         const reserved = requested - remaining;
+        // Only a consumable with its full quantity matched, within the item's own staff limit, can be issued now.
+        const issuesNow = issueNowLineIds.includes(String(line.id));
+        if (issuesNow) {
+          const kind = (current.form_data?.items || [])[Number(line.line_number) - 1]?.itemKind;
+          const routes = staffRouteOptions({
+            requestedQuantity: requested,
+            availableQuantity: reserved,
+            approvalPolicy: line.approval_policy,
+            staffIssueMaxQuantity: line.staff_issue_max_quantity,
+          });
+          if (kind !== 'CONSUMABLE' || reserved < requested || !routes.includes('ISSUE')) {
+            throw httpError(409, `${line.item_name} cannot be issued now. Send it to the GSO Head instead.`);
+          }
+        }
         for (const pick of chosen) {
           await client.query(
             `INSERT INTO purchase_requisition_line_allocations (line_id, item_id, quantity)
@@ -567,6 +601,18 @@ async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits 
                SET quantity = EXCLUDED.quantity, fulfilled_quantity = 0, status = 'Reserved', updated_at = NOW()`,
             [line.id, pick.itemId, pick.quantity],
           );
+          // The unit's stock status follows its reservations, so the Item Master shows it as Reserved.
+          await refreshInventoryStatus(client, pick.itemId);
+        }
+        if (issuesNow) {
+          counts.ISSUE += 1;
+          await client.query(
+            `UPDATE purchase_requisition_lines
+                SET route_status = 'READY_FOR_STAFF', reserved_quantity = $2, finance_quantity = 0, review_note = '', updated_at = NOW()
+              WHERE id = $1`,
+            [line.id, reserved],
+          );
+          continue;
         }
         // Matching units go to the GSO Head with the request; any shortfall is part of the purchase.
         counts[reserved < requested ? 'PURCHASE' : 'HEAD_ISSUE'] += 1;
@@ -588,7 +634,8 @@ async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits 
     await client.query(
       `UPDATE service_requests
           SET status = $2, staff_reviewed_by_user_id = $3, staff_reviewed_at = NOW(),
-              staff_review_note = $4, updated_at = NOW()
+              staff_review_note = $4, updated_at = NOW(),
+              completed_at = CASE WHEN $2 = 'Rejected' THEN NOW() ELSE completed_at END
         WHERE id = $1`,
       [id, status, changedBy, note],
     );
@@ -715,25 +762,25 @@ async function swapRequisitionUnit({ lineId, fromItemId, toItemId, changedBy }) 
       'SELECT id, request_id, item_name, category FROM purchase_requisition_lines WHERE id = $1 FOR UPDATE',
       [lineId],
     )).rows[0];
-    if (!line) throw httpError(404, 'Hindi makita ang requisition item.');
+    if (!line) throw httpError(404, 'Requisition item not found.');
     const request = (await client.query(
       'SELECT id, request_type, status FROM service_requests WHERE id = $1 FOR UPDATE',
       [line.request_id],
     )).rows[0];
     if (request.request_type !== 'PURCHASE_REQUISITION' || request.status !== 'Approved') {
-      throw httpError(409, 'Hindi na puwedeng palitan ang unit ng requisition na ito.');
+      throw httpError(409, 'The unit of this requisition can no longer be swapped.');
     }
     const to = (await client.query(
       `SELECT id, item_code, category, quantity, condition FROM item_catalog WHERE id = $1 FOR UPDATE`,
       [toItemId],
     )).rows[0];
-    if (!to) throw httpError(404, 'Hindi makita ang napiling unit.');
-    if (!purchaseCategoryMatches(line.category, to.category)) throw httpError(409, 'Iba ang category ng napiling unit.');
+    if (!to) throw httpError(404, 'The chosen unit was not found.');
+    if (!purchaseCategoryMatches(line.category, to.category)) throw httpError(409, 'The chosen unit is in a different category.');
     if (['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(to.condition)) {
-      throw httpError(409, 'Hindi puwedeng i-issue ang unit na hindi serviceable.');
+      throw httpError(409, 'A unit that is not serviceable cannot be issued.');
     }
     if (await getAvailableQuantity(client, to) < 1) {
-      throw httpError(409, `${to.item_code} ay naka-reserve na sa ibang request at ready na i-issue sa ibang tao.`);
+      throw httpError(409, `${to.item_code} is already reserved for another request and ready to issue to someone else.`);
     }
 
     const from = (await client.query(
@@ -742,7 +789,7 @@ async function swapRequisitionUnit({ lineId, fromItemId, toItemId, changedBy }) 
       [lineId, fromItemId],
     )).rows[0];
     if (!from || Number(from.quantity) - Number(from.fulfilled_quantity) < 1) {
-      throw httpError(409, 'Hindi na naka-reserve ang unit na papalitan. I-refresh ang listahan.');
+      throw httpError(409, 'The unit to replace is no longer reserved. Refresh the list.');
     }
     // quantity must stay above zero (table CHECK), so the last unit is released by status instead.
     const unitsLeft = Number(from.quantity) - Number(from.fulfilled_quantity);
@@ -801,7 +848,7 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
       'SELECT * FROM purchase_requisition_lines WHERE id = ANY($1::BIGINT[]) ORDER BY id FOR UPDATE',
       [lineIds],
     )).rows.map((row) => [String(row.id), row]));
-    if (lines.size !== lineIds.length) throw httpError(404, 'Hindi makita ang isa sa mga requested item. I-refresh ang listahan.');
+    if (lines.size !== lineIds.length) throw httpError(404, 'One of the requested items was not found. Refresh the list.');
 
     const byLine = new Map();
     for (const delivery of deliveries) byLine.set(delivery.lineId, [...(byLine.get(delivery.lineId) || []), delivery]);
@@ -809,16 +856,16 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
       const line = lines.get(lineId);
       const request = requests.get(String(line.request_id));
       if (Number(line.finance_quantity) === 0) {
-        throw httpError(409, `Na-link na ang delivery ng ${line.item_name} sa ${request.reference_no}. Posibleng may ibang staff na nag-record. I-refresh ang listahan.`);
+        throw httpError(409, `The delivery of ${line.item_name} is already linked to ${request.reference_no}. Another staff member may have recorded it. Refresh the list.`);
       }
       if (request.status !== 'Sent to Finance') {
-        throw httpError(409, `Hindi pa naihahand-off sa Finance ang ${request.reference_no}, kaya hindi pa puwedeng i-link ang delivery.`);
+        throw httpError(409, `${request.reference_no} has not been handed off to Finance yet, so the delivery cannot be linked.`);
       }
       if (line.route_status === 'HANDOVER_PENDING') {
-        throw httpError(409, 'Tapusin muna ang pending handover ng item na ito bago i-record ang bagong delivery.');
+        throw httpError(409, 'Finish the pending handover of this item before you record a new delivery.');
       }
       if (sumOf(rows, (row) => row.quantity) > Number(line.finance_quantity)) {
-        throw httpError(409, `${line.item_name} sa ${request.reference_no}: ${line.finance_quantity} na lang ang kailangang i-receive. I-check ang quantity.`);
+        throw httpError(409, `${line.item_name} in ${request.reference_no}: only ${line.finance_quantity} left to receive. Check the quantity.`);
       }
     }
 
@@ -828,19 +875,19 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
          FROM item_catalog WHERE id = ANY($1::BIGINT[]) ORDER BY id FOR UPDATE`,
       [itemIds],
     )).rows.map((row) => [String(row.id), row]));
-    if (items.size !== itemIds.length) throw httpError(404, 'Hindi makita ang inventory record. I-refresh ang listahan.');
+    if (items.size !== itemIds.length) throw httpError(404, 'Inventory record not found. Refresh the list.');
 
     const planned = deliveries.map((delivery) => {
       const line = lines.get(delivery.lineId);
       const item = items.get(delivery.itemId);
       const inventoryName = String(item.item_name || item.description || '').trim();
       const match = deliveryNameMatch(line.item_name, line.category, item.category, inventoryName);
-      if (!match) throw httpError(409, 'Dapat tugma ang item name at category ng inventory record sa requested item.');
+      if (!match) throw httpError(409, 'The item name and category of the inventory record must match the requested item.');
       if (match === 'SIMILAR' && !delivery.confirmSimilarName) {
-        throw httpError(409, `Magkaiba ang pangalan ng "${line.item_name}" at "${inventoryName}". Kumpirmahin muna na iisang item ang dalawa.`);
+        throw httpError(409, `The names "${line.item_name}" and "${inventoryName}" are different. Confirm first that they are the same item.`);
       }
       if (['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(item.condition)) {
-        throw httpError(409, 'Hindi puwedeng i-link ang stock na hindi serviceable.');
+        throw httpError(409, 'You cannot link stock that is not serviceable.');
       }
       return { line, item, inventoryName, match, quantity: delivery.quantity };
     });
@@ -848,7 +895,7 @@ async function recordPurchaseDeliveries({ deliveries, receiptReference, changedB
       const needed = sumOf(planned.filter((plan) => plan.item === item), (plan) => plan.quantity);
       const available = await getAvailableQuantity(client, item);
       if (available < needed) {
-        throw httpError(409, `Hindi sapat ang available na ${item.item_name || item.description} (${item.item_code}): ${available} ${item.unit_of_measure} lang, pero ${needed} ang ili-link. I-add muna sa Item Master Data ang aktuwal na delivery, o i-refresh ang listahan; baka may ibang staff na nag-link nito.`);
+        throw httpError(409, `Not enough available ${item.item_name || item.description} (${item.item_code}): ${available} ${item.unit_of_measure} left, but ${needed} to link. Add the delivery in Item Master Data first.`);
       }
     }
 
@@ -933,7 +980,7 @@ async function undoPurchaseDelivery({ id, receiptId, changedBy }) {
       'SELECT id, reference_no, request_type, status FROM service_requests WHERE id = $1 FOR UPDATE',
       [id],
     )).rows[0];
-    if (!request || request.request_type !== 'PURCHASE_REQUISITION') throw httpError(404, 'Hindi makita ang purchase requisition.');
+    if (!request || request.request_type !== 'PURCHASE_REQUISITION') throw httpError(404, 'Purchase requisition not found.');
     const receipt = (await client.query(
       `SELECT receipt.* FROM purchase_requisition_line_receipts AS receipt
          JOIN purchase_requisition_lines AS line ON line.id = receipt.line_id
@@ -941,14 +988,14 @@ async function undoPurchaseDelivery({ id, receiptId, changedBy }) {
         FOR UPDATE OF receipt`,
       [receiptId, id],
     )).rows[0];
-    if (!receipt) throw httpError(404, 'Hindi makita ang delivery record.');
-    if (receipt.voided_at) throw httpError(409, 'Na-undo na ang delivery na ito. I-refresh ang page.');
+    if (!receipt) throw httpError(404, 'Delivery record not found.');
+    if (receipt.voided_at) throw httpError(409, 'This delivery was already undone. Refresh the page.');
     if (!['Sent to Finance', 'Approved'].includes(request.status)) {
-      throw httpError(409, 'Hindi na maa-undo ang delivery ng requisition na ito.');
+      throw httpError(409, 'The delivery of this requisition can no longer be undone.');
     }
     const line = (await client.query('SELECT * FROM purchase_requisition_lines WHERE id = $1 FOR UPDATE', [receipt.line_id])).rows[0];
     if (line.route_status === 'HANDOVER_PENDING') {
-      throw httpError(409, 'Tapusin muna ang pending handover ng item na ito bago i-undo ang delivery.');
+      throw httpError(409, 'Finish the pending handover of this item before you undo the delivery.');
     }
     const item = (await client.query('SELECT id, item_code, unit_of_measure FROM item_catalog WHERE id = $1 FOR UPDATE', [receipt.item_id])).rows[0];
     const allocation = (await client.query(
@@ -958,7 +1005,7 @@ async function undoPurchaseDelivery({ id, receiptId, changedBy }) {
     )).rows[0];
     const quantity = Number(receipt.quantity);
     if (!allocation || Number(allocation.quantity) - Number(allocation.fulfilled_quantity) < quantity) {
-      throw httpError(409, 'Na-issue na ang ilan sa units ng delivery na ito, kaya hindi na ito ma-undo.');
+      throw httpError(409, 'Some units from this delivery were already issued, so it cannot be undone.');
     }
 
     const remainingAllocation = Number(allocation.quantity) - quantity;
@@ -1024,7 +1071,7 @@ async function reviewPurchaseRequisition({ id, decision, note, changedBy }) {
       'SELECT id, request_type, status FROM service_requests WHERE id = $1 FOR UPDATE',
       [id],
     )).rows[0];
-    if (!current || current.request_type !== 'PURCHASE_REQUISITION') throw httpError(404, 'Hindi makita ang purchase requisition.');
+    if (!current || current.request_type !== 'PURCHASE_REQUISITION') throw httpError(404, 'Purchase requisition not found.');
     const lines = (await client.query(
       `SELECT * FROM purchase_requisition_lines
         WHERE request_id = $1
@@ -1034,11 +1081,11 @@ async function reviewPurchaseRequisition({ id, decision, note, changedBy }) {
     )).rows;
     if (current.status !== 'Under Review' || lines.length === 0
       || !lines.some((line) => line.route_status === 'WAITING_GSO_HEAD')) {
-      throw httpError(409, 'Walang buong request na naghihintay ng approval mo. I-refresh ang listahan.');
+      throw httpError(409, 'No full request is waiting for your approval. Refresh the list.');
     }
 
     if (!['APPROVE', 'DECLINE'].includes(decision)) {
-      throw httpError(400, 'Piliin kung ia-approve o ide-decline ang buong request.');
+      throw httpError(400, 'Choose whether to approve or decline the whole request.');
     }
     let historyNote;
     if (decision === 'APPROVE') {
@@ -1122,10 +1169,10 @@ async function completePhysicalFinanceHandoff({ id, changedBy }) {
     );
     const current = currentResult.rows[0];
     if (!current || current.request_type !== 'PURCHASE_REQUISITION') {
-      throw Object.assign(new Error('Hindi makita ang purchase requisition.'), { status: 404 });
+      throw Object.assign(new Error('Purchase requisition not found.'), { status: 404 });
     }
     if (!['GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed'].includes(current.status)) {
-      throw Object.assign(new Error('Ang requisition ay dapat munang ma-approve ng GSO Head bago i-hand off sa Finance.'), { status: 409 });
+      throw Object.assign(new Error('The requisition must first be approved by the GSO Head before it is handed off to Finance.'), { status: 409 });
     }
     const shortage = await client.query(
       `SELECT COUNT(*)::INTEGER AS count
@@ -1134,7 +1181,7 @@ async function completePhysicalFinanceHandoff({ id, changedBy }) {
       [id],
     );
     if (!shortage.rows[0]?.count) {
-      throw Object.assign(new Error('Walang shortage na kailangang i-hand off sa Finance.'), { status: 409 });
+      throw Object.assign(new Error('There is no shortage to hand off to Finance.'), { status: 409 });
     }
 
     await client.query(
@@ -1256,12 +1303,15 @@ function deliveryNameMatch(requestedName, requestCategory, inventoryCategory, in
 }
 
 async function releasePurchaseLineStock(client, lineId) {
-  await client.query(
+  const released = await client.query(
     `UPDATE purchase_requisition_line_allocations
         SET status = 'Released', updated_at = NOW()
-      WHERE line_id = $1 AND status = 'Reserved'`,
+      WHERE line_id = $1 AND status = 'Reserved'
+      RETURNING item_id`,
     [lineId],
   );
+  // A released unit goes back to Available unless another reservation still holds it.
+  for (const row of released.rows) await refreshInventoryStatus(client, row.item_id);
 }
 
 async function createRequest({ requestType, formData, userId }) {
@@ -1280,13 +1330,13 @@ async function createRequest({ requestType, formData, userId }) {
           FOR UPDATE`,
         [itemIds],
       );
-      if (inventory.rowCount !== itemIds.length) throw Object.assign(new Error('May item na wala na sa inventory.'), { status: 400 });
+      if (inventory.rowCount !== itemIds.length) throw Object.assign(new Error('An item is no longer in inventory.'), { status: 400 });
       const inventoryById = new Map(inventory.rows.map((item) => [String(item.id), item]));
       items = formData.items.map((requested) => {
         const item = inventoryById.get(requested.itemId);
         if (!item || item.tracking_mode !== 'quantity' || item.issue_behavior !== 'returnable'
           || ['Needs Repair', 'Under Maintenance', 'Unserviceable', 'Retired'].includes(item.condition)) {
-          throw Object.assign(new Error('Hindi available para hiramin ang isa sa mga napiling item.'), { status: 409 });
+          throw Object.assign(new Error('One of the chosen items is not available to borrow.'), { status: 409 });
         }
         return { ...requested, inventoryItem: item };
       });
@@ -1313,7 +1363,7 @@ async function createRequest({ requestType, formData, userId }) {
       `INSERT INTO service_requests (reference_no, request_type, title, form_data, requested_by_user_id)
        VALUES ($1, $2, $3, $4::JSONB, $5)
        RETURNING id`,
-      [referenceNo, requestType, title, JSON.stringify(formData), userId],
+      [referenceNo, requestType, title, JSON.stringify(withoutPhotos(formData)), userId],
     );
     const requestId = created.rows[0].id;
 
@@ -1348,7 +1398,7 @@ async function createRequest({ requestType, formData, userId }) {
         : 'Request submitted.', userId],
     );
     // The work order is created in this same transaction, so a job can never exist without its route.
-    if (requestType === 'JOB_REQUEST') await serviceWorkOrdersRepository.createForJobRequest(client, { requestId, formData });
+    if (requestType === 'JOB_REQUEST') await serviceWorkOrdersRepository.createForJobRequest(client, { requestId, formData, userId });
     const request = await getById(client, requestId);
     await client.query('COMMIT');
     return request;
@@ -1358,6 +1408,11 @@ async function createRequest({ requestType, formData, userId }) {
   } finally {
     client.release();
   }
+}
+
+// Job photos go to their own table (service_work_order_photos), so they are kept out of the request's form data.
+function withoutPhotos({ photos, ...formData }) {
+  return formData;
 }
 
 // A Loss / Damage Report can name only items issued to the requester and still out with them. The name and code come
@@ -1562,7 +1617,7 @@ async function setStatus({ id, expectedStatus, status, note, changedBy, dueDate,
         [id, facility.venue, facility.date, facility.startTime, facility.endTime],
       );
       if (conflict.rowCount) {
-        throw Object.assign(new Error(`May naka-approve nang request para sa venue at oras na ito (${conflict.rows[0].reference_no}).`), { status: 409 });
+        throw Object.assign(new Error(`An approved request already exists for this venue and time (${conflict.rows[0].reference_no}).`), { status: 409 });
       }
       await reserveFacilityEquipment(client, id, facility);
     }
@@ -1652,7 +1707,7 @@ async function respondToRequest({ id, userId, message }) {
       [id, userId],
     );
     const current = result.rows[0];
-    if (!current) throw Object.assign(new Error('Hindi makita ang request.'), { status: 404 });
+    if (!current) throw Object.assign(new Error('Request not found.'), { status: 404 });
     const messages = Array.isArray(current.form_data.responseMessages) ? current.form_data.responseMessages : [];
     const nextFormData = { ...current.form_data, responseMessages: [...messages, { message, createdAt: new Date().toISOString() }] };
     const nextStatus = current.status === 'Needs Information' ? 'Submitted' : current.status;
@@ -1696,8 +1751,8 @@ async function changeMineStatus({ id, userId, expectedStatus, status, note }) {
       [id, userId],
     );
     const current = result.rows[0];
-    if (!current) throw Object.assign(new Error('Hindi makita ang request.'), { status: 404 });
-    if (current.status !== expectedStatus) throw Object.assign(new Error('Nagbago na ang status ng request. I-refresh muna ang page.'), { status: 409 });
+    if (!current) throw Object.assign(new Error('Request not found.'), { status: 404 });
+    if (current.status !== expectedStatus) throw Object.assign(new Error('The request status has changed. Refresh the page first.'), { status: 409 });
     if (status === 'Cancelled' && current.request_type === 'PURCHASE_REQUISITION') {
       const activeResult = await client.query(
         `SELECT EXISTS (
@@ -1707,7 +1762,7 @@ async function changeMineStatus({ id, userId, expectedStatus, status, note }) {
         [id],
       );
       if (activeResult.rows[0]?.has_issued_lines) {
-        throw Object.assign(new Error('Hindi na makakansela ang request kapag may item nang na-release o nasa handover.'), { status: 409 });
+        throw Object.assign(new Error('The request can no longer be cancelled after an item has been released or is in handover.'), { status: 409 });
       }
       const lines = await client.query('SELECT id FROM purchase_requisition_lines WHERE request_id = $1', [id]);
       for (const line of lines.rows) {

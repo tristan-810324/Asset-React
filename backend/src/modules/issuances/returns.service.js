@@ -78,24 +78,24 @@ function httpError(status, message, expose = status < 500) {
 
 function requiredText(value, label, maxLength) {
   if (typeof value !== 'string' || !value.trim()) {
-    throw httpError(400, `Pakilagay ang ${label}.`);
+    throw httpError(400, `Enter the ${label}.`);
   }
   const trimmed = value.trim();
   if (trimmed.length > maxLength) {
-    throw httpError(400, `Hindi dapat lumampas sa ${maxLength} characters ang ${label}.`);
+    throw httpError(400, `${label} must be ${maxLength} characters or less.`);
   }
   return trimmed;
 }
 
 function validateCreateReturn(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang item return request.');
+    throw httpError(400, 'Invalid item return request.');
   }
   const employeeCode = requiredText(input.employeeCode, 'employee code', 40);
   const itemCode = requiredText(input.itemCode, 'item code', 100);
   const reason = requiredText(input.reason, 'return reason o notes', 1000);
   const issuanceId = String(input.issuanceId ?? '');
-  if (!/^\d{1,20}$/.test(issuanceId)) throw httpError(400, 'Piliin ang issued item na isosoli.');
+  if (!/^\d{1,20}$/.test(issuanceId)) throw httpError(400, 'Choose the issued item to return.');
   return { employeeCode, itemCode, reason, issuanceId };
 }
 
@@ -104,17 +104,17 @@ function validateCreateReturn(input) {
 function readReturnLines(input) {
   const rawLines = Array.isArray(input.lines) ? input.lines : [{ condition: input.condition, quantity: input.quantity }];
   if (rawLines.length < 1 || rawLines.length > returnLineConditions.length) {
-    throw httpError(400, 'Ilagay ang quantity bawat condition ng ibinabalik.');
+    throw httpError(400, 'Enter the quantity for each condition of the returned items.');
   }
   const seen = new Set();
   const lines = rawLines.map((line) => {
     const condition = typeof line?.condition === 'string' ? line.condition.trim() : '';
     const quantity = Number(line?.quantity);
-    if (!returnLineConditions.includes(condition)) throw httpError(400, 'Pumili ng valid na return condition.');
-    if (seen.has(condition)) throw httpError(400, 'Isang linya lang bawat condition.');
+    if (!returnLineConditions.includes(condition)) throw httpError(400, 'Choose a valid return condition.');
+    if (seen.has(condition)) throw httpError(400, 'Only one line per condition.');
     seen.add(condition);
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > 2147483647) {
-      throw httpError(400, 'Ang quantity na isosoli ay dapat whole number na hindi bababa sa 1.');
+      throw httpError(400, 'The quantity to return must be a whole number of at least 1.');
     }
     return { condition, quantity };
   });
@@ -128,12 +128,12 @@ function readReturnLines(input) {
 
 function readReturnedByName(input) {
   if (input.returnedByName === undefined || input.returnedByName === null || input.returnedByName === '') return null;
-  return requiredText(input.returnedByName, 'pangalan ng nagsauli', 200);
+  return requiredText(input.returnedByName, 'name of the person returning it', 200);
 }
 
 function readId(value, label) {
   const id = String(value ?? '');
-  if (!/^\d{1,20}$/.test(id)) throw httpError(400, `Hindi valid ang ${label}.`);
+  if (!/^\d{1,20}$/.test(id)) throw httpError(400, `Invalid ${label}.`);
   return id;
 }
 
@@ -197,7 +197,7 @@ const receiptWarning = 'If you did not return these items, or the details are wr
 
 function validateToken(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{40,128}$/.test(value)) {
-    throw httpError(400, 'Hindi valid o wala na ang return approval link.');
+    throw httpError(400, 'This return approval link is invalid or no longer exists.');
   }
   return value;
 }
@@ -220,7 +220,7 @@ async function createEmployeeReturn(input, user) {
   const { employeeCode, itemCode, reason, issuanceId } = validateCreateReturn(input);
   const { lines, total, breakdown } = readReturnLines(input);
   const returnedByName = readReturnedByName(input);
-  const { challengeId, otp } = readOtpInput(input, 'Kailangan ang 6-digit code na ipinadala sa email ng employee para makumpirma ang quantity at condition.');
+  const { challengeId, otp } = readOtpInput(input, 'A 6-digit code sent to the employee email is required to confirm the quantity and condition.');
   const otpHash = hashBulkReturnOtp(issuanceId, otp);
   assertOtpAccepted(await returnsRepository.verifyBulkReturnOtp({
     challengeId, issuanceId, quantity: total, condition: breakdown, otpHash,
@@ -294,14 +294,14 @@ async function createEmployeeReturn(input, user) {
 
 async function confirmScannedTagReturn(tagCodeValue, input, user) {
   if (typeof tagCodeValue !== 'string' || !/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/i.test(tagCodeValue.trim())) {
-    throw httpError(400, 'I-scan ang unique barcode ng physical unit bago kumpirmahin ang return.');
+    throw httpError(400, 'Scan the unique barcode of the physical unit before you confirm the return.');
   }
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang item return confirmation.');
+    throw httpError(400, 'Invalid item return confirmation.');
   }
-  const condition = requiredText(input.condition, 'condition pagkatapos ng GSO inspection', 40);
+  const condition = requiredText(input.condition, 'condition after GSO inspection', 40);
   if (!returnLineConditions.includes(condition)) {
-    throw httpError(400, 'Pumili ng valid na return condition.');
+    throw httpError(400, 'Choose a valid return condition.');
   }
   const isLost = condition === 'Lost';
   const reason = typeof input.reason === 'string' && input.reason.trim()
@@ -315,14 +315,14 @@ async function confirmScannedTagReturn(tagCodeValue, input, user) {
     : null;
   // A returned unit goes back to GSO; giving it to someone else is a new issuance they acknowledge.
   if (input.destination !== undefined && input.destination !== 'storage') {
-    throw httpError(400, 'Ibalik muna sa GSO Storage ang unit, saka i-issue sa bagong empleyado sa Main Issuance.');
+    throw httpError(400, 'Return the unit to GSO Storage first, then issue it to the new employee in Main Issuance.');
   }
   // Reported by the browser from keystroke timing, so it flags typed codes for review; it is not proof of a scan.
   const entryMethod = input.entryMethod === 'scan' ? 'scan' : 'typed';
   const tagCode = tagCodeValue.trim().toUpperCase();
   const { challengeId: otpChallengeId, otp } = readOtpInput(input, isLost
-    ? 'Kailangan ang 6-digit code ng employee para maitalang nawala ang unit.'
-    : 'Kailangan ang 6-digit code na ipinadala sa email ng employee para makumpirma ang return.');
+    ? 'A 6-digit employee code is required to record the unit as lost.'
+    : 'A 6-digit code sent to the employee email is required to confirm the return.');
   const otpHash = hashReturnOtp(tagCode, otp);
   assertOtpAccepted(await returnsRepository.verifyReturnOtp({ challengeId: otpChallengeId, tagCode, otpHash }));
   const token = crypto.randomBytes(32).toString('base64url');
@@ -412,7 +412,7 @@ function newReturnOtp() {
 
 function requireMailTransport(fallbackHint) {
   if (!mailTransport) {
-    throw httpError(503, `Hindi naka-configure ang email, kaya hindi maipadala ang code. ${fallbackHint}`, true);
+    throw httpError(503, `Email is not set up, so the code cannot be sent. ${fallbackHint}`, true);
   }
 }
 
@@ -428,13 +428,13 @@ function assertOtpAccepted(check) {
   if (check.status === 'ok') return;
   if (check.status === 'wrong') {
     throw httpError(400, check.attemptsLeft > 0
-      ? `Mali ang code. ${check.attemptsLeft} subok na lang ang natitira.`
-      : 'Mali ang code at naubos na ang mga subok. Magpadala ng bagong code.');
+      ? `The code is wrong. ${check.attemptsLeft} attempt(s) left.`
+      : 'The code is wrong and there are no attempts left. Send a new code.');
   }
   if (check.status === 'changed') {
-    throw httpError(400, 'Nagbago ang quantity o condition mula nang ipadala ang code. Magpadala ng bagong code.');
+    throw httpError(400, 'The quantity or condition changed after the code was sent. Send a new code.');
   }
-  throw httpError(400, 'Nag-expire o nagamit na ang code ng employee. Magpadala ng bagong code.');
+  throw httpError(400, 'The employee code expired or was already used. Send a new code.');
 }
 
 async function emailReturnCode({ to, employeeName, summary, otp, warning }) {
@@ -474,16 +474,16 @@ async function emailReturnCode({ to, employeeName, summary, otp, warning }) {
       responseCode: error.responseCode,
       command: error.command,
     });
-    throw httpError(502, 'Hindi naipadala ang code sa email ng employee. Subukan ulit.', true);
+    throw httpError(502, 'The code could not be sent to the employee email. Try again.', true);
   }
 }
 
 // Emails the borrower a one-time code; every tagged return needs it, which proves the borrower took part.
 async function sendTaggedReturnOtp(tagCodeValue, user) {
   if (typeof tagCodeValue !== 'string' || !/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/i.test(tagCodeValue.trim())) {
-    throw httpError(400, 'Hindi valid ang unit barcode.');
+    throw httpError(400, 'Invalid unit barcode.');
   }
-  requireMailTransport('Ipaayos muna sa IT Admin ang email settings.');
+  requireMailTransport('Ask IT Admin to fix the email settings first.');
   const tagCode = tagCodeValue.trim().toUpperCase();
   const otp = newReturnOtp();
   const challenge = await returnsRepository.createReturnOtp({
@@ -497,7 +497,7 @@ async function sendTaggedReturnOtp(tagCodeValue, user) {
     employeeName: challenge.employeeName,
     otp,
     summary: `${user.name || user.email} of the General Services Office is recording the return of ${challenge.itemName} (${challenge.itemCode}, unit barcode ${challenge.tagCode}) from you.`,
-    warning: 'Give this code to the GSO staff only if you are at the GSO counter returning this item right now. If you are not returning this item, do not share the code and report it to the General Services Office.',
+    warning: 'Give this code to GSO staff only if you are returning this item now. If not, do not share it and report it to the General Services Office.',
   });
 
   return {
@@ -511,11 +511,11 @@ async function sendTaggedReturnOtp(tagCodeValue, user) {
 // neither side can change the count later; a bulk return needs it.
 async function sendBulkReturnOtp(input, user) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang return code request.');
+    throw httpError(400, 'Invalid return code request.');
   }
   const issuanceId = readId(input.issuanceId, 'issued item record');
   const { lines, total, breakdown } = readReturnLines(input);
-  requireMailTransport('Ipaayos muna sa IT Admin ang email settings.');
+  requireMailTransport('Ask IT Admin to fix the email settings first.');
   const otp = newReturnOtp();
   const challenge = await returnsRepository.createBulkReturnOtp({
     issuanceId,
@@ -534,7 +534,7 @@ async function sendBulkReturnOtp(input, user) {
     employeeName: challenge.employeeName,
     otp,
     summary: `${user.name || user.email} of the General Services Office is recording ${summaryParts.join(', ')} of ${challenge.itemName} (${challenge.itemCode}) from you.`,
-    warning: 'Give this code to the GSO staff only if these quantities and conditions are correct and the items are being returned to GSO right now. If not, do not share the code and report it to the General Services Office.',
+    warning: 'Give this code to GSO staff only if these quantities and conditions are correct. If not, do not share it and report it to the General Services Office.',
   });
 
   return {
@@ -542,6 +542,13 @@ async function sendBulkReturnOtp(input, user) {
     expiresAt: challenge.expiresAt,
     sentTo: maskEmail(challenge.employeeEmail),
   };
+}
+
+// A repaired unit goes back to stock as Good or Fair, never New. A request without a condition keeps the old default, Good.
+function repairedConditionFrom(value) {
+  if (value === undefined || value === null || value === '') return 'Good';
+  if (!['Good', 'Fair'].includes(value)) throw httpError(400, 'Choose the condition after repair: Good or Fair.');
+  return value;
 }
 
 // Repaired units go straight back to stock; writing units off needs IT Admin approval instead.
@@ -578,7 +585,7 @@ async function resolveReturnRepair(returnIdValue, input, user) {
     throw httpError(400, 'Choose Repaired or Unserviceable.');
   }
   const note = typeof input.note === 'string' && input.note.trim() ? requiredText(input.note, 'repair notes', 1000) : '';
-  const repaired = await returnsRepository.resolveReturnRepair({ returnId, outcome: 'Repaired', note, userId: user.id });
+  const repaired = await returnsRepository.resolveReturnRepair({ returnId, outcome: 'Repaired', note, userId: user.id, condition: repairedConditionFrom(input.condition) });
   await notifyGsoOfItssOutcome(repaired, 'repaired and back in stock');
   return repaired;
 }
@@ -588,22 +595,22 @@ async function resolveReturnRepair(returnIdValue, input, user) {
 async function updateReturnSettlement(returnIdValue, input, admin) {
   const returnId = readId(returnIdValue, 'return record');
   if (input?.status !== 'Waived') {
-    throw httpError(400, 'Ang paid o replaced na settlement ay ire-request ng GSO at i-aapprove ng IT Admin.');
+    throw httpError(400, 'Paid or replaced settlements are requested by GSO and approved by IT Admin.');
   }
-  const note = requiredText(input.note, 'dahilan ng waiver', 1000);
+  const note = requiredText(input.note, 'reason for the waiver', 1000);
   return returnsRepository.updateReturnSettlement({ returnId, status: 'Waived', note, userId: admin.id });
 }
 
 const approvalNoteLabels = {
-  'Written Off': 'dahilan kung bakit hindi na maaayos ang item',
-  Paid: 'OR number o detalye ng bayad',
-  Replaced: 'detalye ng ipinalit na item',
+  'Written Off': 'reason the item cannot be fixed',
+  Paid: 'OR number or payment details',
+  Replaced: 'details of the replacement item',
 };
 
 async function requestReturnApproval(returnIdValue, input, user) {
   const returnId = readId(returnIdValue, 'return record');
   const action = input?.action;
-  if (!approvalActions.includes(action)) throw httpError(400, 'Pumili ng write off, paid, o replaced.');
+  if (!approvalActions.includes(action)) throw httpError(400, 'Choose write off, paid, or replaced.');
   const note = requiredText(input.note, approvalNoteLabels[action], 1000);
   return returnsRepository.requestReturnApproval({ returnId, action, note, userId: user.id });
 }
@@ -611,9 +618,9 @@ async function requestReturnApproval(returnIdValue, input, user) {
 async function decideApprovalRequest(returnIdValue, input, admin) {
   const returnId = readId(returnIdValue, 'return record');
   const decision = input?.decision;
-  if (decision !== 'approve' && decision !== 'reject') throw httpError(400, 'Pumili ng approve o decline.');
+  if (decision !== 'approve' && decision !== 'reject') throw httpError(400, 'Choose approve or decline.');
   const note = decision === 'reject'
-    ? requiredText(input.note, 'dahilan ng pag-decline', 1000)
+    ? requiredText(input.note, 'reason for declining', 1000)
     : typeof input.note === 'string' && input.note.trim() ? requiredText(input.note, 'approval notes', 1000) : '';
   return returnsRepository.decideApprovalRequest({ returnId, decision, note, userId: admin.id });
 }
@@ -637,7 +644,7 @@ function readOptionalDate(value, label) {
   const parsed = new Date(`${value}T00:00:00Z`);
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
     || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
-    throw httpError(400, `Hindi valid ang ${label} date.`);
+    throw httpError(400, `Invalid ${label} date.`);
   }
   return value;
 }
@@ -661,7 +668,7 @@ async function listRepairHistory() {
 async function listIssuanceRecords(query) {
   const from = readOptionalDate(query.from, '"From"');
   const to = readOptionalDate(query.to, '"To"');
-  if (from && to && from > to) throw httpError(400, 'Dapat mas maaga o kapareho ng "To" date ang "From" date.');
+  if (from && to && from > to) throw httpError(400, 'The "From" date must be on or before the "To" date.');
   const [issued, declined] = await Promise.all([
     returnsRepository.listIssuanceRecords({ from, to, limit: 1000 }),
     returnsRepository.listDeclinedPurchaseRecords({ from, to, limit: 1000 }),
@@ -728,38 +735,39 @@ async function sendOverdueReminders() {
 
 async function completeTaggedAssetRepair(tagCodeValue, user, input = {}) {
   if (typeof tagCodeValue !== 'string' || !/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/i.test(tagCodeValue.trim())) {
-    throw httpError(400, 'I-scan ang unique barcode ng physical unit bago markahang repaired.');
+    throw httpError(400, 'Scan the unique barcode of the physical unit before you mark it repaired.');
   }
   const repairedByName = typeof input?.repairedByName === 'string' ? input.repairedByName.trim() : '';
   if (!repairedByName || repairedByName.length > 200) {
-    throw httpError(400, 'Ilagay kung sino ang nag-repair ng unit.');
+    throw httpError(400, 'Enter who repaired the unit.');
   }
   return returnsRepository.completeTaggedAssetRepair({
     tagCode: tagCodeValue.trim().toUpperCase(),
     changedByUserId: user.id,
     repairedByName,
+    condition: repairedConditionFrom(input?.condition),
   });
 }
 
 async function lookupReturnApproval(tokenValue) {
   const token = validateToken(tokenValue);
   const request = await returnsRepository.lookupReturnApproval(hashToken(token));
-  if (!request) throw httpError(404, 'Hindi valid o wala na ang return approval link.');
+  if (!request) throw httpError(404, 'This return approval link is invalid or no longer exists.');
   return request;
 }
 
 async function decideReturnApproval(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    throw httpError(400, 'Hindi valid ang return approval decision.');
+    throw httpError(400, 'Invalid return approval decision.');
   }
   const token = validateToken(input.token);
   if (input.action !== 'approve' && input.action !== 'reject') {
-    throw httpError(400, 'Pumili ng approve o reject.');
+    throw httpError(400, 'Choose approve or reject.');
   }
 
   const result = await returnsRepository.resolveReturnApproval({ tokenHash: hashToken(token), action: input.action });
-  if (result.notFound) throw httpError(404, 'Hindi valid o wala na ang return approval link.');
-  if (result.expired) throw httpError(410, 'Nag-expire na ang return approval link. Nanatiling issued ang item.');
+  if (result.notFound) throw httpError(404, 'This return approval link is invalid or no longer exists.');
+  if (result.expired) throw httpError(410, 'The return approval link expired. The item stays issued.');
   if (result.alreadyDecided) {
     return {
       status: result.status,

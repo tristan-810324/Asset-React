@@ -94,9 +94,9 @@ async function renameDepartment({ id, name, reason, changedByUserId }) {
       [id],
     );
     const current = currentResult.rows[0];
-    if (!current) throw Object.assign(new Error('Hindi na makita ang department.'), { status: 404 });
+    if (!current) throw Object.assign(new Error('Department not found.'), { status: 404 });
     if (current.name === name) {
-      throw Object.assign(new Error('Walang pagbabago sa department name.'), { status: 409 });
+      throw Object.assign(new Error('The department name is the same.'), { status: 409 });
     }
 
     const employeesResult = await client.query(
@@ -154,7 +154,7 @@ async function deleteDepartment({ id, replacementDepartmentId, reason, changedBy
   try {
     await client.query('BEGIN');
     if (String(id) === String(replacementDepartmentId)) {
-      throw Object.assign(new Error('Pumili ng ibang department na paglilipatan ng employees.'), { status: 400 });
+      throw Object.assign(new Error('Choose another department to move the employees to.'), { status: 400 });
     }
     const departmentsResult = await client.query(
       `SELECT id, name
@@ -165,7 +165,7 @@ async function deleteDepartment({ id, replacementDepartmentId, reason, changedBy
       [[id, replacementDepartmentId]],
     );
     if (departmentsResult.rowCount !== 2) {
-      throw Object.assign(new Error('Hindi makita ang department o ang papalit na department.'), { status: 404 });
+      throw Object.assign(new Error('The department or the replacement department was not found.'), { status: 404 });
     }
     const source = departmentsResult.rows.find((department) => String(department.id) === String(id));
     const replacement = departmentsResult.rows.find((department) => String(department.id) === String(replacementDepartmentId));

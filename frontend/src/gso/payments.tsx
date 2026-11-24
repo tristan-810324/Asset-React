@@ -36,6 +36,13 @@ function ChargePanel({ charge, onClose, onPaid }: { charge: ChargeRow; onClose: 
     return () => { active = false }
   }, [charge.kind, charge.ref, charge.paid])
 
+  // Escape closes the pop-up, as it does on the other GSO dialogs.
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
   const chooseFile = async (selected: File | null) => {
     setError('')
     setFile(null)
@@ -62,8 +69,8 @@ function ChargePanel({ charge, onClose, onPaid }: { charge: ChargeRow; onClose: 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/50 backdrop-blur-sm" onClick={onClose}>
-      <aside role="dialog" aria-modal="true" aria-labelledby="charge-panel-title" onClick={(event) => event.stopPropagation()} className="flex h-full w-full max-w-md flex-col overflow-hidden bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="charge-panel-title" onClick={(event) => event.stopPropagation()} className="flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div className="min-w-0">
             <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-700">{CHARGE_SOURCE_LABEL[charge.kind]}</p>
@@ -136,7 +143,7 @@ function ChargePanel({ charge, onClose, onPaid }: { charge: ChargeRow; onClose: 
             </button>
           </footer>
         )}
-      </aside>
+      </div>
     </div>
   )
 }
@@ -200,7 +207,7 @@ export default function GsoPayments() {
           <p className="px-5 py-10 text-center text-xs font-semibold text-slate-500">No charges to show.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-xs">
+            <table className="w-full min-w-180 text-left text-xs">
               <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
                 <tr>
                   <th className="px-5 py-3">Requester</th>

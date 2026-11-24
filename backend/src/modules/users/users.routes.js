@@ -11,6 +11,7 @@ router.get('/positions', usersController.listAccountPositions);
 router.get('/', usersController.listSystemUsers);
 router.post('/', usersController.createSystemUser);
 router.patch('/:userId/active', requireRole('IT_ADMIN'), usersController.setSystemUserActive);
-router.delete('/:userId', requireRole('IT_ADMIN'), usersController.deleteSystemUser);
+router.get('/:userId', requireRole('IT_ADMIN'), usersController.getSystemUserDetails);
+router.patch('/:userId', requireRole('IT_ADMIN'), usersController.updateSystemUser);
 
 module.exports = router;

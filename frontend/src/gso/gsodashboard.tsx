@@ -529,8 +529,9 @@ export default function GsoDashboard() {
             </div>
           </section>
 
+          <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Needs your action, asset distribution, and condition status">
           {/* NEEDS YOUR ACTION */}
-          <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="needs-action-title">
+          <section className="flex flex-col overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="needs-action-title">
             <div className="border-b border-slate-200 px-6 py-5 sm:px-7">
               <h2 id="needs-action-title" className="text-lg font-black tracking-tight text-slate-900">Needs your action</h2>
               <p className="mt-0.5 text-xs font-medium text-slate-500">Open work for GSO staff. Select a row to go straight to it.</p>
@@ -538,7 +539,6 @@ export default function GsoDashboard() {
             <ul className="divide-y divide-slate-100">
               {[
                 { label: 'Labels to print', count: labelsToPrint, href: '/gso/asset-labels', hint: 'Unit barcodes that have not been printed yet', icon: 'grid' as const },
-                { label: 'Deliveries to link', count: requisitionCounts.deliveriesToLink, href: '/gso/purchase-requisitions?tab=waiting', hint: 'Requests with bought items ready to link to a delivery', icon: 'truck' as const },
                 { label: 'Signed PDFs to print', count: requisitionCounts.pdfToPrint, href: '/gso/procurement', hint: 'Endorsed requisitions not yet handed to Finance', icon: 'clipboard' as const },
               ].map((item) => (
                 <li key={item.label}>
@@ -556,9 +556,8 @@ export default function GsoDashboard() {
             </ul>
           </section>
 
-          <section className="mt-6 grid gap-6 xl:grid-cols-2">
             {/* DEPARTMENT ASSET DISTRIBUTION (CLEAN TOUCH OF BLUE PALETTE) */}
-            <article className="min-h-96 rounded-2xl border-2 border-slate-300/80 bg-white p-7 sm:p-8 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-black tracking-tight text-slate-900">Asset Distribution by Department</h2>
@@ -566,7 +565,7 @@ export default function GsoDashboard() {
                 </div>
               </div>
 
-              <div className="mt-6 flex min-h-60 items-center justify-center">
+              <div className="mt-4 flex items-center justify-center">
                 {inventoryLoading || employeesLoading ? (
                   <p className="text-sm font-bold text-slate-400">Loading inventory distribution…</p>
                 ) : inventoryError ? (
@@ -574,7 +573,7 @@ export default function GsoDashboard() {
                 ) : departmentDistribution.length === 0 ? (
                   <p className="text-sm font-semibold text-slate-400">No cataloged assets to distribute yet.</p>
                 ) : (
-                  <div className="flex w-full flex-col items-center justify-center gap-3 sm:flex-row sm:gap-5">
+                  <div className="flex w-full flex-col items-center justify-center gap-3">
                     <div
                       role="img"
                       aria-label="Doughnut chart showing live asset distribution by department"
@@ -606,7 +605,7 @@ export default function GsoDashboard() {
             </article>
 
             {/* ASSET CONDITION & HEALTH BREAKDOWN */}
-            <article className="min-h-96 rounded-2xl border-2 border-slate-300/80 bg-white p-7 sm:p-8 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+            <article className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-black tracking-tight text-slate-900">Condition Status</h2>
@@ -614,7 +613,7 @@ export default function GsoDashboard() {
                 </div>
               </div>
 
-              <div className="mt-6 min-h-60 rounded-2xl border border-slate-100 bg-slate-50/60 p-4 sm:p-5">
+              <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
                 {inventoryLoading ? (
                   <div className="grid min-h-48 place-items-center text-sm font-bold text-slate-400">Loading asset conditions…</div>
                 ) : inventoryError ? (
@@ -637,7 +636,7 @@ export default function GsoDashboard() {
                       ))}
                     </div>
 
-                    <div className="mt-7 grid grid-cols-2 gap-x-5 gap-y-6">
+                    <div className="mt-5 grid grid-cols-2 gap-x-4 gap-y-5">
                       {conditionBreakdown.map((item) => (
                         <div key={item.condition} className="min-w-0">
                           <div className="flex min-h-8 items-start gap-2">

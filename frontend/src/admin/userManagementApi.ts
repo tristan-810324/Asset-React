@@ -44,8 +44,31 @@ export async function setSystemUserActive(userId: string, isActive: boolean) {
   return result.user
 }
 
-export async function deleteSystemUser(userId: string) {
-  await apiRequest<{ user: { id: string } }>(`/users/${encodeURIComponent(userId)}`, { method: 'DELETE' })
+export type SystemUserDetails = {
+  employeeCode: string
+  firstName: string
+  middleName: string
+  lastName: string
+  suffix: string
+  department: string
+  position: string
+  contactNumber: string
+}
+
+export async function getSystemUserDetails(userId: string) {
+  const result = await apiRequest<{ details: SystemUserDetails }>(`/users/${encodeURIComponent(userId)}`)
+  return result.details
+}
+
+export async function updateSystemUser(
+  userId: string,
+  input: SystemUserDetails & { email: string; roleKey: string; reason: string },
+) {
+  const result = await apiRequest<{ user: Pick<SystemUserAccount, 'id' | 'name' | 'email' | 'position' | 'roles'> }>(`/users/${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  })
+  return result.user
 }
 
 export async function createSystemUser(input: CreateSystemUserInput) {

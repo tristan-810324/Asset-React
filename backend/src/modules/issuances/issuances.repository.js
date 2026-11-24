@@ -201,10 +201,10 @@ async function createPendingIssuance({ employeeCode, itemId, quantity, notes, to
       [employeeCode],
     );
     const employee = employeeResult.rows[0];
-    if (!employee) throw notFound('Hindi na makita ang employee profile. I-refresh ang page at subukan muli.');
-    if (employee.status !== 'Active') throw conflict('Hindi puwedeng mag-request ng issuance para sa inactive na employee.');
+    if (!employee) throw notFound('Employee profile not found. Refresh the page and try again.');
+    if (employee.status !== 'Active') throw conflict('You cannot request an issuance for an inactive employee.');
     if (!employee.requester_email) {
-      throw conflict('Kailangan munang ma-verify ng GSO ang requester account na naka-link sa employee bago magpadala ng issuance.');
+      throw conflict('GSO must verify the requester account linked to the employee before an issuance is sent.');
     }
 
     const itemResult = await client.query(
@@ -215,11 +215,11 @@ async function createPendingIssuance({ employeeCode, itemId, quantity, notes, to
       [itemId],
     );
     const item = itemResult.rows[0];
-    if (!item) throw notFound('Hindi na makita ang inventory item. I-refresh ang inventory at pumili muli.');
-    if (item.inventory_status === 'Borrowed') throw conflict('Hindi available ang item na ito para i-issue muli.');
+    if (!item) throw notFound('Inventory item not found. Refresh the inventory and choose again.');
+    if (item.inventory_status === 'Borrowed') throw conflict('This item is not available to issue again.');
     const availableQuantity = await getAvailableQuantity(client, item);
     if (availableQuantity < quantity) {
-      throw conflict(`Hindi sapat ang available stock. ${item.item_code} ay may ${availableQuantity} ${item.unit_of_measure} na available.`);
+      throw conflict(`Not enough available stock. ${item.item_code} has ${availableQuantity} ${item.unit_of_measure} available.`);
     }
 
     const inserted = await client.query(
@@ -266,7 +266,7 @@ async function createPendingIssuance({ employeeCode, itemId, quantity, notes, to
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505' && ['employee_issuances_one_active_employee_item_idx', 'employee_issuances_one_active_item_idx'].includes(error.constraint)) {
-      throw conflict('May pending o active issuance na ang item na ito.');
+      throw conflict('This item already has a pending or active issuance.');
     }
     throw error;
   } finally {
@@ -349,8 +349,8 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       [employeeCode],
     );
     const employee = employeeResult.rows[0];
-    if (!employee) throw notFound('Hindi na makita ang employee profile. I-refresh ang page at subukan muli.');
-    if (employee.status !== 'Active') throw conflict('Hindi puwedeng mag-request ng issuance para sa inactive na employee.');
+    if (!employee) throw notFound('Employee profile not found. Refresh the page and try again.');
+    if (employee.status !== 'Active') throw conflict('You cannot request an issuance for an inactive employee.');
 
     let requisition = null;
     const requisitionLinesById = new Map();
@@ -360,19 +360,19 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         [purchaseRequisitionId],
       );
       requisition = requisitionResult.rows[0];
-      if (!requisition || requisition.request_type !== 'PURCHASE_REQUISITION') throw notFound('Hindi makita ang purchase requisition.');
+      if (!requisition || requisition.request_type !== 'PURCHASE_REQUISITION') throw notFound('Purchase requisition not found.');
       const issuableRequisitionStatuses = new Set([
         'Approved', 'Under Review', 'GSO Endorsed', 'Finance Handoff Pending',
         'Finance Handoff Failed', 'Sent to Finance', 'Finance Response Recorded',
       ]);
       if (!issuableRequisitionStatuses.has(requisition.status)) {
-        throw conflict('Walang active purchase requisition stage na puwedeng i-issue sa Main Issuance.');
+        throw conflict('No active purchase requisition stage can be issued in Main Issuance.');
       }
       if (String(requisition.form_data?.requesterEmployeeCode || '').trim().toLowerCase() !== employee.employee_code.trim().toLowerCase()) {
-        throw conflict('Hindi tugma ang employee sa purchase requisition. Piliin ang tamang recipient.');
+        throw conflict('The employee does not match the purchase requisition. Choose the correct recipient.');
       }
       const lineIds = requestedItems.map((item) => item.purchaseRequisitionLineId);
-      if (lineIds.some((lineId) => !lineId)) throw conflict('Pumili lamang ng item na nakalaan sa requisition na ito.');
+      if (lineIds.some((lineId) => !lineId)) throw conflict('Choose only items reserved for this requisition.');
       const requestLinesResult = await client.query(
         `SELECT id, request_id, route_status, requested_quantity, reserved_quantity, finance_quantity, issued_quantity
            FROM purchase_requisition_lines
@@ -387,17 +387,17 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
           && Number(line.reserved_quantity) >= Number(line.requested_quantity)
       ));
       if (!allRequestLinesReady) {
-        throw conflict('Hindi pa kumpleto ang stock ng buong request. Walang item na puwedeng i-issue hanggang ready ang bawat requested item.');
+        throw conflict('The stock for the whole request is not complete yet. No item can be issued until every requested item is ready.');
       }
       const requestLinesById = new Map(requestLinesResult.rows.map((line) => [String(line.id), line]));
       const selectedLines = lineIds.map((lineId) => requestLinesById.get(String(lineId)));
       if (selectedLines.some((line) => !line)
         || selectedLines.some((line) => !['READY_FOR_STAFF', 'PARTIALLY_ISSUED'].includes(line.route_status))) {
-        throw conflict('May napiling item na hindi na ready para sa staff issuance. I-refresh ang queue.');
+        throw conflict('A chosen item is no longer ready for staff issuance. Refresh the queue.');
       }
       for (const line of selectedLines) requisitionLinesById.set(String(line.id), line);
     } else if (requestedItems.some((item) => item.purchaseRequisitionLineId)) {
-      throw conflict('May purchase requisition item reference na walang request context. I-refresh ang queue.');
+      throw conflict('A purchase requisition item reference has no request context. Refresh the queue.');
     } else if (requestedItems.some((item) => item.recipientAllocations.length > 0)) {
       throw conflict('Recipient allocations are only available for an approved purchase requisition.');
     }
@@ -427,12 +427,12 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         [recipientCodes.map((code) => code.toLowerCase())],
       );
       if (recipientsResult.rows.length !== recipientCodes.length) {
-        throw conflict('May recipient na hindi makita sa Employee Master Data. I-refresh at piliin ulit ang active department staff.');
+        throw conflict('A recipient was not found in Employee Master Data. Refresh and choose the active department staff again.');
       }
       for (const recipient of recipientsResult.rows) {
         if (recipient.status !== 'Active'
           || String(recipient.department || '').trim().toLowerCase() !== String(employee.department || '').trim().toLowerCase()) {
-          throw conflict(`${recipient.employee_code} ay hindi active staff sa department ng requesting head.`);
+          throw conflict(`${recipient.employee_code} is not active staff in the requesting head's department.`);
         }
         recipientByCode.set(recipient.employee_code.trim().toLowerCase(), recipient);
       }
@@ -447,19 +447,19 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       [requestedItems.map((item) => item.itemId)],
     );
     if (itemResult.rows.length !== requestedItems.length) {
-      throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
+      throw notFound('One or more inventory items were not found. Refresh the inventory and try again.');
     }
     const itemsById = new Map(itemResult.rows.map((item) => [String(item.id), item]));
     const items = requestedItems.map((requested) => {
       const recipientAllocations = requested.recipientAllocations.length > 0
         ? requested.recipientAllocations.map((allocation) => {
           const recipient = recipientByCode.get(allocation.employeeCode.trim().toLowerCase());
-          if (!recipient) throw conflict(`Hindi makita ang recipient na ${allocation.employeeCode}.`);
+          if (!recipient) throw conflict(`Recipient ${allocation.employeeCode} was not found.`);
           return { ...allocation, recipient };
         })
         : [{ employeeCode: employee.employee_code, quantity: requested.quantity, location: '', purpose: '', recipient: employee }];
       if (recipientAllocations.reduce((sum, allocation) => sum + allocation.quantity, 0) !== requested.quantity) {
-        throw conflict('Dapat tumugma ang recipient allocation sa quantity na ini-issue.');
+        throw conflict('The recipient allocation must match the quantity being issued.');
       }
       return {
         ...itemsById.get(String(requested.itemId)),
@@ -494,7 +494,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
       ? 'Released by GSO. No employee approval is required for consumable stock.'
       : 'GSO prepared the individually tracked item for pickup. Barcode labels are ready; no requester confirmation is required.';
     for (const item of items) {
-      if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
+      if (!item.id) throw notFound('One or more inventory items were not found. Refresh the inventory and try again.');
       if (item.purchaseRequisitionLine) {
         const allocation = await client.query(
           `SELECT quantity, fulfilled_quantity
@@ -504,12 +504,12 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
           [item.purchaseRequisitionLine.id, item.id],
         );
         const reserved = allocation.rows.reduce((sum, row) => sum + Number(row.quantity) - Number(row.fulfilled_quantity), 0);
-        if (reserved < item.requestedQuantity) throw conflict(`Hindi na sapat ang nakareserbang stock para sa ${item.item_code}. I-refresh ang requisition queue.`);
+        if (reserved < item.requestedQuantity) throw conflict(`The reserved stock for ${item.item_code} is no longer enough. Refresh the requisition queue.`);
         item.purchaseRequisitionReservedQuantity = reserved;
       }
       const availableQuantity = await getAvailableQuantity(client, item) + Number(item.purchaseRequisitionReservedQuantity || 0);
       if (item.inventory_status === 'Borrowed' || availableQuantity < item.requestedQuantity) {
-        throw conflict(`Hindi sapat ang available stock para sa ${item.item_code || 'napiling item'}. ${availableQuantity} ${item.unit_of_measure || 'unit'} na lang ang available.`);
+        throw conflict(`Not enough available stock for ${item.item_code || 'the chosen item'}. Only ${availableQuantity} ${item.unit_of_measure || 'unit'} left.`);
       }
       item.availableQuantityBefore = availableQuantity;
     }
@@ -537,7 +537,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
     const issuanceItems = [];
     const requisitionLineQuantities = new Map();
     for (const item of items) {
-      if (!item.id) throw notFound('Hindi na makita ang isa o higit pang inventory item. I-refresh ang inventory at subukan muli.');
+      if (!item.id) throw notFound('One or more inventory items were not found. Refresh the inventory and try again.');
       if (item.purchaseRequisitionLine) {
         const line = item.purchaseRequisitionLine;
         await client.query(
@@ -733,7 +733,7 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505' && ['employee_issuances_one_active_employee_item_idx', 'employee_issuances_one_active_item_idx'].includes(error.constraint)) {
-      throw conflict('May pending o active issuance na ang isa o higit pang item. I-refresh ang inventory at piliin muli.');
+      throw conflict('One or more items already have a pending or active issuance. Refresh the inventory and choose again.');
     }
     throw error;
   } finally {
@@ -1185,7 +1185,7 @@ async function getIssuanceBatch(batchId) {
     [batchId],
   );
   const batch = batchResult.rows[0];
-  if (!batch) throw notFound('Hindi makita ang issuance request.');
+  if (!batch) throw notFound('Issuance request not found.');
 
   const itemsResult = await pool.query(
     `SELECT issue.id::TEXT AS "issuanceId",
@@ -1447,7 +1447,7 @@ async function updateAssetTagInspection({ tagCode, condition, note, changedByUse
     }
     // An issued unit's condition is recorded at return, so it cannot be rewritten while the employee still holds it.
     if (tag.custody_status === 'Issued') {
-      throw conflict('Naka-issue pa ang item na ito. Itala ang condition kapag ini-return na ito sa Return Items.');
+      throw conflict('This item is still issued. Record its condition when it is returned in Return Items.');
     }
 
     await client.query(
@@ -1590,7 +1590,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
     const batch = batchResult.rows[0];
     // An employee with an A.S.SET account confirms receipt there; GSO records it only for those without one.
     if (batch && gsoUserId !== undefined && batch.requester_user_id && batch.status === 'Pending') {
-      throw conflict('May A.S.SET account ang employee na ito, kaya siya mismo ang magkukumpirma ng receipt sa kanyang Requester account.');
+      throw conflict('This employee has an A.S.SET account, so they must confirm the receipt in their Requester account.');
     }
     if (batch) {
       const itemsResult = await client.query(
@@ -1703,11 +1703,11 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
       }
 
       if (items.length === 0 || items.some((item) => item.status !== 'Pending')) {
-        throw conflict('May item sa issuance batch na hindi na pending. Makipag-ugnayan sa GSO para ma-check ang request.');
+        throw conflict('An item in the issuance batch is no longer pending. Contact GSO to check the request.');
       }
 
       if (action === 'acknowledge' && items.some((item) => item.tracking_mode !== 'individual')) {
-        throw conflict('Individually tracked items lang ang nangangailangan ng receipt acknowledgment.');
+        throw conflict('Only individually tracked items need a receipt acknowledgment.');
       }
 
       const nextStatus = action === 'reject' ? 'Rejected' : 'Issued';
@@ -1786,7 +1786,7 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
               RETURNING line.request_id`,
             [lineId, quantity, batch.purchase_requisition_status],
           );
-          if (!lineResult.rowCount) throw conflict('Nagbago ang purchase requisition line habang nire-record ang handover. I-refresh ang page.');
+          if (!lineResult.rowCount) throw conflict('The purchase requisition line changed while the handover was being recorded. Refresh the page.');
         }
       }
       const generatedTags = [];
@@ -1999,7 +1999,7 @@ async function listEmployeeIssuances(employeeCode) {
     [employeeCode],
   );
   const employee = employeeResult.rows[0];
-  if (!employee) throw notFound('Hindi na makita ang employee profile.');
+  if (!employee) throw notFound('Employee profile not found.');
 
   const [itemsResult, historyResult] = await Promise.all([
     pool.query(

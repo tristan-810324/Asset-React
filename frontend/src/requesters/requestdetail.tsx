@@ -3,8 +3,16 @@ import RequesterLayout from './requesterlayout'
 import { cancelMyRequest, confirmMyServiceRequest, getMyRequest, reopenMyServiceRequest, requestAssetReturn, respondToRequest, REQUEST_TYPE_LABELS, type ServiceRequest } from './requesterApi'
 import { formatDate, formatDateTime, requestStatusLabel } from './requesterrequestutils'
 import { RequestProgressSection } from '../components/requestpath'
+import { PhotoGallery } from '../components/servicePhotos'
 import { serviceRequestView, serviceRouteLabel, serviceStatusLabel, serviceStatusTone } from './serviceWorkflow'
 import LossDamageDecisionPanel, { LossDamageItemList } from './lossdamagedecisionpanel'
+
+const RESOLUTION_LABELS: Record<string, string> = {
+  FIXED: 'Fixed',
+  REPLACED: 'Replaced',
+  NOT_FIXED: 'Not fixed',
+  REFERRED: 'Referred to another office',
+}
 
 const statusTone = (status: string) => ['Approved', 'Ready for Pickup', 'Returned', 'Completed', 'Closed', 'GSO Endorsed'].includes(status) ? 'bg-emerald-50 text-emerald-700' : ['Rejected', 'Cancelled', 'For Repair'].includes(status) ? 'bg-rose-50 text-rose-700' : status === 'Needs Information' ? 'bg-amber-50 text-amber-800' : 'bg-blue-50 text-blue-700'
 
@@ -262,8 +270,14 @@ export default function RequestDetail() {
           </div>
         </div>
         {service.completionNote && <div className="mt-4 rounded-xl border border-emerald-200 bg-white/75 p-3"><p className="text-[0.58rem] font-extrabold uppercase tracking-wide text-emerald-700">Completion note</p><p className="mt-1 text-xs font-semibold leading-relaxed text-slate-700">{service.completionNote}</p></div>}
+        {request.serviceWorkflow?.resolutionType && <p className="mt-3 text-xs font-extrabold text-emerald-900">Resolution: {RESOLUTION_LABELS[request.serviceWorkflow.resolutionType] ?? request.serviceWorkflow.resolutionType}</p>}
         {service.autoCloseAt && <p className="mt-3 text-[0.68rem] font-semibold leading-relaxed text-emerald-800">This request closes automatically on {formatDate(service.autoCloseAt)} if no response is submitted.</p>}
         {!showReopenForm ? <div className="mt-4 flex flex-col gap-2 sm:flex-row"><button type="button" disabled={busy} onClick={() => void actOnService('confirm')} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-emerald-700 px-4 text-xs font-extrabold text-white shadow-sm transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Updating…' : 'Yes, issue resolved'}</button><button type="button" disabled={busy} onClick={() => setShowReopenForm(true)} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-emerald-200 bg-white px-4 text-xs font-extrabold text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50">No, issue remains</button></div> : <form onSubmit={(event) => void actOnService('reopen', event)} className="mt-4 rounded-xl border border-amber-200 bg-amber-50/80 p-3"><label className="block text-xs font-extrabold text-amber-900" htmlFor="reopen-service-message">What still needs attention?</label><textarea id="reopen-service-message" className="mt-2 min-h-24 w-full rounded-xl border border-amber-200 bg-white p-3 text-sm font-medium text-slate-800 outline-none transition focus:border-amber-500 focus:ring-4 focus:ring-amber-100" value={reopenMessage} onChange={(event) => setReopenMessage(event.target.value)} required maxLength={2000} placeholder="Describe the remaining issue so the team can continue the work." /><div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" disabled={busy} onClick={() => { setShowReopenForm(false); setReopenMessage('') }} className="min-h-10 rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-extrabold text-slate-700 transition hover:bg-slate-50">Cancel</button><button disabled={busy || !reopenMessage.trim()} className="min-h-10 rounded-xl bg-amber-700 px-3.5 text-xs font-extrabold text-white transition hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Sending…' : 'Reopen request'}</button></div></form>}
+      </section>}
+      {isServiceRequest && request.photos && request.photos.length > 0 && <section className="mt-5 rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5" aria-labelledby="service-photos-heading">
+        <h2 id="service-photos-heading" className="text-sm font-black text-slate-900">Photos</h2>
+        <p className="mt-1 text-xs font-medium text-slate-500">Photos sent with this request and added during the work.</p>
+        <div className="mt-4"><PhotoGallery photos={request.photos} /></div>
       </section>}
       {request.requestType === 'PURCHASE_REQUISITION' && ['Under Review', 'GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed', 'Sent to Finance'].includes(request.status) && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold leading-relaxed text-amber-950"><span className="font-extrabold">Whole-request hold:</span> GSO will not issue any requested item separately. If there is a shortage, stocked items stay reserved until every requested item is available.</div>}
       {(() => {

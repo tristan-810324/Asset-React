@@ -144,7 +144,7 @@ test('a typed barcode needs the employee code, counts wrong guesses, and uses th
   assert.equal((await one('SELECT attempts FROM asset_return_otps WHERE id = $1', [challenge.challengeId])).attempts, 1);
   const result = await returnsService.confirmScannedTagReturn(TAG2, typed({ otpChallengeId: challenge.challengeId, otp: code }), gso);
   assert.equal(result.destination, 'To Be Repaired');
-  await rejects(returnsService.confirmScannedTagReturn(TAG2, typed({ otpChallengeId: challenge.challengeId, otp: code }), gso), /naka-issue|Nag-expire/);
+  await rejects(returnsService.confirmScannedTagReturn(TAG2, typed({ otpChallengeId: challenge.challengeId, otp: code }), gso), /issued to the employee|expired/);
   assert.equal((await returnRow('asset_unit_tag_id = 2')).confirmation_method, 'typed_code');
 });
 
@@ -181,7 +181,7 @@ test('a bulk return splits conditions under one code and keeps the stock conditi
   const code = lastCode();
   assert.match(mail.at(-1).text, /3 set returned in Good condition, 2 set returned in Needs Repair condition, 1 set reported lost/);
   const base = { employeeCode: 'EMP-1', itemCode: 'CHR-1', issuanceId: '4', reason: 'Tapos na gamitin', otpChallengeId: challenge.challengeId, otp: code };
-  await rejects(returnsService.createEmployeeReturn({ ...base, lines: [{ condition: 'Good', quantity: 6 }] }, gso), /Nagbago ang quantity o condition/);
+  await rejects(returnsService.createEmployeeReturn({ ...base, lines: [{ condition: 'Good', quantity: 6 }] }, gso), /The quantity or condition changed/);
   assert.equal((await one('SELECT attempts FROM asset_return_otps WHERE id = $1', [challenge.challengeId])).attempts, 0);
 
   const before = await one('SELECT quantity FROM item_catalog WHERE id = 2');
@@ -227,7 +227,7 @@ test('paid and replaced settlements need IT Admin approval from someone else; on
   assert.equal(holdings.accountabilities.find((entry) => entry.returnId === lostTag.id).approvalDecisionNote, 'No such OR in the cashier log');
 
   await returnsService.updateReturnSettlement(lostTag.id, { status: 'Waived', note: 'Approved by the director' }, admin);
-  await rejects(returnsService.requestReturnApproval(lostTag.id, { action: 'Paid', note: 'again' }, gso), /Wala nang nakabinbing/);
+  await rejects(returnsService.requestReturnApproval(lostTag.id, { action: 'Paid', note: 'again' }, gso), /has no pending settlement left/);
   assert.equal((await issuancesRepository.getEmployeeReturnBlockers('EMP-1')).unsettled, 0);
 });
 
@@ -256,7 +256,7 @@ test('an employee email cannot change while items are out, and the old address i
     employeeCode: code, department: 'Registrar', firstName: 'Maria', lastName: 'Cruz', position: 'Clerk',
     email, status: 'Active', reason: 'Updated email', ...extra,
   });
-  await rejects(employeesService.updateEmployee('EMP-2', profile('EMP-2', 'staff.gmail@school.test'), gso), /Hindi mapapalitan ang email/, 409);
+  await rejects(employeesService.updateEmployee('EMP-2', profile('EMP-2', 'staff.gmail@school.test'), gso), /You cannot change the email/, 409);
   const locks = Object.fromEntries((await employeesService.listEmployees()).map((employee) => [employee.id, employee.emailLocked]));
   assert.deepEqual(locks, { 'EMP-1': false, 'EMP-2': true });
 
@@ -329,8 +329,8 @@ test('issuance records put each issuance and its returns in one row with its cur
   const later = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
   assert.deepEqual(await returnsService.listIssuanceRecords({ from: later }), []);
   assert.equal((await returnsService.listIssuanceRecords({ to: later })).length, 6);
-  await rejects(returnsService.listIssuanceRecords({ from: '2026-02-30' }), /Hindi valid/, 400);
-  await rejects(returnsService.listIssuanceRecords({ to: '2026-13-40' }), /Hindi valid/, 400);
+  await rejects(returnsService.listIssuanceRecords({ from: '2026-02-30' }), /Invalid/, 400);
+  await rejects(returnsService.listIssuanceRecords({ to: '2026-13-40' }), /Invalid/, 400);
   await rejects(returnsService.listIssuanceRecords({ from: '2026-11-07', to: '2026-11-01' }), /mas maaga/, 400);
 });
 
@@ -359,8 +359,8 @@ test('a reprinted label gets a new barcode, and the old one stops working', asyn
   assert.notEqual(label.tagCode, TAG4);
   assert.match(label.tagCode, /^AST-[A-Z0-9]{13}$/);
 
-  await rejects(issuancesService.getAssetTag(TAG4), /Luma na ang label/, 409);
-  await rejects(labelsService.reprintUnitLabel(TAG4, { reason: 'again' }, gso), /Luma na ang label/, 409);
+  await rejects(issuancesService.getAssetTag(TAG4), /This label is old/, 409);
+  await rejects(labelsService.reprintUnitLabel(TAG4, { reason: 'again' }, gso), /This label is old/, 409);
   await rejects(returnsService.confirmScannedTagReturn(label.tagCode, {
     condition: 'Good', reason: 'x', entryMethod: 'scan', serialLast4: '2345', ...stale,
   }, gso), /Nag-expire o nagamit/);
@@ -396,17 +396,17 @@ test('a returned unit retires its barcode: it no longer scans, prints, or shows 
   const base = { condition: 'Good', reason: 'Tapos na gamitin', entryMethod: 'scan' };
   await rejects(returnsService.confirmScannedTagReturn(current.tagCode, { ...base, ...(await tagCodeFor(current.tagCode)) }, gso), /huling 4/, 400);
   const code = await tagCodeFor(current.tagCode);
-  await rejects(returnsService.confirmScannedTagReturn(current.tagCode, { ...base, ...code, serialLast4: '9999' }, gso), /Hindi tugma ang serial/, 400);
+  await rejects(returnsService.confirmScannedTagReturn(current.tagCode, { ...base, ...code, serialLast4: '9999' }, gso), /The unit serial number does not match/, 400);
   const result = await returnsService.confirmScannedTagReturn(current.tagCode, { ...base, ...code, serialLast4: '2345' }, gso);
   assert.deepEqual([result.destination, result.tagCode], ['GSO Storage', current.tagCode]);
 
   assert.deepEqual(await labelsService.listUnitLabels(), []);
-  await rejects(issuancesService.getAssetTag(current.tagCode), /Naibalik na ang Laptop Pro/, 409);
-  await rejects(labelsService.recordLabelPrint(current.tagCode, gso), /naibalik na ang unit/, 409);
+  await rejects(issuancesService.getAssetTag(current.tagCode), /was returned on/, 409);
+  await rejects(labelsService.recordLabelPrint(current.tagCode, gso), /because the unit was returned/, 409);
   const unit = await one('SELECT tag_code, label_version, label_printed_at FROM asset_unit_tags WHERE id = 4');
   assert.notEqual(unit.tag_code, current.tagCode);
   assert.deepEqual([unit.label_version, unit.label_printed_at], [4, null]);
-  await rejects(labelsService.recordLabelPrint(unit.tag_code, gso), /Nasa GSO ang unit/, 409);
+  await rejects(labelsService.recordLabelPrint(unit.tag_code, gso), /This unit is at GSO/, 409);
 
   // Records still show the barcode the unit had while it was out.
   const batchTag = (await issuancesRepository.getIssuanceBatch('2')).items.flatMap((item) => item.tags).find((tag) => tag.returned);

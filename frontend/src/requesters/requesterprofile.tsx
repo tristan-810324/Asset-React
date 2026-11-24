@@ -22,7 +22,7 @@ function RequesterProfileContent() {
   return <div className="mx-auto max-w-3xl">
     <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
-      <div className="relative"><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">Staff identity</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Your requester profile</h1><p className="mt-2 text-sm font-medium leading-relaxed text-blue-100">I-verify ang staff details mo sa GSO para makapagpadala ng service request.</p></div>
+      <div className="relative"><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">Staff identity</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Your requester profile</h1><p className="mt-2 text-sm font-medium leading-relaxed text-blue-100">GSO must verify your staff details before you can send a service request.</p></div>
     </section>
 
     <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
@@ -34,8 +34,8 @@ function RequesterProfileContent() {
       {identityLoading && <p className="p-6 text-sm font-semibold text-slate-500">Loading identity details…</p>}
       {!identityLoading && identity && <>
         {identity.status === 'Pending' && <div className="mx-5 mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:mx-6"><p className="text-sm font-extrabold text-blue-900">GSO is validating your details.</p><p className="mt-1 text-xs leading-relaxed text-blue-800">You can send requests once you are verified.</p>{identity.reviewNote && <p className="mt-3 text-xs font-semibold text-slate-700">GSO note: {identity.reviewNote}</p>}</div>}
-        {identity.status === 'Needs Correction' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6">{identity.reviewNote || 'Pakitingnan at itama ang details bago muling isumite.'}</div>}
-        {identity.status === 'Rejected' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6"><p className="font-extrabold text-rose-900">Hindi na-approve ang account mo.</p><p className="mt-1">{identity.reviewNote || 'Pwede mong itama ang details at isumite ulit.'}</p></div>}
+        {identity.status === 'Needs Correction' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6">{identity.reviewNote || 'Check and fix your details, then submit again.'}</div>}
+        {identity.status === 'Rejected' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6"><p className="font-extrabold text-rose-900">Your account was not approved.</p><p className="mt-1">{identity.reviewNote || 'You can fix your details and submit again.'}</p></div>}
         {!showForm && <dl className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6">
           {[
             ['Full name', identityName],

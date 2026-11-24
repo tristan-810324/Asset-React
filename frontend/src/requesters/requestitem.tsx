@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import RequesterLayout from './requesterlayout'
 import { useRequesterIdentity } from './requesteridentitycontext'
 import { ProgressPath } from '../components/requestpath'
+import { PhotoPicker } from '../components/servicePhotos'
 import { listFacilityVenues, type FacilityVenue } from '../facilities/facilityOptionsApi'
 import { listCatalogAssets, listMyIssuanceActivity, listPurchaseItemNames, REQUEST_TYPE_LABELS, submitRequest, type CatalogAsset, type PurchaseItemName, type RequestType, type RequesterIssuanceApproval } from './requesterApi'
 
@@ -66,9 +67,17 @@ const purchaseCategoryOptions = [
   ['TOOLS_EQUIPMENT', 'Tools and equipment'],
   ['ELECTRICAL_SUPPLIES', 'Electrical supplies'],
   ['OTHER_CONSUMABLES', 'Other consumables'],
-  ['OTHER', 'Others'],
   ['PUBLICATIONS', 'Publications'],
 ] as const
+// Which requisition categories hold consumables (used up). Every other category holds per-unit items.
+const consumableCategoryValues = new Set<string>(['OFFICE_SUPPLIES', 'ELECTRICAL_SUPPLIES', 'OTHER_CONSUMABLES'])
+const kindForPurchaseCategory = (category: string): 'CONSUMABLE' | 'PER_UNIT' => (consumableCategoryValues.has(category) ? 'CONSUMABLE' : 'PER_UNIT')
+// shortcut: this list is copied from the Item Master Data page (gso/itemsmasterdata.tsx); move it to a shared module when either list changes.
+const consumableUnitGroups: Array<{ label: string; units: string[] }> = [
+  { label: 'Count', units: ['piece', 'pair'] },
+  { label: 'Pack / container', units: ['box', 'pack', 'ream', 'pad', 'roll', 'bottle', 'can', 'tube', 'sack'] },
+  { label: 'Measure', units: ['liter', 'gallon', 'meter', 'kilogram'] },
+]
 const purchasePurposeOptions = [
   ['OFFICE_USE', 'Office use'],
   ['CLASSROOM_INSTRUCTIONAL_USE', 'Classroom / instructional use'],
@@ -203,7 +212,7 @@ function initialForm(type: RequestType, prefill: ItemPrefill = {}): FormValues {
   if (type === 'BORROWING') return { purpose: '', otherPurpose: '', neededDate: '', returnDate: '', useLocation: '', specificLocation: '', returnResponsibleName: '', returnResponsibleContact: '', remarks: '', items: [] }
   if (type === 'FACILITY_USE') return { departmentOrganization: '', activity: '', purpose: '', activityType: 'CURRICULAR', otherActivityType: '', date: '', startTime: '', endTime: '', participants: '', venue: '', venueChoice: '', venueDetail: '', equipment: [], wantsItems: false }
   if (type === 'JOB_REQUEST') return { departmentOrganization: '', serviceCategory: '', serviceRoute: 'GSO', location: '', purpose: '', requiredDate: '', remarks: '' }
-  if (type === 'PURCHASE_REQUISITION') return { purpose: '', otherPurpose: '', requiredDate: today(), urgency: 'Standard', urgentReason: '', requesterCertification: false, items: [{ quantity: 1, category: prefill.category || '', catalogItemId: prefill.catalogItemId || '', itemNameId: '', itemName: prefill.name || '', description: prefill.description || '', plannedRecipientsJson: '[]' }], remarks: '' }
+  if (type === 'PURCHASE_REQUISITION') return { requestKind: '', purpose: '', otherPurpose: '', requiredDate: today(), urgency: 'Standard', urgentReason: '', requesterCertification: false, items: [{ quantity: 1, category: prefill.category || '', catalogItemId: prefill.catalogItemId || '', itemNameId: '', itemName: prefill.name || '', description: prefill.description || '', itemKind: '', plannedRecipientsJson: '[]' }], remarks: '' }
   if (type === 'ISSUANCE_REQUEST') return { purpose: '', neededDate: '', remarks: '', items: [{ quantity: 1, description: prefill.name || '' }] }
   return { incidentType: 'LOST', keyArea: '', incidentDate: '', responsiblePerson: '', items: [], remarks: '' }
 }
@@ -220,8 +229,9 @@ const requestStepStyles: Record<RequestStepStatus, { badge: string; label: strin
   upcoming: { badge: 'bg-slate-200 text-slate-700', label: 'text-slate-600', suffix: '' },
 }
 
-function RequestStepHeader({ step, status, titleId, title, description, children }: {
-  step: 1 | 2 | 3
+function RequestStepHeader({ step, total = 3, status, titleId, title, description, children }: {
+  step: number
+  total?: number
   status: RequestStepStatus
   titleId: string
   title: string
@@ -236,7 +246,7 @@ function RequestStepHeader({ step, status, titleId, title, description, children
     <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
-          <p className={`text-xs font-extrabold uppercase tracking-wide ${styles.label}`}>Step {step} of 3{styles.suffix}</p>
+          <p className={`text-xs font-extrabold uppercase tracking-wide ${styles.label}`}>Step {step} of {total}{styles.suffix}</p>
           <h2 id={titleId} className="mt-0.5 text-base font-black leading-tight text-slate-900">{title}</h2>
         </div>
         {children}
@@ -303,6 +313,47 @@ function plannedRecipientsFor(item: FormRow): PlannedRecipient[] {
   }
 }
 
+type ItemKind = 'CONSUMABLE' | 'PER_UNIT'
+
+// Asked once per request, before any item fields open. A request holds either consumables or per-unit items.
+function ItemKindDialog({ current, onChoose, onClose }: { current: string; onChoose: (kind: ItemKind) => void; onClose: () => void }) {
+  const [selected, setSelected] = useState<ItemKind | null>(current === 'CONSUMABLE' || current === 'PER_UNIT' ? current : null)
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+  const options: Array<{ kind: ItemKind; title: string; hint: string; icon: ReactNode }> = [
+    { kind: 'CONSUMABLE', title: 'Consumables', hint: 'Used up, such as paper or ink.', icon: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 8 9 5 9-5M3 8v9l9 5 9-5V8M12 13v9" /></> },
+    { kind: 'PER_UNIT', title: 'Per unit', hint: 'Tracked one by one, such as a mouse or webcam.', icon: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></> },
+  ]
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 p-4 backdrop-blur-[2px]" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="item-kind-title" onClick={(event) => event.stopPropagation()} className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl shadow-slate-900/25 sm:p-8">
+        <p className="text-xs font-extrabold uppercase tracking-[0.14em] text-blue-700">Request type</p>
+        <h2 id="item-kind-title" className="mt-2 text-2xl font-black tracking-tight text-slate-900">Is this request for consumables or per-unit items?</h2>
+        <p className="mt-2 text-base text-slate-600">A request can hold only one kind.</p>
+        <div role="radiogroup" aria-label="Item type" className="mt-6 grid gap-4 sm:grid-cols-2">
+          {options.map((option) => {
+            const isSelected = selected === option.kind
+            return <button key={option.kind} type="button" role="radio" aria-checked={isSelected} onClick={() => setSelected(option.kind)} className={`flex flex-col items-start rounded-2xl border-2 p-5 text-left transition ${isSelected ? 'border-blue-600 bg-blue-50 ring-4 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-slate-50'}`}>
+              <span className={`grid h-12 w-12 place-items-center rounded-xl ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                <svg aria-hidden="true" className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{option.icon}</svg>
+              </span>
+              <span className="mt-4 text-lg font-extrabold text-slate-900">{option.title}</span>
+              <span className="mt-1 text-sm leading-relaxed text-slate-600">{option.hint}</span>
+            </button>
+          })}
+        </div>
+        <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <button type="button" onClick={onClose} className="h-12 rounded-xl border-2 border-slate-300 bg-white px-6 text-sm font-extrabold text-slate-700 hover:bg-slate-50">Cancel</button>
+          <button type="button" disabled={!selected} onClick={() => { if (selected) onChoose(selected) }} className="h-12 rounded-xl bg-blue-600 px-6 text-sm font-extrabold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">Continue</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function RequestItemContent() {
   const { identity, identityLoading, refreshIdentity } = useRequesterIdentity()
   const params = new URLSearchParams(window.location.search)
@@ -319,6 +370,8 @@ function RequestItemContent() {
     ? 'PURCHASE_REQUISITION'
     : requestTypes.includes(requestedType as RequestType) ? requestedType as RequestType : null
   const [form, setForm] = useState<FormValues>(() => type ? initialForm(type, itemPrefill) : {})
+  // The request's consumable or per-unit answer. It opens once, before any item fields, and applies to every item.
+  const [kindDialogOpen, setKindDialogOpen] = useState<boolean>(() => type === 'PURCHASE_REQUISITION')
   const [catalog, setCatalog] = useState<CatalogAsset[]>([])
   const [purchaseItemNames, setPurchaseItemNames] = useState<PurchaseItemName[]>([])
   const [catalogError, setCatalogError] = useState('')
@@ -462,18 +515,22 @@ function RequestItemContent() {
     ? [borrowingLocation, borrowingSpecificLocation].filter(Boolean).join(' · ')
     : 'Not selected'
   const requestItems = (type === 'PURCHASE_REQUISITION' ? form.items ?? [] : []) as FormRow[]
+  const requestKind = String(form.requestKind || '')
   const requestItemsAreComplete = requestItems.length > 0 && requestItems.every((item) => {
     const quantity = Number(item.quantity)
-    const plannedRecipients = plannedRecipientsFor(item)
+    // A consumable has no room assignment, so there are no rooms to check.
+    const plannedRecipients: ReturnType<typeof plannedRecipientsFor> = item.itemKind === 'CONSUMABLE' ? [] : plannedRecipientsFor(item)
     const plannedQuantity = plannedRecipients.reduce((sum, recipient) => sum + Number(recipient.quantity), 0)
-    return Boolean(String(item.category || '').trim())
+    return (item.itemKind === 'CONSUMABLE' || item.itemKind === 'PER_UNIT')
+      && (item.itemKind !== 'CONSUMABLE' || Boolean(String(item.unitOfMeasure || '').trim()))
+      && Boolean(String(item.category || '').trim())
       && Boolean(String(item.itemName || '').trim())
       && (item.catalogItemId === '__GENERAL__' || Boolean(item.catalogItemId) || Boolean(item.itemNameId))
       && Boolean(String(item.description || '').trim())
       && Number.isInteger(quantity)
       && quantity >= 1
       && quantity <= 2147483647
-      && plannedQuantity === quantity
+      && (item.itemKind === 'CONSUMABLE' || plannedQuantity === quantity)
       && plannedRecipients.every((recipient) => {
         const hasBaseDetails = Number.isInteger(Number(recipient.quantity))
           && Number(recipient.quantity) > 0
@@ -487,14 +544,21 @@ function RequestItemContent() {
   const requestOtherPurpose = String(form.otherPurpose || '').trim()
   const requestUrgency = String(form.urgency || 'Standard')
   const requestUrgentReason = String(form.urgentReason || '').trim()
+  // A consumable-only request has no details step; a request with any per-unit item keeps every step.
+  const requestNeedsDetails = requestItems.some((item) => item.itemKind === 'PER_UNIT')
+  const requestStepTotal = requestNeedsDetails ? 3 : 2
+  const requestReviewStep = requestNeedsDetails ? 3 : 2
   const requestDetailsAreComplete = requestItemsAreComplete
-    && String(form.requiredDate || '') >= today()
-    && (requestUrgency !== 'Urgent' || Boolean(requestUrgentReason))
-    && Boolean(requestPurpose)
-    && (requestPurpose !== 'Others' || Boolean(requestOtherPurpose))
+    && (!requestNeedsDetails || (
+      String(form.requiredDate || '') >= today()
+      && (requestUrgency !== 'Urgent' || Boolean(requestUrgentReason))
+      && Boolean(requestPurpose)
+      && (requestPurpose !== 'Others' || Boolean(requestOtherPurpose))
+    ))
     && form.requesterCertification === true
-  const requestCurrentStep = !requestItemsAreComplete ? 1 : requestDetailsAreComplete ? 3 : 2
-  const requestStepStatus = (step: 1 | 2 | 3, isDone = false): RequestStepStatus => {
+  const requestReviewVisible = requestItemsAreComplete && (!requestNeedsDetails || requestDetailsAreComplete)
+  const requestCurrentStep = !requestItemsAreComplete ? 1 : requestReviewVisible ? requestReviewStep : 2
+  const requestStepStatus = (step: number, isDone = false): RequestStepStatus => {
     if (isDone) return 'done'
     return requestCurrentStep === step ? 'current' : 'upcoming'
   }
@@ -538,6 +602,19 @@ function RequestItemContent() {
   const removePlannedRecipient = (itemIndex: number, recipientIndex: number) => {
     const recipients = plannedRecipientsFor(requestItems[itemIndex] || {})
     updateRow('items', itemIndex, 'plannedRecipientsJson', JSON.stringify(recipients.filter((_recipient, index) => index !== recipientIndex)))
+  }
+  // The request's kind applies to every item. A category from the other kind, and the item picked from it, no longer fit.
+  const chooseRequestKind = (kind: ItemKind) => {
+    setForm((current) => ({
+      ...current,
+      requestKind: kind,
+      items: ((current.items ?? []) as FormRow[]).map((row) => {
+        const category = String(row.category || '')
+        if (!category || kindForPurchaseCategory(category) === kind) return { ...row, itemKind: kind }
+        return { ...row, itemKind: kind, category: '', catalogItemId: '', itemNameId: '', itemName: '' }
+      }),
+    }))
+    setKindDialogOpen(false)
   }
   const addRow = (key: string, value: FormRow) => setForm((current) => {
     const rows = current[key]
@@ -739,7 +816,11 @@ function RequestItemContent() {
       const requestData = type === 'PURCHASE_REQUISITION'
         ? {
           ...form,
-          purpose: form.purpose === 'Others' ? `Others: ${String(form.otherPurpose || '').trim()}` : form.purpose,
+          // A consumable-only request has no details step, so it sends defaults rather than values left from an earlier answer.
+          requiredDate: requestNeedsDetails ? form.requiredDate : today(),
+          urgency: requestNeedsDetails ? form.urgency : 'Standard',
+          urgentReason: requestNeedsDetails ? form.urgentReason : '',
+          purpose: !requestNeedsDetails ? '' : form.purpose === 'Others' ? `Others: ${String(form.otherPurpose || '').trim()}` : form.purpose,
           items: ((form.items ?? []) as FormRow[]).map((item) => {
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
             const { plannedRecipientsJson, ...requestItem } = item
@@ -747,7 +828,7 @@ function RequestItemContent() {
               ...requestItem,
               catalogItemId: item.catalogItemId && item.catalogItemId !== '__GENERAL__' ? String(item.catalogItemId) : null,
               itemNameId: item.itemNameId ? String(item.itemNameId) : null,
-              plannedRecipients: plannedRecipientsFor(item),
+              plannedRecipients: item.itemKind === 'CONSUMABLE' ? [] : plannedRecipientsFor(item),
             }
           }),
         }
@@ -791,7 +872,7 @@ function RequestItemContent() {
         </section>
         <a href="/requester/request-center" className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 hover:underline">← Request Center</a>
         <form onSubmit={onSubmit} className="mt-4 space-y-3">
-          {(type === 'BORROWING' || type === 'PURCHASE_REQUISITION') && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5"><ProgressPath steps={type === 'BORROWING' ? ['Items', 'Borrow details', 'Review'] : ['Items', 'Details', 'Review']} current={(type === 'BORROWING' ? borrowingCurrentStep : requestCurrentStep) - 1} /></section>}
+          {(type === 'BORROWING' || type === 'PURCHASE_REQUISITION') && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5"><ProgressPath steps={type === 'BORROWING' ? ['Items', 'Borrow details', 'Review'] : requestNeedsDetails ? ['Items', 'Details', 'Review'] : ['Items', 'Review']} current={(type === 'BORROWING' ? borrowingCurrentStep : requestCurrentStep) - 1} /></section>}
           {type === 'BORROWING' && <>
             <section aria-labelledby="borrow-items-step-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <RequestStepHeader
@@ -1108,6 +1189,7 @@ function RequestItemContent() {
                   <Field label="Department / office"><input className={inputClass} value={String(form.departmentOrganization || '')} onChange={(event) => setField('departmentOrganization', event.target.value)} required placeholder="e.g. College of Education" /></Field>
                   <Field label="Location"><input className={inputClass} value={String(form.location || '')} onChange={(event) => setField('location', event.target.value)} required placeholder="e.g. Main Building, Room 204" /></Field>
                   <div className="sm:col-span-2"><Field label="What needs attention?"><textarea className={textareaClass} value={String(form.purpose || '')} onChange={(event) => setField('purpose', event.target.value)} required maxLength={2000} placeholder="e.g. Three lights near the entrance flicker." /></Field></div>
+                  <div className="sm:col-span-2"><Field label="Photos (optional)"><PhotoPicker photos={(form.photos as string[] | undefined) ?? []} onChange={(photos) => setForm((current) => ({ ...current, photos }))} onError={setError} disabled={saving} /></Field></div>
                 </div>
               </FormGroup>
 
@@ -1115,38 +1197,52 @@ function RequestItemContent() {
           </section>}
 
           {type === 'PURCHASE_REQUISITION' && <>
+            {kindDialogOpen && <ItemKindDialog current={requestKind} onChoose={chooseRequestKind} onClose={() => setKindDialogOpen(false)} />}
             <section aria-labelledby="request-items-step-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <RequestStepHeader
                 step={1}
                 status={requestStepStatus(1, requestItemsAreComplete)}
+                total={requestStepTotal}
                 titleId="request-items-step-title"
                 title="Choose items"
                 description="Select each category, item, quantity, and specification."
               >
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {requestKind && <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-extrabold ${requestKind === 'CONSUMABLE' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}>{requestKind === 'CONSUMABLE' ? 'Consumables' : 'Per unit'}</span>}
+                  {requestKind && <button type="button" onClick={() => setKindDialogOpen(true)} className="shrink-0 text-xs font-extrabold text-blue-700 hover:underline">Change</button>}
                   <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold text-blue-800">{requestItems.length} item{requestItems.length === 1 ? '' : 's'} · {requestQuantityCount} units</span>
-                  <button type="button" onClick={() => addRow('items', { quantity: 1, category: '', catalogItemId: '', itemNameId: '', itemName: '', description: '', plannedRecipientsJson: '[]' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button>
+                  {requestKind && <button type="button" onClick={() => addRow('items', { quantity: 1, category: '', catalogItemId: '', itemNameId: '', itemName: '', description: '', itemKind: requestKind, plannedRecipientsJson: '[]' })} className="shrink-0 rounded-xl border border-blue-200 px-3 py-2 text-xs font-extrabold text-blue-700 hover:bg-blue-50">+ Add item</button>}
                 </div>
               </RequestStepHeader>
+              {!requestKind && <div className="mt-4 rounded-xl border border-dashed border-blue-300 bg-white px-4 py-6 text-center">
+                <p className="text-sm font-extrabold text-slate-800">Choose a request type to continue</p>
+                <button type="button" onClick={() => setKindDialogOpen(true)} className={`mt-3 ${addButtonClass}`}>Choose request type</button>
+              </div>}
               <div className="mt-4 space-y-3">
-                {requestItems.map((item, index) => {
-                  const matchingCatalogItems = purchaseCatalogItems.filter((asset) => Boolean(item.category) && catalogMatchesCategory(asset, String(item.category)))
+                {requestKind && requestItems.map((item, index) => {
+                  const matchingCatalogItems = purchaseCatalogItems.filter((asset) => Boolean(item.category) && catalogMatchesCategory(asset, String(item.category)) && (asset.issueBehavior === 'consumable') === (item.itemKind === 'CONSUMABLE'))
                   const matchingManagedNames = purchaseItemNames.filter((saved) => Boolean(item.category) && purchaseCategoryForCatalogCategory(saved.category) === item.category)
                   const isGeneralItem = item.catalogItemId === '__GENERAL__'
                   const plannedRecipients = plannedRecipientsFor(item)
                   const plannedQuantity = plannedRecipients.reduce((sum, recipient) => sum + Number(recipient.quantity || 0), 0)
                   const unplannedQuantity = Math.max(Number(item.quantity || 0) - plannedQuantity, 0)
                   return <div key={index} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                    <div className="grid gap-3 sm:grid-cols-[14rem_1fr_8rem_auto]">
-                      <Field label="Item category"><select className={inputClass} value={String(item.category || '')} onChange={(event) => { updateRow('items', index, 'category', event.target.value); updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', '') }} required><option value="">Select category</option>{purchaseCategoryOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-                      <Field label="Item name"><select className={inputClass} value={item.itemNameId ? `managed:${item.itemNameId}` : item.catalogItemId ? String(item.catalogItemId) : ''} onChange={(event) => { const value = event.target.value; const managed = value.startsWith('managed:') ? matchingManagedNames.find((saved) => saved.id === value.slice(8)) : undefined; const selected = matchingCatalogItems.find((asset) => String(asset.id) === value); if (value === '__GENERAL__') { updateRow('items', index, 'catalogItemId', '__GENERAL__'); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', ''); updateRow('items', index, 'description', ''); return } if (managed) { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', managed.id); updateRow('items', index, 'itemName', managed.name); updateRow('items', index, 'description', ''); return } if (!selected) { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', ''); updateRow('items', index, 'description', ''); return } updateRow('items', index, 'catalogItemId', String(selected.id)); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'category', purchaseCategoryForCatalogCategory(selected.category)); updateRow('items', index, 'itemName', selected.name); updateRow('items', index, 'description', selected.description) }} required disabled={!item.category}><option value="">{!item.category ? 'Choose a category first' : matchingManagedNames.length || matchingCatalogItems.length ? 'Select item' : 'No saved items'}</option><option value="__GENERAL__">General item / not listed</option>{matchingManagedNames.map((saved) => <option key={`managed-${saved.id}`} value={`managed:${saved.id}`}>{saved.name}</option>)}{matchingCatalogItems.filter((asset) => !matchingManagedNames.some((saved) => saved.name.trim().toLowerCase() === asset.name.trim().toLowerCase())).map((asset) => <option key={`stock-${asset.id}`} value={asset.id}>{asset.name}{hasDescription(asset) ? ` · ${asset.description}` : ''}</option>)}</select></Field>
-                      <Field label="Quantity"><input className={inputClass} type="number" min="1" max="2147483647" step="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field>
+                    <p className="mb-3 text-xs font-extrabold uppercase tracking-wide text-slate-500">Item {index + 1}</p>
+                    <div className={`grid gap-3 ${item.itemKind === 'CONSUMABLE' ? 'sm:grid-cols-[14rem_1fr_8rem_10rem_auto]' : 'sm:grid-cols-[14rem_1fr_8rem_auto]'}`}>
+                      <Field label="Item category"><select className={inputClass} value={String(item.category || '')} onChange={(event) => { updateRow('items', index, 'category', event.target.value); updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', '') }} required><option value="">Select category</option>{purchaseCategoryOptions.filter(([value]) => kindForPurchaseCategory(value) === item.itemKind).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+                      <Field label="Item name"><select className={inputClass} value={item.itemNameId ? `managed:${item.itemNameId}` : item.catalogItemId ? String(item.catalogItemId) : ''} onChange={(event) => { const value = event.target.value; const managed = value.startsWith('managed:') ? matchingManagedNames.find((saved) => saved.id === value.slice(8)) : undefined; const selected = matchingCatalogItems.find((asset) => String(asset.id) === value); if (value === '__GENERAL__') { updateRow('items', index, 'catalogItemId', '__GENERAL__'); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', ''); updateRow('items', index, 'description', ''); return } if (managed) { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', managed.id); updateRow('items', index, 'itemName', managed.name); updateRow('items', index, 'description', ''); return } if (!selected) { updateRow('items', index, 'catalogItemId', ''); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'itemName', ''); updateRow('items', index, 'description', ''); return } updateRow('items', index, 'catalogItemId', String(selected.id)); updateRow('items', index, 'unitOfMeasure', selected.unitOfMeasure); updateRow('items', index, 'itemNameId', ''); updateRow('items', index, 'category', purchaseCategoryForCatalogCategory(selected.category)); updateRow('items', index, 'itemName', selected.name); updateRow('items', index, 'description', selected.description) }} required disabled={!item.category}><option value="">{!item.category ? 'Choose a category first' : matchingManagedNames.length || matchingCatalogItems.length ? 'Select item' : 'No saved items'}</option><option value="__GENERAL__">General item / not listed</option>{matchingManagedNames.map((saved) => <option key={`managed-${saved.id}`} value={`managed:${saved.id}`}>{saved.name}</option>)}{matchingCatalogItems.filter((asset) => !matchingManagedNames.some((saved) => saved.name.trim().toLowerCase() === asset.name.trim().toLowerCase())).map((asset) => <option key={`stock-${asset.id}`} value={asset.id}>{asset.name}{hasDescription(asset) ? ` · ${asset.description}` : ''}</option>)}</select></Field>
+                      <Field label={item.itemKind === 'CONSUMABLE' && item.unitOfMeasure ? `Quantity (${String(item.unitOfMeasure)})` : 'Quantity'}><input className={inputClass} type="number" min="1" max="2147483647" step="1" value={item.quantity} onChange={(event) => updateRow('items', index, 'quantity', event.target.value)} required /></Field>
+                      {item.itemKind === 'CONSUMABLE' && <Field label="Unit of measure" hint={item.unitOfMeasure && item.catalogItemId && item.catalogItemId !== '__GENERAL__' ? 'Set by Item Master Data for this item.' : undefined}><select className={inputClass} value={String(item.unitOfMeasure || '')} onChange={(event) => updateRow('items', index, 'unitOfMeasure', event.target.value)} disabled={Boolean(item.unitOfMeasure && item.catalogItemId && item.catalogItemId !== '__GENERAL__')} required>
+                        <option value="">Choose unit</option>
+                        {consumableUnitGroups.map((group) => <optgroup key={group.label} label={group.label}>{group.units.map((unit) => <option key={unit} value={unit}>{unit}</option>)}</optgroup>)}
+                        {item.unitOfMeasure && !consumableUnitGroups.some((group) => group.units.includes(String(item.unitOfMeasure))) && <option value={String(item.unitOfMeasure)}>{String(item.unitOfMeasure)}</option>}
+                      </select></Field>}
                       {requestItems.length > 1 && <button type="button" onClick={() => removeRow('items', index)} className="self-end rounded-xl border border-rose-100 px-3 py-2.5 text-xs font-extrabold text-rose-600 hover:bg-rose-50">Remove</button>}
                     </div>
                     <p className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[0.66rem] font-semibold text-emerald-800">GSO checks available stock first. Purchased items require GSO Head review.</p>
                     {isGeneralItem && <div className="mt-3 rounded-xl border-2 border-blue-200 bg-blue-50/50 p-3"><Field label="Proposed item name"><input className={inputClass} value={String(item.itemName || '')} onChange={(event) => updateRow('items', index, 'itemName', event.target.value)} placeholder="Type item name" required maxLength={250} /></Field></div>}
                     <Field label="Specifications"><textarea className={`${textareaClass} mt-3`} value={String(item.description || '')} onChange={(event) => updateRow('items', index, 'description', event.target.value)} required maxLength={1000} /></Field>
-                    <section className="mt-3 rounded-xl border border-blue-100 bg-white p-3" aria-label={`Assignment for item ${index + 1}`}>
+                    {item.itemKind !== 'CONSUMABLE' && <section className="mt-3 rounded-xl border border-blue-100 bg-white p-3" aria-label={`Assignment for item ${index + 1}`}>
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div>
                           <h3 className="text-sm font-extrabold text-slate-800">Assign every requested unit</h3>
@@ -1175,7 +1271,7 @@ function RequestItemContent() {
                             </div>
                             <p className="mt-1.5 text-[0.68rem] text-slate-500">Up to {maxRecipientQuantity} unit(s) can still go to this room.</p>
 
-                            <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[0.68rem] leading-relaxed text-emerald-900"><span className="font-extrabold">Accountable: {verifiedEmployeeName || 'Requesting department head'}</span> (Department Head). You stay responsible for these units.</p>
+                            {item.itemKind !== 'CONSUMABLE' && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[0.68rem] leading-relaxed text-emerald-900"><span className="font-extrabold">Accountable: {verifiedEmployeeName || 'Requesting department head'}</span> (Department Head). You stay responsible for these units.</p>}
                           </div>
                         })}
                       </div>}
@@ -1185,16 +1281,17 @@ function RequestItemContent() {
                         <button type="button" onClick={() => addPlannedRecipient(index)} disabled={plannedQuantity >= Number(item.quantity || 0)} className="rounded-xl border border-emerald-200 bg-white px-4 py-2.5 text-xs font-extrabold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50">{plannedRecipients.length ? '+ Add another room' : '+ Assign a room'}</button>
                         {plannedRecipients.length > 0 && plannedQuantity === Number(item.quantity) && <span className="text-[0.68rem] font-semibold text-emerald-700">All units have a room.</span>}
                       </div>
-                    </section>
+                    </section>}
                   </div>
                 })}
               </div>
             </section>
 
-            <section aria-labelledby="request-details-step-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+            {requestNeedsDetails && <section aria-labelledby="request-details-step-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
               <RequestStepHeader
                 step={2}
                 status={requestStepStatus(2, requestDetailsAreComplete)}
+                total={requestStepTotal}
                 titleId="request-details-step-title"
                 title="Request details"
                 description="Set the date, urgency, purpose, and requester confirmation."
@@ -1216,17 +1313,17 @@ function RequestItemContent() {
                   <span className="text-xs font-semibold leading-relaxed text-slate-700">I confirm this request is accurate and needed by my department.</span>
                 </label>
               </div> : <div role="status" className="mt-4 grid min-h-28 place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 text-center"><p className="max-w-sm text-sm font-medium leading-relaxed text-slate-600">Complete every item's details and assign its full quantity in Step 1 to continue.</p></div>}
-            </section>
+            </section>}
 
-            {requestDetailsAreComplete && <section aria-labelledby="request-review-step-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-              <RequestStepHeader step={3} status={requestStepStatus(3)} titleId="request-review-step-title" title="Review request" description="Review the assigned employees and rooms before submitting to GSO Head.">
+            {requestReviewVisible && <section aria-labelledby="request-review-step-title" className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+              <RequestStepHeader step={requestReviewStep} total={requestStepTotal} status={requestStepStatus(requestReviewStep)} titleId="request-review-step-title" title="Review request" description="Review the assigned employees and rooms before submitting to GSO Head.">
                 <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-extrabold text-blue-800">{requestItems.length} item{requestItems.length === 1 ? '' : 's'} · {requestQuantityCount} units</span>
               </RequestStepHeader>
               <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-xl bg-slate-100 px-3.5 py-2.5"><span className="text-xs font-bold text-slate-700">Requester</span><span className="text-right text-sm font-extrabold text-slate-900">{verifiedEmployeeName || identity?.accountName || 'Not verified yet'}{verifiedDepartment ? <span className="mt-0.5 block text-xs font-semibold text-slate-600">{verifiedDepartment}</span> : null}</span></div>
                <ul className="mt-3 divide-y divide-slate-200 rounded-xl border border-slate-100 px-3.5">
                  {requestItems.map((item, index) => {
                    const plannedRecipients = plannedRecipientsFor(item)
-                    return <li key={`${item.category}-${item.itemName}-${index}`} className="py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="wrap-break-word text-sm font-extrabold text-slate-900">{String(item.itemName || 'Unnamed item')}</p><p className="mt-0.5 text-xs font-semibold text-slate-600">{String(item.category || 'No category')} · Qty {item.quantity}</p></div><span className="shrink-0 text-xs font-bold text-slate-500">{item.catalogItemId === '__GENERAL__' ? 'New item' : 'Catalog item'}</span></div><p className="mt-1.5 wrap-break-word text-xs leading-relaxed text-slate-600">{String(item.description || 'No specifications')}</p><div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 p-2.5"><p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-700">Final item assignment</p>{plannedRecipients.map((recipient, recipientIndex) => <p key={recipientIndex} className="mt-1 text-[0.68rem] font-semibold text-slate-700"><span className="font-extrabold">Assigned room</span> · {verifiedEmployeeName || 'Department Head'} · Head accountable · {recipient.quantity} · {[recipient.building, recipient.room].filter(Boolean).join(' · ') || 'Location not set'}</p>)}</div></li>
+                    return <li key={`${item.category}-${item.itemName}-${index}`} className="py-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="wrap-break-word text-sm font-extrabold text-slate-900">{String(item.itemName || 'Unnamed item')}</p><p className="mt-0.5 text-xs font-semibold text-slate-600">{String(item.category || 'No category')} · Qty {item.quantity}{item.itemKind === 'CONSUMABLE' && item.unitOfMeasure ? ` ${String(item.unitOfMeasure)}` : ''}</p></div><span className="shrink-0 text-xs font-bold text-slate-500">{item.catalogItemId === '__GENERAL__' ? 'New item' : 'Catalog item'}</span></div><p className="mt-1.5 wrap-break-word text-xs leading-relaxed text-slate-600">{String(item.description || 'No specifications')}</p>{item.itemKind !== 'CONSUMABLE' && <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/60 p-2.5"><p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-blue-700">Final item assignment</p>{plannedRecipients.map((recipient, recipientIndex) => <p key={recipientIndex} className="mt-1 text-[0.68rem] font-semibold text-slate-700"><span className="font-extrabold">Assigned room</span> · {item.itemKind !== 'CONSUMABLE' && <>{verifiedEmployeeName || 'Department Head'} · Head accountable · </>}{recipient.quantity} · {[recipient.building, recipient.room].filter(Boolean).join(' · ') || 'Location not set'}</p>)}</div>}</li>
                  })}
               </ul>
               <dl className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-100 px-3.5">
@@ -1235,9 +1332,13 @@ function RequestItemContent() {
                   ['Date needed', String(form.requiredDate || 'Not set')],
                   ['Urgency', requestUrgency],
                   ['Purpose', requestPurposeSummary],
-                ].map(([label, value]) => <div key={label} className="flex items-baseline justify-between gap-4 py-2"><dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="text-right wrap-break-word text-xs font-semibold text-slate-700">{value}</dd></div>)}
+                ].filter(([label]) => requestNeedsDetails || label === 'Request date').map(([label, value]) => <div key={label} className="flex items-baseline justify-between gap-4 py-2"><dt className="text-[0.58rem] font-extrabold uppercase tracking-wide text-slate-400">{label}</dt><dd className="text-right wrap-break-word text-xs font-semibold text-slate-700">{value}</dd></div>)}
               </dl>
               {requestUrgency === 'Urgent' && <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs leading-relaxed text-amber-900"><span className="font-extrabold">Urgent reason: </span>{requestUrgentReason}</p>}
+              {!requestNeedsDetails && <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-3.5">
+                <input type="checkbox" checked={Boolean(form.requesterCertification)} onChange={(event) => setField('requesterCertification', event.target.checked)} required className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600" />
+                <span className="text-xs font-semibold leading-relaxed text-slate-700">I confirm this request is accurate and needed by my department.</span>
+              </label>}
               {error && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-bold text-rose-700">{error}</p>}
             </section>}
           </>}

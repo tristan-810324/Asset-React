@@ -12,14 +12,14 @@ const {
 
 function validateId(value, label) {
   if (typeof value !== 'string' || !/^\d+$/.test(value) || value === '0') {
-    throw Object.assign(new Error(`Hindi valid ang ${label}.`), { status: 400 });
+    throw Object.assign(new Error(`Invalid ${label}.`), { status: 400 });
   }
   return value;
 }
 
 function duplicateCategory(error) {
   if (error.code === '23505' && error.constraint === 'item_categories_name_lower_unique_idx') {
-    throw Object.assign(new Error('May category na kapareho ng pangalan na iyan.'), { status: 409 });
+    throw Object.assign(new Error('A category with that name already exists.'), { status: 409 });
   }
 }
 
@@ -61,13 +61,13 @@ async function createItem(input, user) {
       throw Object.assign(new Error(error.message), { status: 400 });
     }
     if (error.code === '23505' && error.constraint === 'item_catalog_code_lower_unique_idx') {
-      throw Object.assign(new Error('May inventory item na gumagamit ng Item Code na iyan.'), { status: 409 });
+      throw Object.assign(new Error('An inventory item already uses that Item Code.'), { status: 409 });
     }
     if (error.code === '23505' && error.constraint === 'asset_unit_tags_serial_number_lower_unique_idx') {
-      throw Object.assign(new Error('May asset nang gumagamit ng manufacturer serial number na iyan.'), { status: 409 });
+      throw Object.assign(new Error('An asset already uses that manufacturer serial number.'), { status: 409 });
     }
     if (error.code === '23505' && error.constraint === 'item_catalog_serial_number_lower_unique_idx') {
-      throw Object.assign(new Error('May inventory item nang gumagamit ng manufacturer serial number na iyan.'), { status: 409 });
+      throw Object.assign(new Error('An inventory item already uses that manufacturer serial number.'), { status: 409 });
     }
     throw error;
   }
@@ -89,13 +89,13 @@ async function createItems(input, user) {
       throw Object.assign(new Error(error.message), { status: 400 });
     }
     if (error.code === '23505' && error.constraint === 'item_catalog_code_lower_unique_idx') {
-      throw Object.assign(new Error('May inventory item na gumagamit ng isa sa mga Item Code na iyan. I-refresh ang page at subukan muli.'), { status: 409 });
+      throw Object.assign(new Error('An inventory item already uses one of those Item Codes. Refresh the page and try again.'), { status: 409 });
     }
     if (error.code === '23505' && error.constraint === 'asset_unit_tags_serial_number_lower_unique_idx') {
-      throw Object.assign(new Error('May asset nang gumagamit ng isa sa mga manufacturer serial number na iyan.'), { status: 409 });
+      throw Object.assign(new Error('An asset already uses one of those manufacturer serial numbers.'), { status: 409 });
     }
     if (error.code === '23505' && error.constraint === 'item_catalog_serial_number_lower_unique_idx') {
-      throw Object.assign(new Error('May inventory item nang gumagamit ng isa sa mga manufacturer serial number na iyan.'), { status: 409 });
+      throw Object.assign(new Error('An inventory item already uses one of those manufacturer serial numbers.'), { status: 409 });
     }
     throw error;
   }
@@ -128,7 +128,7 @@ async function updateItem(idValue, input, user) {
       throw Object.assign(new Error(error.message), { status: 400 });
     }
     if (error.code === '23505' && error.constraint === 'item_catalog_code_lower_unique_idx') {
-      throw Object.assign(new Error('May inventory item na gumagamit ng Item Code na iyan.'), { status: 409 });
+      throw Object.assign(new Error('An inventory item already uses that Item Code.'), { status: 409 });
     }
     throw error;
   }
@@ -182,7 +182,7 @@ async function createCategoryItemName(categoryIdValue, input, user) {
       throw Object.assign(new Error(error.message), { status: 404 });
     }
     if (error.code === '23505' && error.constraint === 'item_category_item_names_category_name_lower_unique_idx') {
-      throw Object.assign(new Error('May item name na kapareho niyan sa category na ito.'), { status: 409 });
+      throw Object.assign(new Error('An item name with that name already exists in this category.'), { status: 409 });
     }
     throw error;
   }

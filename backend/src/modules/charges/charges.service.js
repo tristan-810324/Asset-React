@@ -9,9 +9,9 @@ const RECEIPT_PATTERN = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0
 
 function validateCharge(kindValue, refValue) {
   const kind = String(kindValue || '');
-  if (!KINDS.has(kind)) throw invalid('Hindi valid ang uri ng charge.', 404);
+  if (!KINDS.has(kind)) throw invalid('Invalid charge type.', 404);
   const ref = String(refValue || '');
-  if (!/^\d{1,18}$/.test(ref)) throw invalid('Hindi valid ang charge.', 404);
+  if (!/^\d{1,18}$/.test(ref)) throw invalid('Invalid charge.', 404);
   return { kind, ref };
 }
 
@@ -23,16 +23,16 @@ async function listCharges() {
 async function getReceipt(kindValue, refValue) {
   const { kind, ref } = validateCharge(kindValue, refValue);
   const receipt = await repository.getReceipt(kind, ref);
-  if (!receipt) throw invalid('Walang resibo para sa charge na ito.', 404);
+  if (!receipt) throw invalid('No receipt for this charge.', 404);
   return receipt;
 }
 
 async function payCharge(kindValue, refValue, input, user) {
   const { kind, ref } = validateCharge(kindValue, refValue);
-  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Mag-upload ng resibo bago i-mark as Paid.');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Upload a receipt before you mark it as paid.');
   const receiptData = typeof input.receiptData === 'string' ? input.receiptData : '';
   if (!receiptData || receiptData.length > MAX_RECEIPT_CHARS || !RECEIPT_PATTERN.test(receiptData)) {
-    invalid('Mag-upload ng resibo na JPG, PNG, o WebP, 1 MB o mas maliit.');
+    invalid('Upload a JPG, PNG, or WebP receipt, 1 MB or smaller.');
   }
   const receiptName = typeof input.receiptName === 'string' ? input.receiptName.trim().slice(0, 200) : '';
   const note = typeof input.note === 'string' ? input.note.trim().slice(0, 500) : '';

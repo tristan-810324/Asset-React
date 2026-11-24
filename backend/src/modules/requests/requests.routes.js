@@ -23,6 +23,7 @@ router.post('/mine/:id/respond', requireRole('BORROWER'), requestsController.res
 router.post('/mine/:id/return', requireRole('BORROWER'), requestsController.requestReturn);
 router.post('/mine/:id/confirm-service', requireRole('BORROWER'), requestsController.confirmMyService);
 router.post('/mine/:id/reopen-service', requireRole('BORROWER'), requestsController.reopenMyService);
+router.post('/mine/:id/service-info', requireRole('BORROWER'), serviceWorkOrdersController.addRequesterInfo);
 
 router.get('/service-work-orders', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.listWorkOrders);
 router.get('/service-work-orders/:id', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.getWorkOrder);

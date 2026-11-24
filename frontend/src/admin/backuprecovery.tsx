@@ -13,7 +13,7 @@ export default function BackupRecovery() {
   useEffect(() => {
     let active = true
     getBackupOperationsInfo().then((data) => { if (active) setBackupInfo(data) }).catch((reason: unknown) => {
-      if (active) setBackupInfoError(reason instanceof Error ? reason.message : 'Hindi ma-load ang backup configuration status.')
+      if (active) setBackupInfoError(reason instanceof Error ? reason.message : 'Could not load the backup configuration status.')
     })
     return () => { active = false }
   }, [])

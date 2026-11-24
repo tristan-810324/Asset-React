@@ -11,6 +11,7 @@ const ACTIONS = Object.freeze({
   'need-info': (id, body, user) => serviceWorkOrdersService.requestMoreInformation(id, body, user),
   forward: (id, body, user) => serviceWorkOrdersService.forwardWorkOrder(id, body, user),
   start: (id, body, user) => serviceWorkOrdersService.startWork(id, body, user),
+  progress: (id, body, user) => serviceWorkOrdersService.progressWork(id, body, user),
   complete: (id, body, user) => serviceWorkOrdersService.completeWork(id, body, user),
   'not-finished': (id, body, user) => serviceWorkOrdersService.notFinishWork(id, body, user),
   takeover: (id, body, user) => serviceWorkOrdersService.takeOverWorkOrder(id, body, user),
@@ -35,8 +36,15 @@ const actOnWorkOrder = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { workOrder } });
 });
 
+// The requester adds details after submitting, such as the exact room or a photo of the problem.
+const addRequesterInfo = asyncHandler(async (req, res) => {
+  const workOrder = await serviceWorkOrdersService.addRequesterInfo(req.params.id, req.body, req.user);
+  res.json({ success: true, data: { workOrder } });
+});
+
 module.exports = {
   listWorkOrders,
   getWorkOrder,
   actOnWorkOrder,
+  addRequesterInfo,
 };

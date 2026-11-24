@@ -101,7 +101,7 @@ function waitingOn(request: ServiceRequest) {
   if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `GSO Staff handed the signed requisition to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Stocked items remain reserved; do not issue anything until every requested line is complete.` }
   if (FINANCE_STATUSES.includes(request.status)) return { label: 'Purchase approved', tone: 'bg-indigo-50 text-indigo-700', detail: 'The complete request is approved. Print the signed PDF and hand it to Finance before buying the shortage quantities.' }
   if (request.status === 'Completed') return { label: 'Completed', tone: 'bg-slate-100 text-slate-600', detail: 'Every approved item was issued.' }
-  if (request.status === 'Rejected') return { label: 'Declined', tone: 'bg-rose-50 text-rose-700', detail: 'The GSO Head declined the entire request.' }
+  if (request.status === 'Rejected') return { label: 'Declined', tone: 'bg-rose-50 text-rose-700', detail: 'GSO declined the entire request. Nothing is issued.' }
   return { label: request.status, tone: 'bg-slate-100 text-slate-600', detail: 'Waiting for the next update.' }
 }
 
@@ -112,35 +112,49 @@ function chipFor(request: ServiceRequest, tab: Tab) {
 }
 
 // The requester's specs next to the units in storage. GSO Staff tick the units that match, by hand.
-function StockCheckCard({ line, check, selected, covered, onToggle }: {
+function StockCheckCard({ line, check, selected, covered, onToggle, rejected }: {
   line: PurchaseRequisitionLine
   check: PurchaseRequisitionStockCheck
   selected: string[]
   covered: number
   onToggle: (itemId: string) => void
+  rejected: boolean
 }) {
   const short = Math.max(line.requestedQuantity - covered, 0)
+  // Once the ticked units cover the requested quantity, no other unit can be ticked (the server would ignore it anyway).
+  const full = covered >= line.requestedQuantity
+  const [query, setQuery] = useState('')
+  const needle = query.trim().toLowerCase()
+  const visible = needle
+    ? check.matches.filter((unit) => [unit.itemCode, unit.name, unit.description, unit.storageLocation ?? ''].some((text) => String(text).toLowerCase().includes(needle)))
+    : check.matches
   return <article className="rounded-xl border border-slate-200 bg-white p-3.5 transition-shadow hover:shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="text-sm font-extrabold text-slate-900">{line.itemName} <span className="font-bold text-slate-500">× {line.requestedQuantity}</span></p>
         <p className="mt-0.5 text-xs font-medium text-slate-500">{categoryLabel(line.category)}</p>
       </div>
-      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${short === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{short === 0 ? `${covered} matched` : `${covered} matched · ${short} to purchase`}</span>
+      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${rejected ? 'bg-rose-50 text-rose-700' : short === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>{rejected ? 'Rejected' : short === 0 ? `${covered} matched` : `${covered} matched · ${short} to purchase`}</span>
     </div>
     <div className="mt-3 rounded-xl border-2 border-blue-400 bg-blue-50 px-4 py-3 shadow-sm">
       <p className="text-[0.7rem] font-extrabold uppercase tracking-wide text-blue-800">Specs the requester needs</p>
       <p className="mt-1 whitespace-pre-wrap text-base font-black leading-snug text-slate-900">{line.specifications || 'No specs written by the requester.'}</p>
     </div>
     <p className="mt-3 text-[0.6rem] font-extrabold uppercase tracking-wide text-slate-500">Units in storage · tick the ones that match</p>
-    {check.matches.length === 0
-      ? <p className="mt-1.5 text-[0.68rem] text-slate-500">No units in storage for this category.</p>
-      : <ul className="mt-2 space-y-1.5">
-        {check.matches.map((unit) => {
+    {full && <p className="mt-1 text-[0.68rem] font-semibold text-amber-800">Enough units are ticked for the {line.requestedQuantity} requested. Untick one to choose another.</p>}
+    <div className="mt-2 flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-100">
+      <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search code, name, specs, or location" aria-label="Search units in storage" className="min-w-0 flex-1 bg-transparent text-xs font-semibold text-slate-800 outline-none placeholder:text-slate-400" />
+    </div>
+    {/* About three units show at once; scroll for the rest. */}
+    <div className={`mt-2 max-h-80 overflow-y-auto pr-1 ${rejected ? 'pointer-events-none opacity-40' : ''}`}>
+    {visible.length === 0
+      ? <p className="mt-1.5 text-[0.68rem] text-slate-500">{check.matches.length === 0 ? 'No units in storage for this category.' : 'No units match your search.'}</p>
+      : <ul className="space-y-1.5">
+        {visible.map((unit) => {
           const on = selected.includes(unit.itemId)
           return <li key={unit.itemId}>
-            <label className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-2.5 py-2 ${on ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
-              <input type="checkbox" checked={on} onChange={() => onToggle(unit.itemId)} className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600" />
+            <label className={`flex items-start gap-2.5 rounded-lg border px-2.5 py-2 ${on ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-200 bg-white hover:bg-slate-50'} ${!on && full ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+              <input type="checkbox" checked={on} disabled={!on && full} onChange={() => onToggle(unit.itemId)} className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600" />
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="text-xs font-black text-slate-900">{unit.itemCode}</span>
@@ -149,7 +163,7 @@ function StockCheckCard({ line, check, selected, covered, onToggle }: {
                 <span className="mt-1 block rounded-md bg-white px-2 py-1 text-[0.7rem] font-semibold leading-relaxed text-slate-800 ring-1 ring-slate-200">{unit.description || 'No specs entered'}</span>
                 <span className="mt-1.5 flex flex-wrap gap-1.5">
                   {unit.condition && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[0.6rem] font-bold text-emerald-700">Condition: {unit.condition}</span>}
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">{unit.availableQuantity} available</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">{unit.availableQuantity} {unit.unitOfMeasure} available</span>
                   {unit.storageLocation && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[0.6rem] font-bold text-blue-700">{unit.storageLocation}</span>}
                   {unit.dateAcquired && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">Acquired {new Date(unit.dateAcquired).toLocaleDateString('en-PH', { dateStyle: 'medium' })}</span>}
                   {(unit.unitCost ?? 0) > 0 && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-bold text-slate-600">{(unit.unitCost ?? 0).toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}</span>}
@@ -159,6 +173,7 @@ function StockCheckCard({ line, check, selected, covered, onToggle }: {
           </li>
         })}
       </ul>}
+    </div>
   </article>
 }
 
@@ -172,7 +187,7 @@ function LineCard({ line, children, onUndo }: { line: PurchaseRequisitionLine; c
       <LineStatusBadge status={line.routeStatus} />
     </div>
     <QuantityChips line={line} />
-    {line.reviewNote && ['REJECTED', 'NEEDS_INFORMATION'].includes(line.routeStatus) && <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[0.65rem] leading-relaxed text-slate-700"><span className="font-extrabold">{line.routeStatus === 'REJECTED' ? 'GSO Head reason: ' : 'Question: '}</span>{line.reviewNote}</p>}
+    {line.reviewNote && ['REJECTED', 'NEEDS_INFORMATION'].includes(line.routeStatus) && <p className="mt-2 rounded-lg bg-slate-50 px-2.5 py-2 text-[0.65rem] leading-relaxed text-slate-700"><span className="font-extrabold">{line.routeStatus === 'REJECTED' ? 'Reason: ' : 'Question: '}</span>{line.reviewNote}</p>}
     <DeliveryRecords line={line} onUndo={onUndo} />
     {children}
   </article>
@@ -307,6 +322,7 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
 }
 
 function routedMessage(request: ServiceRequest) {
+  if (request.status === 'Rejected') return `${request.referenceNo} rejected. The requester has been told the reason.`
   const toHead = countLines(request, ['WAITING_GSO_HEAD'])
   return `${request.referenceNo} routed. ${toHead ? `The entire request (${toHead} item line(s)) is with the GSO Head. In-stock items stay reserved until the full request is ready.` : 'The complete request is available in Main Issuance.'}`
 }
@@ -314,6 +330,11 @@ function routedMessage(request: ServiceRequest) {
 function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest; onSaved: (message: string) => void; onRefresh: () => void }) {
   const checks = linesOf(request).flatMap((line) => line.routeStatus === 'WAITING_STAFF_REVIEW' && line.stockCheck ? [{ line, check: line.stockCheck }] : [])
   const [picked, setPicked] = useState<Record<string, string[]>>({})
+  // Consumable lines GSO Staff chose to issue now from storage.
+  const [issueNow, setIssueNow] = useState<Record<string, boolean>>({})
+  // Consumable lines GSO Staff reject, and the one reason the requester sees for all of them.
+  const [rejected, setRejected] = useState<Record<string, boolean>>({})
+  const [rejectReason, setRejectReason] = useState('')
   const [mode, setMode] = useState<'route' | 'ask'>('route')
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
@@ -333,15 +354,50 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
     const list = current[lineId] || []
     return { ...current, [lineId]: list.includes(itemId) ? list.filter((id) => id !== itemId) : [...list, itemId] }
   })
-  const unmatchedTotal = checks.reduce((total, { line, check }) => total + Math.max(line.requestedQuantity - coveredOf(line, check), 0), 0)
+  const requestRows = (Array.isArray(request.formData.items) ? request.formData.items : []) as Array<Record<string, unknown>>
+  const requestedRow = (line: PurchaseRequisitionLine) => requestRows[line.lineNumber - 1] || {}
+  // A consumable can be issued now only when its matched units cover the full request and the item allows staff issue.
+  const canIssueNow = (line: PurchaseRequisitionLine, check: PurchaseRequisitionStockCheck) => requestedRow(line).itemKind === 'CONSUMABLE'
+    && check.options.includes('ISSUE')
+    && coveredOf(line, check) >= line.requestedQuantity
+  const issueNowLineIds = checks
+    .filter(({ line, check }) => issueNow[line.id] && canIssueNow(line, check))
+    .map(({ line }) => line.id)
+  const allIssueNow = checks.length > 0 && issueNowLineIds.length === checks.length
+  // Consumables get the Issue now and Reject choices in step 3. A per-unit item always goes to the GSO Head.
+  const isConsumable = (line: PurchaseRequisitionLine) => requestedRow(line).itemKind === 'CONSUMABLE'
+  const consumableChecks = checks
+    .filter(({ line }) => isConsumable(line))
+    .map(({ line, check }) => ({ line, check, unit: String(requestedRow(line).unitOfMeasure || '') }))
+  const rejectLineIds = checks
+    .filter(({ line }) => rejected[line.id] && isConsumable(line))
+    .map(({ line }) => line.id)
+  const unmatchedTotal = checks.reduce((total, { line, check }) => total + (rejectLineIds.includes(line.id) ? 0 : Math.max(line.requestedQuantity - coveredOf(line, check), 0)), 0)
+  // Lines still going to the GSO Head. The rest are issued now or rejected.
+  const headLines = checks.length - issueNowLineIds.length - rejectLineIds.length
+  const rejectOnly = rejectLineIds.length > 0 && headLines === 0 && issueNowLineIds.length === 0
+  // Issue now and reject are mutually exclusive for a line.
+  const chooseIssueNow = (lineId: string) => {
+    setIssueNow((current) => ({ ...current, [lineId]: !current[lineId] }))
+    setRejected((current) => ({ ...current, [lineId]: false }))
+  }
+  const chooseReject = (lineId: string) => {
+    setRejected((current) => ({ ...current, [lineId]: !current[lineId] }))
+    setIssueNow((current) => ({ ...current, [lineId]: false }))
+  }
 
   async function submit(action: 'ROUTE' | 'NEEDS_INFORMATION') {
     setBusy(true)
     setError('')
     try {
       if (action === 'ROUTE') {
-        const selectedUnits = Object.fromEntries(checks.map(({ line }) => [line.id, picked[line.id] || []]))
-        const result = await staffReviewPurchaseRequisition(request.id, { action, selectedUnits })
+        // A ticked unit that is no longer in storage (issued or reserved elsewhere since the page loaded) is not sent.
+        // It already counts as not matched on screen, so it goes to purchase instead of failing the whole route.
+        const selectedUnits = Object.fromEntries(checks.map(({ line, check }) => [
+          line.id,
+          (picked[line.id] || []).filter((itemId) => check.matches.some((unit) => unit.itemId === itemId)),
+        ]))
+        const result = await staffReviewPurchaseRequisition(request.id, { action, selectedUnits, issueNowLineIds, rejectLineIds, note: rejectLineIds.length ? rejectReason.trim() : undefined })
         onSaved(routedMessage(result.request))
       } else {
         await staffReviewPurchaseRequisition(request.id, { action, note: question.trim() })
@@ -365,7 +421,7 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
       <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[0.62rem] font-extrabold text-blue-700">{checks.length} item{checks.length === 1 ? '' : 's'}</span>
     </WorkflowStepHeader>
     <div className="mt-4 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-2 sm:p-3">
-      {checks.map(({ line, check }) => <StockCheckCard key={line.id} line={line} check={check} selected={picked[line.id] || []} covered={coveredOf(line, check)} onToggle={(itemId) => toggle(line.id, itemId)} />)}
+      {checks.map(({ line, check }) => <StockCheckCard key={line.id} line={line} check={check} selected={picked[line.id] || []} covered={coveredOf(line, check)} onToggle={(itemId) => toggle(line.id, itemId)} rejected={Boolean(rejected[line.id])} />)}
     </div>
     <section className="mt-5 border-t border-slate-200 pt-5" aria-label="Confirm routing">
       <WorkflowStepHeader
@@ -373,20 +429,42 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
         status="upcoming"
         titleId={`route-confirmation-${request.id}`}
         title="Confirm route"
-        description="The whole request goes to the GSO Head as one package."
+        description={checks.length > 0 && headLines === 0 ? 'Nothing goes to the GSO Head. The choices above take effect now.' : 'The whole request goes to the GSO Head as one package.'}
       />
       <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/60 p-4">
       {mode === 'route' ? <>
+        {consumableChecks.length > 0 && <div className="mb-3 rounded-xl border border-blue-100 bg-white/80 p-3">
+          <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Consumables</p>
+          <ul className="mt-2 divide-y divide-slate-100">
+            {consumableChecks.map(({ line, check, unit }) => <li key={line.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2 first:pt-0 last:pb-0">
+              <p className="min-w-0 text-xs font-extrabold text-slate-900">{line.itemName} <span className="font-bold text-slate-500">× {line.requestedQuantity}{unit ? ` ${unit}` : ''}</span></p>
+              <div className="flex items-center gap-4 text-xs font-semibold text-slate-700">
+                {canIssueNow(line, check) && <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" checked={Boolean(issueNow[line.id])} onChange={() => chooseIssueNow(line.id)} className="h-4 w-4 accent-emerald-600" />Issue now</label>}
+                <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" checked={Boolean(rejected[line.id])} onChange={() => chooseReject(line.id)} className="h-4 w-4 accent-rose-600" />Reject</label>
+              </div>
+            </li>)}
+          </ul>
+        </div>}
         <div className="rounded-xl border border-blue-100 bg-white/80 p-3">
           <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Route summary</p>
-          <p className="mt-2 text-xs leading-relaxed text-slate-700">{unmatchedTotal === 0
-            ? 'Every requested unit is matched. The GSO Head approves, then the request is ready to issue.'
-            : `${unmatchedTotal} unit(s) are not matched. They go to purchase, and the GSO Head approves the complete request.`}</p>
+          <p className="mt-2 text-xs leading-relaxed text-slate-700">{rejectLineIds.length > 0 && headLines === 0
+            ? `${rejectLineIds.length} item(s) rejected. Nothing is reserved for them, and ${requester} is told the reason.${issueNowLineIds.length > 0 ? ' The other items are issued now by GSO Staff.' : ''}`
+            : allIssueNow
+            ? 'Every item is a consumable in stock. GSO Staff issue it now from storage; the GSO Head is not needed.'
+            : issueNowLineIds.length > 0
+              ? 'Consumables in stock are reserved now, but the whole request waits for the GSO Head as one package.'
+              : unmatchedTotal === 0
+                ? 'Every requested unit is matched. The GSO Head approves, then the request is ready to issue.'
+                : `${unmatchedTotal} unit(s) are not matched. They go to purchase, and the GSO Head approves the complete request.`}</p>
         </div>
+        {rejectLineIds.length > 0 && <label className="mt-3 block">
+          <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-wide text-slate-600">Reason for rejecting (required) · {requester} sees this</span>
+          <textarea value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} maxLength={2000} placeholder="e.g. Not needed this school year." className="min-h-20 w-full resize-y rounded-xl border border-slate-300 bg-white p-3 text-xs font-medium outline-none focus:border-rose-500 focus:ring-4 focus:ring-rose-100" />
+        </label>}
         {error && <div className="mt-3 space-y-2"><Banner tone="error">{error}</Banner><button type="button" onClick={onRefresh} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[0.65rem] font-extrabold text-rose-700 hover:bg-rose-50">Refresh</button></div>}
         <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
           <button type="button" disabled={busy} onClick={() => { setMode('ask'); setError('') }} className="rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Ask requester first</button>
-          <button type="button" disabled={busy || checks.length === 0} onClick={() => void submit('ROUTE')} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{busy ? 'Saving…' : 'Send to GSO Head'}</button>
+          <button type="button" disabled={busy || checks.length === 0 || (rejectLineIds.length > 0 && !rejectReason.trim())} onClick={() => void submit('ROUTE')} className={`rounded-xl px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 ${rejectOnly ? 'bg-rose-600 shadow-rose-600/20 hover:bg-rose-700' : 'bg-blue-600 shadow-blue-600/20 hover:bg-blue-700'}`}>{busy ? 'Saving…' : checks.length === 0 || headLines > 0 ? 'Send to GSO Head' : issueNowLineIds.length > 0 ? 'Issue now' : 'Reject'}</button>
         </div>
       </> : <>
         <label className="block">

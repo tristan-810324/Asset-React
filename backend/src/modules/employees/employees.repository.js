@@ -172,8 +172,8 @@ async function renameEmployeePosition({ id, name, reason, changedByUserId }) {
       [id],
     );
     const current = currentResult.rows[0];
-    if (!current) throw Object.assign(new Error('Hindi na makita ang position.'), { status: 404 });
-    if (current.name === name) throw Object.assign(new Error('Walang pagbabago sa position name.'), { status: 409 });
+    if (!current) throw Object.assign(new Error('Position not found.'), { status: 404 });
+    if (current.name === name) throw Object.assign(new Error('The position name is the same.'), { status: 409 });
 
     const employeesResult = await client.query(
       `SELECT id, employee_code, first_name, middle_name, last_name, suffix,
@@ -225,7 +225,7 @@ async function deleteEmployeePosition({ id, replacementPositionId, reason, chang
   try {
     await client.query('BEGIN');
     if (String(id) === String(replacementPositionId)) {
-      throw Object.assign(new Error('Pumili ng ibang position na paglilipatan ng records.'), { status: 400 });
+      throw Object.assign(new Error('Choose another position to move the records to.'), { status: 400 });
     }
     const positionsResult = await client.query(
       `SELECT id, name
@@ -236,7 +236,7 @@ async function deleteEmployeePosition({ id, replacementPositionId, reason, chang
       [[id, replacementPositionId]],
     );
     if (positionsResult.rowCount !== 2) {
-      throw Object.assign(new Error('Hindi makita ang position o ang papalit na position.'), { status: 404 });
+      throw Object.assign(new Error('The position or the replacement position was not found.'), { status: 404 });
     }
     const source = positionsResult.rows.find((position) => String(position.id) === String(id));
     const replacement = positionsResult.rows.find((position) => String(position.id) === String(replacementPositionId));
@@ -346,12 +346,12 @@ async function updateEmployee(previousCode, employee, { changedByUserId }) {
       [previousCode],
     );
     const previous = previousResult.rows[0];
-    if (!previous) throw Object.assign(new Error('Hindi na makita ang employee profile na ie-edit.'), { status: 404 });
+    if (!previous) throw Object.assign(new Error('The employee profile to edit was not found.'), { status: 404 });
     const emailChanged = String(previous.email || '').toLowerCase() !== String(employee.email || '').toLowerCase();
     if (emailChanged) {
       const lock = await client.query(`SELECT ${emailLockedSql} AS locked FROM employees AS employee WHERE employee.id = $1`, [previous.id]);
       if (lock.rows[0].locked) {
-        throw Object.assign(new Error('Hindi mapapalitan ang email habang may hawak pang item, nakabinbing issuance o return, o hindi pa nase-settle na nawalang item ang employee. Tapusin muna ang mga iyon.'), { status: 409 });
+        throw Object.assign(new Error('You cannot change the email while the employee has items, a pending issuance or return, or an unsettled lost item. Finish those first.'), { status: 409 });
       }
     }
 

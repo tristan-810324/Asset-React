@@ -261,11 +261,12 @@ function buildPurchaseRequisitionPdf({ request, endorsedBy, endorsedEmail, signa
   sectionLabel('ITEMS FOR PURCHASE');
   const columns = [
     { width: 26, label: 'No.' },
-    { width: 206, label: 'Item and specifications' },
-    { width: 108, label: 'Category' },
-    { width: 58, label: 'Requested', right: true },
+    { width: 176, label: 'Item and specifications' },
+    { width: 90, label: 'Category' },
+    { width: 52, label: 'Unit' },
+    { width: 56, label: 'Requested', right: true },
     { width: 58, label: 'From stock', right: true },
-    { width: 60, label: 'To buy', right: true },
+    { width: 58, label: 'To buy', right: true },
   ];
   const drawTableHeader = () => {
     box(ops, LEFT, top, CONTENT_WIDTH, 22, NAVY);
@@ -286,10 +287,11 @@ function buildPurchaseRequisitionPdf({ request, endorsedBy, endorsedEmail, signa
     top += 24;
   }
   items.forEach((item, index) => {
-    const nameLines = wrapText(item.itemName || 'Proposed item', 194, 9.5, true);
-    const specLines = item.description ? wrapText(item.description, 194, 8.5) : [];
-    const categoryLines = wrapText(categoryName(item.category), 96, 8.5);
-    const height = Math.max(nameLines.length * 12 + (specLines.length ? specLines.length * 11 + 3 : 0), categoryLines.length * 11) + 14;
+    const nameLines = wrapText(item.itemName || 'Proposed item', 164, 9.5, true);
+    const specLines = item.description ? wrapText(item.description, 164, 8.5) : [];
+    const categoryLines = wrapText(categoryName(item.category), 78, 8.5);
+    const unitLines = wrapText(item.unitOfMeasure || '—', 40, 8.5);
+    const height = Math.max(nameLines.length * 12 + (specLines.length ? specLines.length * 11 + 3 : 0), categoryLines.length * 11, unitLines.length * 11) + 14;
     if (top + height > BOTTOM_LIMIT) {
       startPage();
       drawTableHeader();
@@ -303,8 +305,10 @@ function buildPurchaseRequisitionPdf({ request, endorsedBy, endorsedEmail, signa
     x += columns[1].width;
     categoryLines.forEach((line, lineIndex) => text(ops, line, x + 6, top + 7 + lineIndex * 11, { size: 8.5, color: MUTED }));
     x += columns[2].width;
+    unitLines.forEach((line, lineIndex) => text(ops, line, x + 6, top + 7 + lineIndex * 11, { size: 8.5 }));
+    x += columns[3].width;
     [item.requestedQuantity, item.stockAvailableQuantity, item.quantity].forEach((value, valueIndex) => {
-      const column = columns[3 + valueIndex];
+      const column = columns[4 + valueIndex];
       text(ops, String(value ?? 0), x + column.width - 6, top + 7, { size: 9.5, bold: valueIndex === 2, align: 'right' });
       x += column.width;
     });
@@ -313,16 +317,20 @@ function buildPurchaseRequisitionPdf({ request, endorsedBy, endorsedEmail, signa
   });
 
   const sum = (key) => items.reduce((total, item) => total + Number(item[key] || 0), 0);
-  room(28);
-  rule(ops, LEFT, top, RIGHT, top, NAVY, 1);
-  text(ops, 'Total', LEFT + columns[0].width + 6, top + 8, { size: 9.5, bold: true, color: NAVY });
-  let totalX = LEFT + columns[0].width + columns[1].width + columns[2].width;
-  ['requestedQuantity', 'stockAvailableQuantity', 'quantity'].forEach((key, index) => {
-    const column = columns[3 + index];
-    text(ops, String(sum(key)), totalX + column.width - 6, top + 8, { size: 9.5, bold: true, color: NAVY, align: 'right' });
-    totalX += column.width;
-  });
-  top += 40;
+  // Quantities in different units cannot be added up, so the total row is left out for those requests.
+  const unitsMatch = new Set(items.map((item) => item.unitOfMeasure || '')).size <= 1;
+  if (unitsMatch) {
+    room(28);
+    rule(ops, LEFT, top, RIGHT, top, NAVY, 1);
+    text(ops, 'Total', LEFT + columns[0].width + 6, top + 8, { size: 9.5, bold: true, color: NAVY });
+    let totalX = LEFT + columns[0].width + columns[1].width + columns[2].width + columns[3].width;
+    ['requestedQuantity', 'stockAvailableQuantity', 'quantity'].forEach((key, index) => {
+      const column = columns[4 + index];
+      text(ops, String(sum(key)), totalX + column.width - 6, top + 8, { size: 9.5, bold: true, color: NAVY, align: 'right' });
+      totalX += column.width;
+    });
+  }
+  top += unitsMatch ? 40 : 24;
 
 
   // Approval: the GSO Head who endorsed the purchase (with their signature, if saved).

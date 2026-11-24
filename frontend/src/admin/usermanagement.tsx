@@ -4,10 +4,11 @@ import { AdminGlyph, AdminMetricCard } from './adminui'
 import { listRequesterDepartments } from '../requesters/requesterApi'
 import {
   createSystemUser,
-  deleteSystemUser,
+  getSystemUserDetails,
   listSystemUsers,
   listUserPositions,
   setSystemUserActive,
+  updateSystemUser,
   type SystemUserAccount,
   type UserAccountRole,
 } from './userManagementApi'
@@ -22,6 +23,25 @@ type SubPosition = 'Head' | 'Staff' | 'Others'
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date(value))
+}
+
+// The Add form's account type, read back from an existing account. IT Admin is shown fixed in the edit form.
+type EditAccountType = AccountType | 'ADMIN'
+function editAccountTypeFor(account: SystemUserAccount): EditAccountType {
+  if (account.roles.includes('IT_ADMIN')) return 'ADMIN'
+  if (account.roles.includes('IT_STAFF')) return 'IT'
+  if (account.roles.includes('BORROWER')) return 'REQUESTER'
+  return 'GSO'
+}
+
+// The Add form's position choice, read back from an existing account. A GSO Staff account never becomes Head by
+// saving: a position that is not Staff is kept as typed under Others, and the role follows Head only when Head is picked.
+function editPositionChoiceFor(accountType: EditAccountType, roles: string[], position: string): { subPosition: SubPosition; otherPosition: string } {
+  if (accountType === 'IT') return { subPosition: 'Staff', otherPosition: '' }
+  if (accountType === 'GSO' && roles.includes('GSO_HEAD')) return { subPosition: 'Head', otherPosition: '' }
+  if (accountType === 'GSO' && position !== 'Staff') return { subPosition: 'Others', otherPosition: position }
+  if (position === 'Head' || position === 'Staff') return { subPosition: position === 'Head' ? 'Head' : 'Staff', otherPosition: '' }
+  return { subPosition: 'Others', otherPosition: position }
 }
 
 // IT Staff accounts created before the Account type list dropped IT Staff still show their role here.
@@ -50,6 +70,18 @@ export default function UserManagement() {
   const [accountType, setAccountType] = useState<AccountType>('GSO')
   const [subPosition, setSubPosition] = useState<SubPosition>('Staff')
   const [departmentChoice, setDepartmentChoice] = useState('')
+  const [editingAccount, setEditingAccount] = useState<SystemUserAccount | null>(null)
+  const [editForm, setEditForm] = useState({
+    firstName: '', middleName: '', lastName: '', suffix: '', employeeCode: '', department: '',
+    contactNumber: '', email: '', reason: '',
+  })
+  const [editAccountType, setEditAccountType] = useState<EditAccountType>('GSO')
+  const [editSubPosition, setEditSubPosition] = useState<SubPosition>('Staff')
+  const [editOtherPosition, setEditOtherPosition] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
+  const [editMissingDetails, setEditMissingDetails] = useState(false)
+  const [editError, setEditError] = useState('')
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -60,9 +92,66 @@ export default function UserManagement() {
     return () => { active = false }
   }, [])
 
+  async function openEdit(account: SystemUserAccount) {
+    const accountType = editAccountTypeFor(account)
+    setEditingAccount(account)
+    setEditForm({
+      firstName: '', middleName: '', lastName: '', suffix: '', employeeCode: '', department: '',
+      contactNumber: '', email: account.email, reason: '',
+    })
+    setEditAccountType(accountType)
+    setEditSubPosition('Staff')
+    setEditOtherPosition('')
+    setEditError('')
+    setEditMissingDetails(false)
+    setEditLoading(true)
+    try {
+      const details = await getSystemUserDetails(account.id)
+      setEditMissingDetails(!details.employeeCode && !details.firstName && !details.lastName)
+      setEditForm((current) => ({
+        ...current,
+        firstName: details.firstName,
+        middleName: details.middleName,
+        lastName: details.lastName,
+        suffix: details.suffix,
+        employeeCode: details.employeeCode,
+        department: details.department,
+        contactNumber: details.contactNumber,
+      }))
+      // Accounts without an identity profile start from the account's own position.
+      const choice = editPositionChoiceFor(accountType, account.roles, details.position || account.position)
+      setEditSubPosition(choice.subPosition)
+      setEditOtherPosition(choice.otherPosition)
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'Unable to load the account details.')
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
+  async function saveEdit(event: FormEvent) {
+    event.preventDefault()
+    if (!editingAccount) return
+    // The same role and position rules as the Add form: GSO Head is Head, IT accounts are IT Staff, IT Admin stays fixed.
+    const roleKey = editAccountType === 'ADMIN' ? 'IT_ADMIN' : editAccountType === 'IT' ? 'IT_STAFF' : editAccountType === 'REQUESTER' ? 'BORROWER' : editSubPosition === 'Head' ? 'GSO_HEAD' : 'GSO_STAFF'
+    const position = editAccountType === 'IT' ? 'IT Staff' : editSubPosition === 'Others' ? editOtherPosition.trim() : editSubPosition
+    setIsSavingEdit(true)
+    setEditError('')
+    try {
+      const updated = await updateSystemUser(editingAccount.id, { ...editForm, position, roleKey })
+      setAccounts((current) => current.map((item) => item.id === updated.id ? { ...item, name: updated.name, email: updated.email, position: updated.position, roles: updated.roles } : item))
+      setSuccessMessage(`Saved changes to ${updated.name}. The change is flagged in the audit log.`)
+      setEditingAccount(null)
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : 'Unable to save the changes.')
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
   async function toggleActive(account: SystemUserAccount) {
     const nextActive = !account.isActive
-    if (!window.confirm(`${nextActive ? 'I-activate' : 'I-deactivate'} ang account ni ${account.name}?`)) return
+    if (!window.confirm(`${nextActive ? 'Activate' : 'Deactivate'} the account of ${account.name}?`)) return
     setBusyUserId(account.id)
     setErrorMessage('')
     setSuccessMessage('')
@@ -72,22 +161,6 @@ export default function UserManagement() {
       setSuccessMessage(`${account.name} is now ${nextActive ? 'active' : 'inactive'}.`)
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to update the account.')
-    } finally {
-      setBusyUserId(null)
-    }
-  }
-
-  async function removeAccount(account: SystemUserAccount) {
-    if (!window.confirm(`Burahin nang tuluyan ang account ni ${account.name}? Hindi ito na-undo. Kung may requests o issuance ang account, i-deactivate na lang.`)) return
-    setBusyUserId(account.id)
-    setErrorMessage('')
-    setSuccessMessage('')
-    try {
-      await deleteSystemUser(account.id)
-      setAccounts((current) => current.filter((item) => item.id !== account.id))
-      setSuccessMessage(`${account.name} was deleted.`)
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to delete the account.')
     } finally {
       setBusyUserId(null)
     }
@@ -194,7 +267,7 @@ export default function UserManagement() {
             <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> IT Admin workspace
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">User management</h1>
-          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account, add IT Staff, GSO Staff, GSO Head, or requester logins, and deactivate or delete accounts.</p>
+          <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account, add IT Staff, GSO Staff, GSO Head, or requester logins, edit names and positions, and deactivate accounts.</p>
         </div>
         <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
           <button
@@ -273,8 +346,8 @@ export default function UserManagement() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-right">
                     <div className="flex justify-end gap-1.5">
+                      <button type="button" onClick={() => openEdit(account)} disabled={busyUserId !== null} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[0.65rem] font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">Edit</button>
                       <button type="button" onClick={() => void toggleActive(account)} disabled={busyUserId !== null} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[0.65rem] font-extrabold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">{account.isActive ? 'Deactivate' : 'Activate'}</button>
-                      <button type="button" onClick={() => void removeAccount(account)} disabled={busyUserId !== null} className="rounded-lg border border-rose-300 bg-white px-2.5 py-1.5 text-[0.65rem] font-extrabold text-rose-700 transition hover:bg-rose-50 disabled:opacity-50">{busyUserId === account.id ? 'Working…' : 'Delete'}</button>
                     </div>
                   </td>
                 </tr>
@@ -287,6 +360,180 @@ export default function UserManagement() {
           Email is verified once on the first successful sign-in. Existing verified accounts continue to sign in directly.
         </p>
       </section>
+
+      {editingAccount && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5"
+          onClick={() => { if (!isSavingEdit) setEditingAccount(null) }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-user-modal-title"
+            onClick={(event) => event.stopPropagation()}
+            className="flex max-h-[94vh] min-h-0 w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-white/70 bg-white shadow-2xl shadow-slate-950/30"
+          >
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-8 sm:py-5">
+              <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 border-[#d6b333] bg-[#17377f] text-sm font-black text-white shadow-sm">
+                  ✎
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">User management</p>
+                  <h2 id="edit-user-modal-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Edit user account</h2>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">{editingAccount.name} · {editingAccount.email}</p>
+                  <p className="text-xs font-semibold text-slate-500">Fields marked * are required. Every change needs a reason and is flagged in the audit log.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingAccount(null)}
+                disabled={isSavingEdit}
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:opacity-50"
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6">
+              <form id="edit-user-form" className="mx-auto max-w-4xl space-y-4" onSubmit={saveEdit}>
+                {editLoading && <p className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">Loading the account details…</p>}
+                {editMissingDetails && !editLoading && (
+                  <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-relaxed text-amber-900">
+                    No staff details are saved for this account yet. Its account name is "{editingAccount.name}". Fill in the details below and save to add them.
+                  </p>
+                )}
+                {editError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold leading-relaxed text-rose-700">{editError}</p>}
+
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Staff details</h3>
+                    <p className="mt-1 text-sm text-slate-600">Same details the requester form asks for. The account name is built from the names. Employee Master Data is updated with the same details.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={editFieldLabelClass}>First name <span className="text-rose-600">*</span></span>
+                      <input value={editForm.firstName} onChange={(event) => setEditForm((current) => ({ ...current, firstName: event.target.value }))} type="text" autoComplete="off" placeholder="Enter first name" required maxLength={100} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Surname <span className="text-rose-600">*</span></span>
+                      <input value={editForm.lastName} onChange={(event) => setEditForm((current) => ({ ...current, lastName: event.target.value }))} type="text" autoComplete="off" placeholder="Enter surname" required maxLength={100} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Middle name <span className="font-medium text-slate-500">(optional)</span></span>
+                      <input value={editForm.middleName} onChange={(event) => setEditForm((current) => ({ ...current, middleName: event.target.value }))} type="text" autoComplete="off" placeholder="Enter middle name" maxLength={100} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Suffix <span className="font-medium text-slate-500">(optional)</span></span>
+                      <input value={editForm.suffix} onChange={(event) => setEditForm((current) => ({ ...current, suffix: event.target.value }))} type="text" autoComplete="off" placeholder="e.g. Jr., III" maxLength={40} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Employee code <span className="text-rose-600">*</span></span>
+                      <input value={editForm.employeeCode} onChange={(event) => setEditForm((current) => ({ ...current, employeeCode: event.target.value }))} type="text" autoComplete="off" placeholder="e.g. 2024-00123" required maxLength={40} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Department / office <span className="text-rose-600">*</span></span>
+                      <select value={editForm.department} onChange={(event) => setEditForm((current) => ({ ...current, department: event.target.value }))} required className={editControlClass}>
+                        <option value="" disabled>Select department / office</option>
+                        {editForm.department && !departments.includes(editForm.department) && <option value={editForm.department}>{editForm.department}</option>}
+                        {departments.map((department) => <option key={department} value={department}>{department}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Contact number <span className="text-rose-600">*</span></span>
+                      <input value={editForm.contactNumber} onChange={(event) => setEditForm((current) => ({ ...current, contactNumber: event.target.value }))} type="tel" autoComplete="off" placeholder="e.g. 09XX XXX XXXX" required maxLength={30} className={editControlClass} />
+                    </label>
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Account email <span className="text-rose-600">*</span></span>
+                      <input value={editForm.email} onChange={(event) => setEditForm((current) => ({ ...current, email: event.target.value }))} type="email" autoComplete="off" placeholder="e.g. name@gmail.com" required maxLength={254} className={editControlClass} />
+                      <span className="mt-1.5 block text-xs text-slate-500">Used for login. A new address must verify again at sign-in.</span>
+                    </label>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Access and position</h3>
+                    <p className="mt-1 text-sm text-slate-600">Pick the account type. For GSO and Requester, pick Head, Staff, or Others. Others lets you type the position. IT accounts are always IT Staff.</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className={editFieldLabelClass}>Account type <span className="text-rose-600">*</span></span>
+                      <select value={editAccountType} onChange={(event) => setEditAccountType(event.target.value as EditAccountType)} disabled={editAccountType === 'ADMIN'} required className={editControlClass}>
+                        {editAccountType === 'ADMIN' ? (
+                          <option value="ADMIN">IT Admin (fixed)</option>
+                        ) : (
+                          <>
+                            <option value="GSO">GSO</option>
+                            <option value="IT">IT</option>
+                            <option value="REQUESTER">Requester</option>
+                          </>
+                        )}
+                      </select>
+                    </label>
+                    {editAccountType === 'IT' ? (
+                      <div className="block">
+                        <span className={editFieldLabelClass}>Position</span>
+                        <input value="IT Staff" readOnly aria-readonly="true" className={`${editControlClass} cursor-not-allowed bg-slate-100 text-slate-700`} />
+                        <span className="mt-1.5 block text-xs text-slate-500">IT accounts are always IT Staff.</span>
+                      </div>
+                    ) : (
+                      <label className="block">
+                        <span className={editFieldLabelClass}>Position <span className="text-rose-600">*</span></span>
+                        <select value={editSubPosition} onChange={(event) => setEditSubPosition(event.target.value as SubPosition)} required className={editControlClass}>
+                          <option value="Head">Head</option>
+                          <option value="Staff">Staff</option>
+                          <option value="Others">Others (type it)</option>
+                        </select>
+                      </label>
+                    )}
+                    {editAccountType !== 'IT' && editSubPosition === 'Others' && (
+                      <label className="block sm:col-span-2">
+                        <span className={editFieldLabelClass}>Other position <span className="text-rose-600">*</span></span>
+                        <input value={editOtherPosition} onChange={(event) => setEditOtherPosition(event.target.value)} list="edit-position-options" autoComplete="off" required maxLength={120} placeholder="Type the position, e.g. Accounting Clerk" className={editControlClass} />
+                        <datalist id="edit-position-options">
+                          {positions.map((position) => <option key={position} value={position} />)}
+                        </datalist>
+                      </label>
+                    )}
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 sm:p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  <div className="mb-4 border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900">Reason for the change</h3>
+                    <p className="mt-1 text-sm text-slate-600">Saved with the change in the audit log. Write at least 10 characters.</p>
+                  </div>
+                  <label className="block">
+                    <span className={editFieldLabelClass}>Reason <span className="text-rose-600">*</span></span>
+                    <textarea value={editForm.reason} onChange={(event) => setEditForm((current) => ({ ...current, reason: event.target.value }))} required minLength={10} maxLength={500} rows={3} placeholder="Why is this account being changed?" className="w-full rounded-xl border-2 border-slate-300 bg-white px-4 py-3 text-base font-medium text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100" />
+                  </label>
+                </section>
+              </form>
+            </div>
+
+            <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
+              <button
+                type="button"
+                onClick={() => setEditingAccount(null)}
+                disabled={isSavingEdit}
+                className="rounded-xl border-2 border-slate-300 bg-white px-6 py-3.5 text-base font-extrabold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-slate-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                form="edit-user-form"
+                disabled={isSavingEdit || editLoading}
+                aria-busy={isSavingEdit}
+                className="rounded-xl bg-blue-600 px-6 py-3.5 text-base font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSavingEdit ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {showAddModal && (
         <div

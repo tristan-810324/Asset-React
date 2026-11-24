@@ -3,33 +3,33 @@ function invalid(message) {
 }
 
 function requiredText(value, label, maxLength) {
-  if (typeof value !== 'string' || !value.trim()) invalid(`Pakilagay ang ${label}.`);
+  if (typeof value !== 'string' || !value.trim()) invalid(`Enter the ${label}.`);
   const trimmed = value.trim();
-  if (trimmed.length > maxLength) invalid(`Hindi dapat lumampas sa ${maxLength} characters ang ${label}.`);
+  if (trimmed.length > maxLength) invalid(`${label} must be ${maxLength} characters or less.`);
   return trimmed;
 }
 
 function optionalText(value, label, maxLength) {
   if (value === undefined || value === null) return '';
-  if (typeof value !== 'string') invalid(`Hindi valid ang ${label}.`);
+  if (typeof value !== 'string') invalid(`Invalid ${label}.`);
   const trimmed = value.trim();
-  if (trimmed.length > maxLength) invalid(`Hindi dapat lumampas sa ${maxLength} characters ang ${label}.`);
+  if (trimmed.length > maxLength) invalid(`${label} must be ${maxLength} characters or less.`);
   return trimmed;
 }
 
 function optionalPictureData(value) {
   if (value === undefined || value === null || value === '') return null;
   if (typeof value !== 'string' || value.length > 1_400_000) {
-    invalid('Ang employee picture ay dapat 1 MB o mas maliit.');
+    invalid('The employee picture must be 1 MB or smaller.');
   }
   if (!/^data:image\/(?:jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/i.test(value)) {
-    invalid('Hindi valid ang employee picture. Gumamit ng JPG, PNG, WebP, o GIF.');
+    invalid('Invalid employee picture. Use a JPG, PNG, WebP, or GIF file.');
   }
   return value;
 }
 
 function validateEmployee(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang employee profile.');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Invalid employee profile.');
 
   const employee = {
     employeeCode: requiredText(input.employeeCode, 'employee code', 40),
@@ -44,8 +44,8 @@ function validateEmployee(input) {
     pictureData: optionalPictureData(input.pictureData),
   };
 
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employee.email)) invalid('Maglagay ng valid na email address.');
-  if (employee.status !== 'Active' && employee.status !== 'Inactive') invalid('Hindi valid ang employment status.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employee.email)) invalid('Enter a valid email address.');
+  if (employee.status !== 'Active' && employee.status !== 'Inactive') invalid('Invalid employment status.');
   return employee;
 }
 
@@ -57,12 +57,12 @@ function validateUpdateEmployee(input) {
 
 function validateMasterDataId(value, label) {
   const id = String(value ?? '').trim();
-  if (!/^\d{1,20}$/.test(id) || id === '0') invalid(`Hindi valid ang ${label} reference.`);
+  if (!/^\d{1,20}$/.test(id) || id === '0') invalid(`Invalid ${label} reference.`);
   return id;
 }
 
 function validatePosition(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Hindi valid ang position details.');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) invalid('Invalid position details.');
   return { name: requiredText(input.name, 'position name', 120) };
 }
 

@@ -85,8 +85,43 @@ function validateForward(input) {
   };
 }
 
+// Stored codes for how a job was resolved. The reports count these codes, so the labels only change on screen.
+const RESOLUTION_LABELS = Object.freeze({
+  FIXED: 'Fixed',
+  REPLACED: 'Replaced',
+  NOT_FIXED: 'Not fixed',
+  REFERRED: 'Referred to another office',
+});
+
+const MAX_PHOTOS = 3;
+// Images are resized on the screen before upload. The limit keeps three photos within the 2 MB request body limit.
+const MAX_PHOTO_CHARS = 600000;
+const PHOTO_PATTERN = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+
+function validatePhotos(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_PHOTOS) invalid(`Attach up to ${MAX_PHOTOS} photos at a time.`);
+  return value.map((photo) => {
+    if (typeof photo !== 'string' || photo.length > MAX_PHOTO_CHARS || !PHOTO_PATTERN.test(photo)) {
+      invalid('Each photo must be a JPG, PNG, or WebP image that is not too large.');
+    }
+    return photo;
+  });
+}
+
+function validateProgress(input) {
+  return { note: text(input?.note, 'Progress note', 2000), photos: validatePhotos(input?.photos) };
+}
+
+function validateRequesterInfo(input) {
+  return { message: text(input?.message, 'Additional information', 2000), photos: validatePhotos(input?.photos) };
+}
+
 function validateComplete(input) {
   const completionNote = text(input?.completionNote, 'Completion note', 2000);
+  // Optional: the screen no longer asks for it. When sent, it must be one of the known codes.
+  const resolutionType = String(input?.resolutionType || '');
+  if (resolutionType && !Object.hasOwn(RESOLUTION_LABELS, resolutionType)) invalid('Choose a valid resolution.');
   const incompleteReason = text(input?.incompleteReason, 'Incomplete task reason', 2000, { optional: true });
   const rawUpdates = input?.taskUpdates === undefined ? [] : input.taskUpdates;
   if (!Array.isArray(rawUpdates) || rawUpdates.length > 100) invalid('Task updates must be a list of up to 100 items.');
@@ -99,7 +134,7 @@ function validateComplete(input) {
     seen.add(id);
     return { id, completed: entry.completed };
   });
-  return { completionNote, incompleteReason, taskUpdates };
+  return { completionNote, resolutionType, incompleteReason, taskUpdates, photos: validatePhotos(input?.photos) };
 }
 
 function validateReopen(input) {
@@ -120,6 +155,10 @@ module.exports = {
   validateNeedInfo,
   validateForward,
   validateComplete,
+  validateProgress,
+  validateRequesterInfo,
+  validatePhotos,
   validateReopen,
   validateReject,
+  RESOLUTION_LABELS,
 };

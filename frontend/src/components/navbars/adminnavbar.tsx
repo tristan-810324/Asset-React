@@ -126,17 +126,6 @@ export default function AdminNavbar({ activePath, mobileMenuOpen, onMobileMenuCl
             )
           })}
         </nav>
-
-        <div className="mt-auto rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/80 to-slate-900/70 p-4">
-          <div className="flex items-center gap-2 text-blue-200">
-            <AdminIcon name="shield" className="h-4 w-4" />
-            <span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">IT Administration</span>
-          </div>
-          <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">Accounts, computer lab support, and the audit trail from one console.</p>
-          <a href="/admin" className="mt-3 inline-block text-xs font-extrabold text-white transition hover:text-blue-200">
-            Open workspace overview <span aria-hidden="true">→</span>
-          </a>
-        </div>
       </aside>
 
       {mobileMenuOpen && (
@@ -239,21 +228,21 @@ export function AdminPageHeader({ pageName, subtitle, onOpenMenu, onSignOut }: A
                 setAccountMenuOpen((isOpen) => !isOpen)
                 setNotificationsOpen(false)
               }}
-              className="flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition hover:border-blue-200 focus:outline-none focus:ring-4 focus:ring-blue-100"
+              className="flex h-10 items-center gap-2.5 rounded-xl border border-slate-300 bg-white py-1 pl-1 pr-2.5 shadow-[0_2px_8px_-2px_rgba(37,99,235,0.2)] transition hover:border-blue-300 hover:bg-blue-50/50 focus:outline-none focus:ring-4 focus:ring-blue-100"
               aria-label="Open account menu"
               aria-haspopup="menu"
               aria-expanded={accountMenuOpen}
             >
-              <span className="grid h-7 w-7 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span>
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-linear-to-br from-blue-600 to-indigo-700 text-[0.7rem] font-black text-white shadow-sm shadow-blue-900/20">{initials}</span>
               <span className="hidden text-left sm:block">
-                <span className="block text-[0.68rem] font-extrabold leading-none text-slate-800">{accountName}</span>
-                <span className="mt-1 block text-[0.58rem] font-bold leading-none text-slate-400">IT Admin</span>
+                <span className="block text-[0.72rem] font-extrabold leading-none text-slate-900">{accountName}</span>
+                <span className="mt-1 block text-[0.62rem] font-bold leading-none text-blue-600">IT Admin</span>
               </span>
               <AdminIcon name="chevron-down" className={`h-3.5 w-3.5 text-slate-400 transition ${accountMenuOpen ? 'rotate-180' : ''}`} />
             </button>
 
             {accountMenuOpen && (
-              <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-900/20">
+              <div role="menu" aria-label="Account options" className="absolute right-0 top-12 z-50 w-64 overflow-hidden rounded-2xl border border-sky-200/80 bg-white p-2 shadow-[0_18px_50px_-12px_rgba(37,99,235,0.28)] ring-1 ring-blue-600/5">
                 <div className="flex items-center gap-3 border-b border-slate-100 px-3 py-3">
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-linear-to-br from-blue-600 to-indigo-700 text-[0.62rem] font-black text-white">{initials}</span>
                   <div className="min-w-0">

@@ -5,7 +5,7 @@ import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { getEmployeeIssuanceBatch, listUnitLabels, recordLabelPrintBatch, reprintUnitLabel, type EmployeeIssuanceBatchDetails, type UnitLabel } from './issuancesApi'
 import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
 
-type PrintableBarcodeLabel = Pick<UnitLabel, 'tagCode' | 'itemCode' | 'itemName' | 'unitNumber'> & Pick<UnitLabel, 'holderName' | 'holderCode'>
+type PrintableBarcodeLabel = Pick<UnitLabel, 'tagCode' | 'itemCode' | 'itemName' | 'itemDescription' | 'unitNumber'> & Pick<UnitLabel, 'holderName' | 'holderCode'>
 type LabelFilter = 'toPrint' | 'printed' | 'all' | 'returned'
 
 type UnitLabelGroup = {
@@ -36,6 +36,7 @@ function toPrintableLabel(label: UnitLabel): PrintableBarcodeLabel {
     tagCode: label.tagCode,
     itemCode: label.itemCode,
     itemName: label.itemName,
+    itemDescription: label.itemDescription,
     unitNumber: label.unitNumber,
     holderName: label.holderName,
     holderCode: label.holderCode,
@@ -355,16 +356,12 @@ export default function AssetLabels() {
             max-width: 100%; margin: 0 !important; color: #000 !important; line-height: 1.15;
             letter-spacing: normal; white-space: nowrap !important; overflow: visible !important; text-overflow: clip !important;
           }
-          body.printing-asset-labels .asset-barcode-label .label-barcode-value { font-size: 4mm !important; font-weight: 800; letter-spacing: 0.02mm; line-height: 1 !important; }
           body.printing-asset-labels .asset-barcode-label .label-removal-warning { font-size: 2mm !important; font-weight: 900; letter-spacing: 0.12mm; line-height: 1 !important; }
-          body.printing-asset-labels .asset-barcode-label .label-item-details { max-width: 49mm; font-size: 1.7mm !important; font-weight: 700; line-height: 1 !important; }
           body.printing-asset-labels .asset-barcode-label .label-item-name {
-            display: inline-block; max-width: 32mm; overflow: hidden !important; text-overflow: ellipsis !important; vertical-align: bottom;
+            display: inline-block; max-width: 47mm; overflow: hidden !important; text-overflow: ellipsis !important; vertical-align: bottom;
           }
           body.printing-asset-labels .asset-barcode-label .barcode-preview,
-          body.printing-asset-labels .asset-barcode-label .label-barcode-value,
-          body.printing-asset-labels .asset-barcode-label .label-removal-warning,
-          body.printing-asset-labels .asset-barcode-label .label-item-details { flex: 0 0 auto; }
+          body.printing-asset-labels .asset-barcode-label .label-removal-warning { flex: 0 0 auto; }
           body.printing-asset-labels .barcode-preview { width: 49mm !important; max-width: 100% !important; margin: 0 auto !important; }
           body.printing-asset-labels .barcode-preview svg {
             display: block !important; width: 100% !important; height: auto !important; max-width: 49mm !important;
@@ -539,9 +536,9 @@ export default function AssetLabels() {
               <p className="mb-1 text-center text-[0.65rem] font-bold text-slate-600">For {label.holderName} · {label.holderCode}</p>
               <article className="mx-auto flex h-[30mm] w-[50mm] box-border flex-col items-center justify-start gap-[0.2mm] bg-white px-[0.5mm] pb-0 pt-[0.3mm] text-center shadow-md">
                 <div className="w-[49mm] flex-none"><BarcodeSvg value={label.tagCode} className="mx-auto h-auto w-full max-h-[19mm] max-w-full object-contain" /></div>
-                <p className="max-w-[49mm] flex-none whitespace-nowrap text-[4mm] font-extrabold leading-none text-black">{label.tagCode}</p>
-                <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">DYCI · ITEM {label.unitNumber}</p>
-                <p className="label-item-details flex-none whitespace-nowrap text-[1.7mm] font-bold leading-none text-black"><span className="label-item-name inline-block max-w-[32mm] truncate align-bottom">{label.itemName}</span> - {label.itemCode}</p>
+                <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">DYCI PROPERTY:DO NOT REMOVE</p>
+                <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black">{label.itemCode}</p>
+                <p className="label-removal-warning flex-none whitespace-nowrap text-[2mm] font-black leading-none tracking-[0.12mm] text-black"><span className="label-item-name inline-block max-w-[47mm] truncate align-bottom">{label.itemName.toUpperCase()}</span></p>
               </article>
             </div>)}
           </div></div>
@@ -558,9 +555,9 @@ export default function AssetLabels() {
       {labelsToPrint.length > 0 && createPortal(<div id="asset-barcode-labels" aria-hidden="true" className="fixed left-[-10000px] top-0">
           {labelsToPrint.map((label) => <article key={label.tagCode} className="asset-barcode-label bg-white text-center">
           <div className="barcode-preview"><BarcodeSvg value={label.tagCode} /></div>
-          <p className="label-barcode-value">{label.tagCode}</p>
-          <p className="label-removal-warning">DYCI · ITEM {label.unitNumber}</p>
-          <p className="label-item-details"><span className="label-item-name">{label.itemName}</span> - {label.itemCode}</p>
+          <p className="label-removal-warning">DYCI PROPERTY:DO NOT REMOVE</p>
+          <p className="label-removal-warning">{label.itemCode}</p>
+          <p className="label-removal-warning"><span className="label-item-name">{label.itemName.toUpperCase()}</span></p>
         </article>)}
       </div>, document.body)}
     </>

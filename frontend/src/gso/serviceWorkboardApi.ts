@@ -1,4 +1,5 @@
 import { apiRequest } from '../auth/authApi'
+import type { ServicePhoto } from '../components/servicePhotos'
 
 /**
  * Service work orders are the operational view of requester Job / Service
@@ -89,6 +90,9 @@ export type ServiceWorkOrder = {
   workCompletedAt?: string | null
   awaitingConfirmationAt?: string | null
   requestClosedAt?: string | null
+  // Photos from the requester and staff. The single-job view includes them; the lists do not.
+  photos?: ServicePhoto[]
+  resolutionType?: string | null
 }
 
 export type ServiceWorkSummary = {
@@ -239,9 +243,14 @@ export function startServiceWorkOrder(id: string, note?: string) {
 
 export function completeServiceWorkOrder(
   id: string,
-  payload: { completionNote: string; taskUpdates?: Array<{ id: string; completed: boolean }>; incompleteReason?: string },
+  payload: { completionNote: string; resolutionType?: string; photos?: string[]; taskUpdates?: Array<{ id: string; completed: boolean }>; incompleteReason?: string },
 ) {
   return workOrderAction(id, 'complete', payload)
+}
+
+// A progress note while work is in progress. The requester sees it in the job history.
+export function progressServiceWorkOrder(id: string, note: string, photos: string[]) {
+  return workOrderAction(id, 'progress', { note: note.trim(), photos })
 }
 
 // The job is not finished yet: the reason is recorded and the job stays In Progress.

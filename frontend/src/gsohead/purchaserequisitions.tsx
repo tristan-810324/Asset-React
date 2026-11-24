@@ -55,7 +55,15 @@ function DecisionCard({ line }: { line: PurchaseRequisitionLine }) {
     </div>
     <p className={`mt-2 rounded-lg border px-2.5 py-2 text-[0.66rem] font-semibold leading-relaxed ${ROUTES[approval.route].tone}`}><span className="font-extrabold">Why you: </span>{approval.reason}</p>
     <QuantityChips line={line} />
-    {reserved.length > 0 && <p className="mt-1.5 text-[0.6rem] font-semibold text-slate-500">Held from {reserved.map((allocation) => `${allocation.itemCode} (${allocation.quantity} ${allocation.unitOfMeasure})`).join(', ')}</p>}
+    {reserved.length > 0 && <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+      <p className="text-[0.6rem] font-extrabold uppercase tracking-wide text-emerald-800">Matched units held for this request</p>
+      <ul className="mt-2 space-y-1.5">
+        {reserved.map((allocation) => <li key={allocation.id} className="rounded-lg bg-white px-2.5 py-2 ring-1 ring-emerald-100">
+          <p className="text-xs font-extrabold text-slate-900">{allocation.itemCode} <span className="font-semibold text-slate-600">{allocation.inventoryName}</span> <span className="font-bold text-slate-500">× {allocation.quantity} {allocation.unitOfMeasure}</span></p>
+          <p className="mt-0.5 text-[0.7rem] font-semibold leading-relaxed text-slate-800">{allocation.description || 'No specs entered'}</p>
+        </li>)}
+      </ul>
+    </div>}
     <div className="mt-3 rounded-xl border-2 border-blue-400 bg-blue-50 px-4 py-3 shadow-sm">
       <p className="text-[0.7rem] font-extrabold uppercase tracking-wide text-blue-800">Specs the requester needs</p>
       <p className="mt-1 whitespace-pre-wrap text-base font-black leading-snug text-slate-900">{line.specifications || 'No specs written by the requester.'}</p>

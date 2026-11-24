@@ -10,6 +10,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
               COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
               item.item_code AS "itemCode",
               COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
+              item.description AS "itemDescription",
               employee.employee_code AS "holderCode",
               employee.first_name || ' ' || employee.last_name AS "holderName",
               batch_employee.first_name || ' ' || batch_employee.last_name AS "batchEmployeeName",
@@ -50,6 +51,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
               COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
               item.item_code AS "itemCode",
               COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
+              item.description AS "itemDescription",
               employee.employee_code AS "holderCode",
               employee.first_name || ' ' || employee.last_name AS "holderName",
               batch_employee.first_name || ' ' || batch_employee.last_name AS "batchEmployeeName",
@@ -93,6 +95,7 @@ async function listUnitLabels({ limit = 2000 } = {}) {
               COALESCE(tag.batch_item_number, tag.unit_number) AS "unitNumber",
               item.item_code AS "itemCode",
               COALESCE(NULLIF(item.item_name, ''), item.description) AS "itemName",
+              item.description AS "itemDescription",
               employee.employee_code AS "holderCode",
               employee.first_name || ' ' || employee.last_name AS "holderName",
               batch_employee.first_name || ' ' || batch_employee.last_name AS "batchEmployeeName",
@@ -147,16 +150,16 @@ async function lockCurrentLabel(client, tagCode) {
     const retired = await client.query('SELECT kind FROM asset_label_reprints WHERE old_tag_code = $1', [tagCode]);
     const kind = retired.rows[0]?.kind;
     throw Object.assign(new Error(!kind
-      ? 'Walang unit na may ganitong barcode.'
+      ? 'No unit has this barcode.'
       : kind === 'return'
-        ? 'Hindi na gumagana ang label na ito dahil naibalik na ang unit. Bagong label ang ipi-print kapag na-issue ulit ito.'
-        : 'Luma na ang label na ito; may mas bagong label na ang unit. Hanapin ang unit sa listahan para i-print ang kasalukuyang label.'), { status: kind ? 409 : 404 });
+        ? 'This label no longer works because the unit was returned. A new label will be printed when it is issued again.'
+        : 'This label is old. The unit has a newer label. Find the unit in the list to print the current label.'), { status: kind ? 409 : 404 });
   }
   if (tag.lifecycle_status === 'Disposed') {
-    throw Object.assign(new Error('Lost o written off na ang unit na ito, kaya hindi na ito puwedeng bigyan ng label.'), { status: 409 });
+    throw Object.assign(new Error('This unit is lost or written off, so it cannot get a label.'), { status: 409 });
   }
   if (tag.custody_status !== 'Issued') {
-    throw Object.assign(new Error('Nasa GSO ang unit na ito, kaya walang label na ipi-print. Bagong label ang ipi-print kapag na-issue ulit ito.'), { status: 409 });
+    throw Object.assign(new Error('This unit is at GSO, so no label will be printed. A new label will be printed when it is issued again.'), { status: 409 });
   }
   return tag;
 }
@@ -174,7 +177,7 @@ async function retireUnitLabel(client, { tagId, oldTagCode, labelVersion, kind, 
     );
     if (!taken.rowCount) newTagCode = candidate;
   }
-  if (!newTagCode) throw Object.assign(new Error('Hindi makagawa ng bagong barcode. Subukan ulit.'), { status: 503 });
+  if (!newTagCode) throw Object.assign(new Error('Could not create a new barcode. Try again.'), { status: 503 });
 
   const nextVersion = Number(labelVersion) + 1;
   await client.query(
@@ -271,7 +274,7 @@ async function recordLabelPrintBatch({ tagCodes, userId }) {
       const tag = await lockCurrentLabel(client, tagCode);
       if (tag.label_printed_at) {
         const printedOn = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(tag.label_printed_at));
-        throw Object.assign(new Error(`Na-print na ang label na ito noong ${printedOn}${tag.label_printed_by ? ` ni ${tag.label_printed_by}` : ''}. Kung kailangan ng bago, gamitin ang Reprint label.`), { status: 409 });
+        throw Object.assign(new Error(`This label was already printed on ${printedOn}${tag.label_printed_by ? ` by ${tag.label_printed_by}` : ''}. For a new label, use Reprint label.`), { status: 409 });
       }
       tagsByCode.set(tagCode, tag);
     }
