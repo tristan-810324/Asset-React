@@ -18,6 +18,7 @@ const WORK_ORDER_SELECT = `
          work.assigned_user_id::TEXT AS "assignedStaffId",
          assigned.name AS "assignedStaffName",
          assigned.email AS "assignedStaffEmail",
+         work.in_charge_name AS "inChargeStaffName",
          work.claimed_at AS "claimedAt",
          work.reviewed_at AS "reviewedAt",
          work.started_at AS "startedAt",
@@ -102,6 +103,7 @@ const WORK_ORDER_COLUMNS = Object.freeze({
   priority: 'priority',
   targetDate: 'target_date',
   assignedStaffId: 'assigned_user_id',
+  inChargeStaffName: 'in_charge_name',
   claimedAt: 'claimed_at',
   reviewedAt: 'reviewed_at',
   startedAt: 'started_at',
@@ -458,10 +460,25 @@ async function claimRequesterReminderCandidates(limit = 25) {
   return result.rows.map((row) => row.id);
 }
 
+// Active staff accounts with one of the team's roles: the people who can be put in charge of a job.
+async function listTeamMembers(roleKeys) {
+  const result = await pool.query(
+    `SELECT DISTINCT member.id::TEXT AS id, member.name
+       FROM users AS member
+       JOIN user_roles AS assignment ON assignment.user_id = member.id
+       JOIN roles AS role ON role.id = assignment.role_id
+      WHERE member.is_active = TRUE AND role.role_key = ANY($1::TEXT[])
+      ORDER BY member.name, member.id::TEXT`,
+    [roleKeys],
+  );
+  return result.rows;
+}
+
 module.exports = {
   createForJobRequest,
   getWorkOrder,
   listWorkOrders,
+  listTeamMembers,
   workOrderSummary,
   withLockedWorkOrder,
   updateRequestStatus,

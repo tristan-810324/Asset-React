@@ -7,7 +7,6 @@ const labelsController = require('./labels.controller');
 
 const router = express.Router();
 
-router.post('/', authenticate, requireRole('GSO_STAFF'), issuancesController.createIssuance);
 router.post('/batch', authenticate, requireRole('GSO_STAFF'), issuancesController.createIssuanceBatch);
 router.get('/batch/approved', authenticate, requireRole('GSO_STAFF'), issuancesController.listApprovedIssuanceBatches);
 router.get('/batch/:batchId', authenticate, requireRole('GSO_STAFF'), issuancesController.getIssuanceBatch);

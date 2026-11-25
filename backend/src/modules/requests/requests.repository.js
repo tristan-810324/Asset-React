@@ -480,7 +480,9 @@ async function checkLineStock(queryable, line, { lock = false, consumed = new Ma
     approvalPolicy: line.approvalPolicy,
     staffIssueMaxQuantity: line.staffIssueMaxQuantity,
   });
-  return { route: options[0], options, availableQuantity, reservedQuantity: 0, matches };
+  // Issue now takes what is in stock, so it is judged on the full request, not on the matched part.
+  const issueAllowed = staffRouteOptions({ requestedQuantity, availableQuantity: requestedQuantity, approvalPolicy: line.approvalPolicy, staffIssueMaxQuantity: line.staffIssueMaxQuantity }).includes('ISSUE');
+  return { route: options[0], options, availableQuantity, reservedQuantity: 0, matches, issueAllowed };
 }
 
 // Adds a stock check to every item GSO Staff still has to route, in line order, as routing would reserve it.
@@ -505,13 +507,15 @@ function staffRouteSummary(counts, note) {
   } else if (counts.HEAD_ISSUE > 0) {
     parts.push(`GSO Head approval covers all ${total} item line(s)`);
   } else if (counts.ISSUE > 0) {
-    parts.push(`all ${counts.ISSUE} item line(s) are reserved for GSO Staff`);
+    parts.push(`${counts.ISSUE} item line(s) reserved now; GSO Staff issue them in Main Issuance`);
   }
   const destination = total === 0
     ? 'Nothing is left to route.'
     : counts.PURCHASE > 0 || counts.HEAD_ISSUE > 0
-      ? 'The entire request is waiting for the GSO Head; no line may be issued separately.'
-      : 'The entire request is ready for GSO Staff issuance.';
+      ? counts.ISSUE > 0
+        ? 'The in-stock items are reserved now; GSO Staff issue them in Main Issuance. The rest waits for the GSO Head as one package.'
+        : 'The entire request is waiting for the GSO Head as one package.'
+      : counts.ISSUE > 0 ? 'The reserved items are ready in Main Issuance.' :'The entire request is ready for GSO Staff issuance.';
   return `GSO Staff checked the complete request: ${parts.filter(Boolean).join('; ')}. ${destination}${note ? ` Note: ${note}` : ''}`;
 }
 
@@ -579,17 +583,22 @@ async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits 
           remaining -= quantity;
         }
         const reserved = requested - remaining;
-        // Only a consumable with its full quantity matched, within the item's own staff limit, can be issued now.
+        // A consumable with some units in stock, within the item's own staff limit, can be issued now.
         const issuesNow = issueNowLineIds.includes(String(line.id));
         if (issuesNow) {
           const kind = (current.form_data?.items || [])[Number(line.line_number) - 1]?.itemKind;
+          // The staff limit is judged on the full request; the units in stock may be fewer than requested.
+          // The item's policy decides whether GSO Staff may issue now: a STAFF_ISSUE item can, a GSO_HEAD item always goes to the Head.
+          // A per-unit item also needs its full quantity in stock; the audit log records it.
+          const perUnit = kind === 'PER_UNIT';
           const routes = staffRouteOptions({
             requestedQuantity: requested,
-            availableQuantity: reserved,
+            availableQuantity: requested,
             approvalPolicy: line.approval_policy,
             staffIssueMaxQuantity: line.staff_issue_max_quantity,
           });
-          if (kind !== 'CONSUMABLE' || reserved < requested || !routes.includes('ISSUE')) {
+          const inStock = perUnit ? reserved >= requested : reserved >= 1;
+          if (!['CONSUMABLE', 'PER_UNIT'].includes(kind) || !inStock || !routes.includes('ISSUE')) {
             throw httpError(409, `${line.item_name} cannot be issued now. Send it to the GSO Head instead.`);
           }
         }
@@ -606,12 +615,22 @@ async function staffReviewPurchaseRequisition({ id, action, note, selectedUnits 
         }
         if (issuesNow) {
           counts.ISSUE += 1;
+          // Only the units in stock are issued: the line keeps that quantity, and the rest becomes a declined line below.
           await client.query(
             `UPDATE purchase_requisition_lines
-                SET route_status = 'READY_FOR_STAFF', reserved_quantity = $2, finance_quantity = 0, review_note = '', updated_at = NOW()
+                SET requested_quantity = $2, route_status = 'READY_FOR_STAFF', reserved_quantity = $2, finance_quantity = 0, review_note = '', updated_at = NOW()
               WHERE id = $1`,
             [line.id, reserved],
           );
+          if (reserved < requested) {
+            counts.REJECT += 1;
+            await client.query(
+              `INSERT INTO purchase_requisition_lines (request_id, line_number, item_name_id, category, item_name, specifications, requested_quantity, approval_policy, staff_issue_max_quantity, route_status, review_note)
+               SELECT request_id, (SELECT COALESCE(MAX(line_number), 0) + 1 FROM purchase_requisition_lines WHERE request_id = $1), item_name_id, category, item_name, specifications, $3, approval_policy, staff_issue_max_quantity, 'REJECTED', $4
+                 FROM purchase_requisition_lines WHERE id = $2`,
+              [line.request_id, line.id, requested - reserved, `Sorry, only ${reserved} of ${requested} were in stock and issued now. Please submit a new request for the other ${requested - reserved}.`],
+            );
+          }
           continue;
         }
         // Matching units go to the GSO Head with the request; any shortfall is part of the purchase.
@@ -1092,6 +1111,8 @@ async function reviewPurchaseRequisition({ id, decision, note, changedBy }) {
       const shortageNames = [];
       const heldNames = [];
       for (const line of lines) {
+        // Only the items waiting for the GSO Head are decided here. Items issued now or rejected by GSO Staff keep their status.
+        if (line.route_status !== 'WAITING_GSO_HEAD') continue;
         // A "not listed" item the GSO Head approved is saved as an item name, so the requester can pick it next time.
         if (!line.item_name_id) await saveApprovedItemName(client, line, changedBy);
         const requested = Number(line.requested_quantity);
@@ -1107,9 +1128,10 @@ async function reviewPurchaseRequisition({ id, decision, note, changedBy }) {
         if (shortage > 0) shortageNames.push(`${line.item_name} (${shortage} to buy)`);
         else heldNames.push(line.item_name);
       }
-      historyNote = `GSO Head approved the entire request. ${heldNames.length ? `Reserved in-stock items: ${heldNames.join(', ')}. ` : ''}${shortageNames.length ? `Shortage items for Finance: ${shortageNames.join('; ')}. No item can be issued until every requested item is available.` : 'All requested items are reserved and ready for GSO Staff issuance.'}${note ? ` Note: ${note}` : ''}`;
+      historyNote = `GSO Head approved the items waiting for approval. ${heldNames.length ? `Reserved in-stock items: ${heldNames.join(', ')}. ` : ''}${shortageNames.length ? `Shortage items for Finance: ${shortageNames.join('; ')}. No item can be issued until every requested item is available.` : 'All requested items are reserved and ready for GSO Staff issuance.'}${note ? ` Note: ${note}` : ''}`;
     } else {
       for (const line of lines) {
+        if (line.route_status !== 'WAITING_GSO_HEAD') continue;
         await releasePurchaseLineStock(client, line.id);
         await client.query(
           `UPDATE purchase_requisition_lines
@@ -1119,7 +1141,7 @@ async function reviewPurchaseRequisition({ id, decision, note, changedBy }) {
           [line.id, note],
         );
       }
-      historyNote = `GSO Head declined the entire request: ${note}`;
+      historyNote = `GSO Head declined the items waiting for approval: ${note}`;
     }
 
     const routeStatuses = (await client.query(

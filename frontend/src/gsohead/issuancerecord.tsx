@@ -44,10 +44,8 @@ const confirmationLabels: Record<ConfirmationMethod, string> = {
 const statusFilters: { key: string; label: string; matches: (record: IssuanceRecord) => boolean }[] = [
   { key: 'all', label: 'All', matches: () => true },
   { key: 'out', label: 'Still out', matches: (record) => record.outQuantity > 0 },
-  { key: 'overdue', label: 'Overdue', matches: (record) => record.isOverdue },
   { key: 'returned', label: 'Returned', matches: (record) => record.status === 'Returned' },
   { key: 'lost', label: 'With lost units', matches: (record) => record.lostQuantity > 0 },
-  { key: 'pending', label: 'Pending acknowledgment', matches: (record) => record.status === 'Pending acknowledgment' },
   { key: 'not-issued', label: 'Rejected / expired', matches: (record) => ['Rejected', 'Expired', 'Email failed'].includes(record.status) },
 ]
 

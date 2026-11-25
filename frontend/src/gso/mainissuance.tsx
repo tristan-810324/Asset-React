@@ -156,13 +156,14 @@ function printRecipientSheet(batch: SubmittedBatch, requisitionReference: string
       return '<div class="signature"><div class="signature-line"></div><strong>' + signerLabel + ': ' + escapePrintText(recipient.employeeName) + ' (' + escapePrintText(recipient.employeeCode) + ')</strong><span>Signature / date · Confirms receipt of assigned items</span></div>'
     }),
   ].join('')
+  // Consumable stock has no location or purpose on the sheet; only individually tracked items keep those columns.
+  const withPlacement = batch.items.some((item) => item.trackingMode !== 'quantity')
   const rows = batch.items.map((item) => {
     const tags = item.tags.length > 0 ? item.tags : [{ tagCode: 'Quantity allocation', unitNumber: 0 }]
     return tags.map((tag) => '<tr><td>' + escapePrintText(item.itemName) + '<br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Item ' + tag.unitNumber : ' · Qty ' + item.quantity) + '</small></td>'
       + '<td>' + escapePrintText(tag.tagCode) + '</td>'
       + '<td><strong>' + escapePrintText(item.recipientEmployeeName) + '</strong><br><small>' + escapePrintText(item.recipientEmployeeCode) + '</small></td>'
-      + '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td>'
-      + '<td>' + escapePrintText(item.recipientPurpose || 'Not specified') + '</td>'
+      + (withPlacement ? '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td><td>' + escapePrintText(item.recipientPurpose || 'Not specified') + '</td>' : '')
       + '<td>[ ] Received</td></tr>').join('')
   }).join('')
   const reference = requisitionReference ? escapePrintText(requisitionReference) : 'Issuance batch #' + escapePrintText(batch.id)
@@ -174,7 +175,7 @@ function printRecipientSheet(batch: SubmittedBatch, requisitionReference: string
     + 'small { color: #64748b; } .signature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 28px 36px; margin-top: 34px; } .signature { min-width: 0; break-inside: avoid; } .signature-line { height: 22px; border-bottom: 1px solid #64748b; margin-bottom: 6px; } .signature strong,.signature span { display: block; } .signature strong { font-size: 11px; } .signature span { margin-top: 2px; color: #475569; font-size: 10px; }'
     + '</style></head><body><h1>Asset Distribution Receipt</h1>'
     + '<div class="meta"><p><strong>Request:</strong> ' + reference + '</p><p><strong>Head:</strong> ' + escapePrintText(batch.employeeName) + ' (' + escapePrintText(batch.employeeCode) + ')</p><p><strong>Date:</strong> ' + new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date()) + '</p></div>'
-    + '<table><thead><tr><th>Item</th><th>Barcode</th><th>Assigned to</th><th>Location</th><th>Purpose</th><th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<table><thead><tr><th>Item</th><th>Barcode</th><th>Assigned to</th>' + (withPlacement ? '<th>Location</th><th>Purpose</th>' : '') + '<th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
     + '<div class="signature-grid">' + signatureBlocks + '</div></body></html>'
   printWindow.document.open()
   printWindow.document.write(html)

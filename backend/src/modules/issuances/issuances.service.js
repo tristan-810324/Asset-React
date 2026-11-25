@@ -243,8 +243,19 @@ async function createIssuance(input, user) {
     expiresAt: batch.expiresAt,
   };
 }
+// The requisition lines that were not issued, written the way the requester should read them in the email.
+function declinedNoteText(rows) {
+  if (!rows.length) return '';
+  const list = rows.map((row) => `- ${row.itemName} × ${row.requestedQuantity}: ${row.reviewNote}`).join('\n');
+  const text = `We are sorry. These items were not issued:\n${list}`;
+  return text.length > 600 ? `${text.slice(0, 597)}...` : text;
+}
+
 async function createIssuanceBatch(input, user) {
   const { employeeCode, items, notes, borrowDetails, purchaseRequisitionId } = validateCreateIssuanceBatch(input);
+  const shortfallNote = purchaseRequisitionId
+    ? declinedNoteText(await issuancesRepository.listDeclinedRequisitionLines(purchaseRequisitionId))
+    : '';
   const recipientCodes = [...new Set([
     employeeCode,
     ...items.flatMap((item) => item.recipientAllocations.map((allocation) => allocation.employeeCode)),
@@ -266,6 +277,7 @@ async function createIssuanceBatch(input, user) {
     notes,
     borrowDetails,
     purchaseRequisitionId,
+    shortfallNote,
     tokenHash: hashToken(token),
     requestedByUserId: user.id,
   });
@@ -279,7 +291,9 @@ async function createIssuanceBatch(input, user) {
     : isReusableBorrow
       ? 'GSO reusable-stock borrowing recorded'
       : needsDepartmentDistribution ? 'GSO issuance with staff recipient assignments' : 'Individually tracked items ready for pickup';
-  const employeeActionText = isConsumableDistribution
+  const employeeActionText = shortfallNote
+    ? 'GSO has issued the items that were in stock. No approval is needed for them.'
+    : isConsumableDistribution
     ? 'GSO has issued this consumable stock. No approval or follow-up action is needed.'
     : isReusableBorrow
       ? 'GSO recorded your face-to-face borrowing. Return the borrowed items by the scheduled date and time.'
@@ -340,6 +354,7 @@ async function createIssuanceBatch(input, user) {
         `GSO recorded ${isConsumableDistribution ? 'a consumable distribution' : isReusableBorrow ? 'a face-to-face reusable-stock borrowing' : needsDepartmentDistribution ? 'issuance with staff recipient assignments' : 'individually tracked items ready for pickup'} for these ${totalPieces} item${totalPieces === 1 ? '' : 's'}:`,
         ...textItems,
         ...borrowingDetailsText,
+        ...(shortfallNote ? [shortfallNote, ''] : []),
         `Notes: ${notes || 'No additional notes.'}`,
         '',
         employeeActionText,
@@ -353,6 +368,7 @@ async function createIssuanceBatch(input, user) {
             <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">
               <div style="margin-bottom:14px;font-size:16px;font-weight:700">Items recorded (${totalPieces})</div>
               <ul style="margin:0;padding-left:20px">${htmlItems}</ul>
+              ${shortfallNote ? `<div style="margin-top:16px;border-radius:10px;background:#fffbeb;padding:14px;color:#78350f;line-height:1.5;white-space:pre-line">${escapeHtml(shortfallNote)}</div>` : ''}
               ${borrowingDetailsHtml}
               <div style="margin-top:16px;color:#334155">GSO notes: ${note}</div>
             </div>

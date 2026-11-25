@@ -6,12 +6,13 @@ import { listUnitLabels } from './issuancesApi'
 import { listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
 import { canRecordDelivery, deliveryOpen, linesOf, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
 import { listRequesterIdentityReviews, type RequesterIdentity, type ServiceRequest } from '../requesters/requesterApi'
-import { claimServiceWorkOrder, listServiceWorkOrders, startServiceWorkOrder, type ServiceWorkOrder, type ServiceWorkSummary } from './serviceWorkboardApi'
+import { claimServiceWorkOrder, listServiceWorkOrders, type ServiceWorkOrder, type ServiceWorkSummary } from './serviceWorkboardApi'
 
-// One job in the Service Operations lists. Claim and Start work act here; Mark completed opens the workboard form.
-function ServiceJobRow({ job, busy, onClaim, onStart }: { job: ServiceWorkOrder; busy: boolean; onClaim?: () => void; onStart?: () => void }) {
+// One job in the Service Operations lists. Claim acts here; Start work and Mark completed open the workboard form.
+function ServiceJobRow({ job, busy, onClaim }: { job: ServiceWorkOrder; busy: boolean; onClaim?: () => void }) {
   const status = (job.status || '').toLowerCase()
-  const canStart = Boolean(onStart) && (status === 'submitted' || status === 'under review')
+  // Starting work names the staff member in charge, so it is done on the workboard form.
+  const canStart = Boolean(job.assignedStaffId) && (status === 'submitted' || status === 'under review')
   const canComplete = status === 'in progress'
   const buttonClass = 'inline-flex min-h-8 items-center rounded-lg px-2.5 py-1.5 text-[0.65rem] font-extrabold transition disabled:cursor-wait disabled:opacity-50'
   return (
@@ -24,7 +25,7 @@ function ServiceJobRow({ job, busy, onClaim, onStart }: { job: ServiceWorkOrder;
       <span className="flex shrink-0 flex-wrap gap-1.5">
         <a href={`/gso/service-workboard?request=${encodeURIComponent(job.id)}`} className={`${buttonClass} border border-slate-300 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800`}>View job</a>
         {!job.assignedStaffId && onClaim && <button type="button" disabled={busy} onClick={onClaim} className={`${buttonClass} bg-blue-600 text-white hover:bg-blue-700`}>{busy ? 'Saving...' : 'Claim job'}</button>}
-        {canStart && <button type="button" disabled={busy} onClick={onStart} className={`${buttonClass} border border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100`}>{busy ? 'Saving...' : 'Start work'}</button>}
+        {canStart && <a href={`/gso/service-workboard?request=${encodeURIComponent(job.id)}&action=start`} className={`${buttonClass} border border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100`}>Start work</a>}
         {canComplete && <a href={`/gso/service-workboard?request=${encodeURIComponent(job.id)}&action=complete`} className={`${buttonClass} bg-emerald-600 text-white hover:bg-emerald-700`}>Mark completed</a>}
       </span>
     </li>
@@ -248,12 +249,11 @@ export default function GsoDashboard() {
     return () => window.clearTimeout(timer)
   }, [loadService])
 
-  const runServiceQuick = async (job: ServiceWorkOrder, action: 'claim' | 'start') => {
+  const runServiceQuick = async (job: ServiceWorkOrder) => {
     setServiceBusyId(job.id)
     setServiceError('')
     try {
-      if (action === 'claim') await claimServiceWorkOrder(job.id)
-      else await startServiceWorkOrder(job.id)
+      await claimServiceWorkOrder(job.id)
       await loadService()
     } catch (error) {
       setServiceError(error instanceof Error ? error.message : 'The job could not be updated.')
@@ -518,13 +518,13 @@ export default function GsoDashboard() {
                 <p className="px-5 pb-1 pt-4 text-[0.6rem] font-extrabold uppercase tracking-widest text-slate-500 sm:px-6">Needs attention</p>
                 {needsAttention.length === 0
                   ? <p className="px-5 pb-4 text-xs font-medium text-slate-500 sm:px-6">No urgent or overdue jobs right now.</p>
-                  : <ul className="divide-y divide-slate-100">{needsAttention.map((job) => <ServiceJobRow key={job.id} job={job} busy={serviceBusyId === job.id} onClaim={() => void runServiceQuick(job, 'claim')} />)}</ul>}
+                  : <ul className="divide-y divide-slate-100">{needsAttention.map((job) => <ServiceJobRow key={job.id} job={job} busy={serviceBusyId === job.id} onClaim={() => void runServiceQuick(job)} />)}</ul>}
               </div>
               <div className="min-w-0 border-t border-slate-100 md:border-t-0">
                 <p className="px-5 pb-1 pt-4 text-[0.6rem] font-extrabold uppercase tracking-widest text-slate-500 sm:px-6">My active jobs</p>
                 {myActive.length === 0
                   ? <p className="px-5 pb-4 text-xs font-medium text-slate-500 sm:px-6">You have no active jobs. Claim a job to start.</p>
-                  : <ul className="divide-y divide-slate-100">{myActive.map((job) => <ServiceJobRow key={job.id} job={job} busy={serviceBusyId === job.id} onStart={() => void runServiceQuick(job, 'start')} />)}</ul>}
+                  : <ul className="divide-y divide-slate-100">{myActive.map((job) => <ServiceJobRow key={job.id} job={job} busy={serviceBusyId === job.id} />)}</ul>}
               </div>
             </div>
           </section>

@@ -113,6 +113,8 @@ export type PurchaseRequisitionStockCheck = {
   options: StaffRoute[]
   availableQuantity: number
   reservedQuantity: number
+  // True when the item allows GSO Staff to issue it now (the matched units may still be fewer than requested).
+  issueAllowed?: boolean
   matches: Array<{ itemId: string; itemCode: string; name: string; description?: string; unitOfMeasure: string; availableQuantity: number; reserveQuantity: number; condition?: string; storageLocation?: string; dateAcquired?: string | null; unitCost?: number }>
 }
 

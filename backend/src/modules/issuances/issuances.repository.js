@@ -324,7 +324,7 @@ async function markEmailFailed(issuanceId) {
   }
 }
 
-async function createPendingIssuanceBatch({ employeeCode, items: requestedItems, notes, borrowDetails, purchaseRequisitionId, tokenHash, requestedByUserId }) {
+async function createPendingIssuanceBatch({ employeeCode, items: requestedItems, notes, borrowDetails, purchaseRequisitionId, shortfallNote = '', tokenHash, requestedByUserId }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -381,18 +381,22 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         [purchaseRequisitionId],
       );
       const availableForWholeRequest = new Set(['READY_FOR_STAFF', 'PARTIALLY_ISSUED', 'HANDOVER_PENDING', 'ISSUED']);
-      const allRequestLinesReady = requestLinesResult.rows.length > 0 && requestLinesResult.rows.every((line) => (
+      // Rejected lines are not part of the request any more.
+      const activeLines = requestLinesResult.rows.filter((line) => line.route_status !== 'REJECTED');
+      const allRequestLinesReady = activeLines.length > 0 && activeLines.every((line) => (
         availableForWholeRequest.has(line.route_status)
           && Number(line.finance_quantity) === 0
           && Number(line.reserved_quantity) >= Number(line.requested_quantity)
       ));
-      if (!allRequestLinesReady) {
+      // While the GSO Head is still deciding, items already in stock can be issued now (the split route).
+      if (!allRequestLinesReady && requisition.status !== 'Under Review') {
         throw conflict('The stock for the whole request is not complete yet. No item can be issued until every requested item is ready.');
       }
       const requestLinesById = new Map(requestLinesResult.rows.map((line) => [String(line.id), line]));
       const selectedLines = lineIds.map((lineId) => requestLinesById.get(String(lineId)));
       if (selectedLines.some((line) => !line)
-        || selectedLines.some((line) => !['READY_FOR_STAFF', 'PARTIALLY_ISSUED'].includes(line.route_status))) {
+        || selectedLines.some((line) => !['READY_FOR_STAFF', 'PARTIALLY_ISSUED'].includes(line.route_status)
+          || Number(line.finance_quantity) !== 0 || Number(line.reserved_quantity) < Number(line.requested_quantity))) {
         throw conflict('A chosen item is no longer ready for staff issuance. Refresh the queue.');
       }
       for (const line of selectedLines) requisitionLinesById.set(String(line.id), line);
@@ -668,6 +672,8 @@ async function createPendingIssuanceBatch({ employeeCode, items: requestedItems,
         ? `GSO Staff recorded ${issuedSummary}; barcode labels are mapped to the listed staff recipients and ready to print.`
         : initialStatus === 'Pending'
         ? `GSO Staff prepared the physical handover for ${issuedSummary}; requester receipt is pending.`
+        : shortfallNote
+        ? `GSO Staff issued the in-stock part of the requisition: ${issuedSummary}. ${shortfallNote}`
         : `GSO Staff issued ${issuedSummary} through Main Issuance.`;
       await client.query(
         `INSERT INTO service_request_history (request_id, previous_status, new_status, note, changed_by_user_id)
@@ -1158,6 +1164,18 @@ async function requisitionDeliverySummary(client, requestId) {
     [requestId],
   );
   return result.rows.map((row) => `${row.location} (${row.quantity})`).join(', ');
+}
+
+// Requisition lines that were not issued, with the reason the requester should read.
+async function listDeclinedRequisitionLines(purchaseRequisitionId) {
+  const result = await pool.query(
+    `SELECT item_name AS "itemName", requested_quantity AS "requestedQuantity", review_note AS "reviewNote"
+       FROM purchase_requisition_lines
+      WHERE request_id = $1 AND route_status = 'REJECTED' AND review_note <> ''
+      ORDER BY line_number`,
+    [purchaseRequisitionId],
+  );
+  return result.rows;
 }
 
 async function getIssuanceBatch(batchId) {
@@ -2242,6 +2260,7 @@ module.exports = {
   getMyDepartmentIssuanceSummary,
   getIssuanceBatch,
   listApprovedIssuanceBatches,
+  listDeclinedRequisitionLines,
   getAssetTagByCode,
   updateAssetTagInspection,
   markEmailSent,

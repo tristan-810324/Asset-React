@@ -87,6 +87,8 @@ export type ServiceWorkOrder = {
   assignedStaffId?: string | null
   assignedStaffName?: string | null
   assignedStaffEmail?: string | null
+  // The person in charge of a started job, typed as a name. The claim (assignedStaffId) does not change.
+  inChargeStaffName?: string | null
   workCompletedAt?: string | null
   awaitingConfirmationAt?: string | null
   requestClosedAt?: string | null
@@ -237,8 +239,9 @@ export function forwardServiceWorkOrder(id: string, team: ServiceWorkTeam, note?
   return workOrderAction(id, 'forward', { team, ...(note?.trim() ? { note: note.trim() } : {}) })
 }
 
-export function startServiceWorkOrder(id: string, note?: string) {
-  return workOrderAction(id, 'start', note?.trim() ? { note: note.trim() } : {})
+// Starting work names the person in charge, typed as a name.
+export function startServiceWorkOrder(id: string, inChargeName: string, note?: string) {
+  return workOrderAction(id, 'start', { inChargeName: inChargeName.trim(), ...(note?.trim() ? { note: note.trim() } : {}) })
 }
 
 export function completeServiceWorkOrder(
@@ -264,4 +267,12 @@ export function rejectServiceWorkOrder(id: string, reason: string) {
 
 export function takeOverServiceWorkOrder(id: string, note?: string) {
   return workOrderAction(id, 'takeover', note?.trim() ? { note: note.trim() } : {})
+}
+
+export type ServiceTeamMember = { id: string; name: string }
+
+// The active staff of the team, for the "In charge" choice when work starts.
+export async function listServiceWorkTeamMembers(team: ServiceWorkTeam) {
+  const result = await apiRequest<{ members: ServiceTeamMember[] }>(`/requests/service-work-orders/team-members?team=${encodeURIComponent(team)}`)
+  return result.members ?? []
 }

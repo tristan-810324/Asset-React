@@ -173,7 +173,7 @@ export default function App() {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadDashboard /></ProtectedDashboard>
   }
   if (path === '/gso-head/items') {
-    return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadDashboard /></ProtectedDashboard>
+    return <ProtectedDashboard requiredRole="GSO_HEAD"><ItemsMasterData readOnly /></ProtectedDashboard>
   }
   if (path === '/gso-head/issuance-history') {
     return <ProtectedDashboard requiredRole="GSO_HEAD"><GsoHeadIssuanceRecord /></ProtectedDashboard>

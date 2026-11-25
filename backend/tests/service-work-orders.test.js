@@ -164,7 +164,7 @@ test('more information goes to the requester, who replies, and work can start ag
   assert.equal(await notificationsFor(3, 'More information needed', request.referenceNo), 1);
   const replied = await requestsService.respondMine(request.id, { message: 'Second floor' }, requester);
   assert.equal(replied.status, 'Submitted');
-  const started = await workOrders.startWork(request.id, {}, gsoOne);
+  const started = await workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoOne);
   assert.equal(started.status, 'In Progress');
 });
 
@@ -195,13 +195,13 @@ test('work cannot be rejected or started by someone who did not claim it', async
   const request = await submitJob();
   await workOrders.claimWorkOrder(request.id, gsoOne);
   await rejects(workOrders.rejectWorkOrder(request.id, { reason: 'No' }, gsoTwo), /Claim this job first/, 403);
-  await rejects(workOrders.startWork(request.id, {}, gsoTwo), /Claim this job first/, 403);
+  await rejects(workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoTwo), /Claim this job first/, 403);
 });
 
 test('a completed job waits for the requester, who confirms it, and the record keeps the closure type', async () => {
   const request = await submitJob();
   await workOrders.claimWorkOrder(request.id, gsoOne);
-  await workOrders.startWork(request.id, {}, gsoOne);
+  await workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoOne);
   const task = await firstTask(request.id, gsoOne);
   await rejects(workOrders.completeWork(request.id, {
     completionNote: 'Checked.',
@@ -229,7 +229,7 @@ test('an unfinished checklist can be completed when the remaining item is explai
     ],
   });
   await workOrders.claimWorkOrder(request.id, gsoOne);
-  await workOrders.startWork(request.id, {}, gsoOne);
+  await workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoOne);
   const tasks = (await workOrders.getWorkOrder(request.id, gsoOne)).tasks;
   const done = await workOrders.completeWork(request.id, {
     completionNote: 'Light A is fixed.',
@@ -244,7 +244,7 @@ test('an unfinished checklist can be completed when the remaining item is explai
 test('a reopened job returns to In Progress and the reopen count is kept', async () => {
   const request = await submitJob();
   await workOrders.claimWorkOrder(request.id, gsoOne);
-  await workOrders.startWork(request.id, {}, gsoOne);
+  await workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoOne);
   await workOrders.completeWork(request.id, {
     completionNote: 'Fixed.',
     resolutionType: 'FIXED',
@@ -258,7 +258,7 @@ test('a reopened job returns to In Progress and the reopen count is kept', async
 test('a requester who does not answer gets one reminder, then the completed job closes automatically', async () => {
   const request = await submitJob();
   await workOrders.claimWorkOrder(request.id, gsoOne);
-  await workOrders.startWork(request.id, {}, gsoOne);
+  await workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoOne);
   await workOrders.completeWork(request.id, {
     completionNote: 'Fixed.',
     resolutionType: 'FIXED',
@@ -323,7 +323,7 @@ test('a job without a work checklist is accepted, and it completes with only the
   const request = await submitJob({ tasks: [] });
   assert.equal(request.checklist.length, 0);
   await workOrders.claimWorkOrder(request.id, gsoOne);
-  await workOrders.startWork(request.id, {}, gsoOne);
+  await workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoOne);
   const done = await workOrders.completeWork(request.id, { completionNote: 'Replaced the bulb and tested the switch.', resolutionType: 'FIXED' }, gsoOne);
   assert.equal(done.status, 'Awaiting Requester Confirmation');
 });
@@ -331,7 +331,7 @@ test('a job without a work checklist is accepted, and it completes with only the
 test('completion accepts no resolution type, rejects an unknown one, and progress and requester photos must be images', async () => {
   const request = await submitJob({ tasks: [] });
   await workOrders.claimWorkOrder(request.id, gsoOne);
-  await workOrders.startWork(request.id, {}, gsoOne);
+  await workOrders.startWork(request.id, { inChargeName: gsoOne.name }, gsoOne);
   await rejects(workOrders.completeWork(request.id, { completionNote: 'Done.', resolutionType: 'MAYBE' }, gsoOne), /Choose a valid resolution/, 400);
   await rejects(workOrders.progressWork(request.id, { note: 'Checking.', photos: ['https://example.invalid/a.jpg'] }, gsoOne), /JPG, PNG, or WebP/, 400);
   const progressed = await workOrders.progressWork(request.id, { note: 'Waiting for the part.', photos: [tinyPhoto] }, gsoOne);
@@ -347,4 +347,33 @@ test('Others goes to GSO, keeps the description the requester typed, and needs t
   assert.equal(work.service_category, 'OTHERS');
   assert.equal(request.formData.serviceOther, 'Replace the school bell in Building B');
   await rejects(submitJob({ serviceCategory: 'OTHERS', serviceOther: '   ' }), /description of the service/, 400);
+});
+
+test('starting work takes the typed name of the person in charge, and the claimed staff member keeps doing the work', async () => {
+  const request = await submitJob();
+  await workOrders.claimWorkOrder(request.id, gsoOne);
+  await rejects(workOrders.startWork(request.id, {}, gsoOne), /Name of the person in charge is required/, 400);
+  const started = await workOrders.startWork(request.id, { inChargeName: 'Juan Dela Cruz' }, gsoOne);
+  assert.equal(started.inChargeStaffName, 'Juan Dela Cruz');
+  assert.match(started.history.at(-1).note, /Work started\. In charge: Juan Dela Cruz\./);
+  const progressed = await workOrders.progressWork(request.id, { note: 'Wiring started.', photos: [] }, gsoOne);
+  assert.equal(progressed.status, 'In Progress');
+  await rejects(workOrders.progressWork(request.id, { note: 'Wiring started.', photos: [] }, gsoTwo), /Claim this job first/, 403);
+});
+
+test('taking over a started job moves the claim and keeps the typed name of the person in charge', async () => {
+  const request = await submitJob();
+  await workOrders.claimWorkOrder(request.id, gsoOne);
+  await workOrders.startWork(request.id, { inChargeName: 'Juan Dela Cruz' }, gsoOne);
+  const taken = await workOrders.takeOverWorkOrder(request.id, { note: 'The first staff member is on leave.' }, gsoTwo);
+  assert.equal(taken.assignedStaffId, '2');
+  assert.equal(taken.inChargeStaffName, 'Juan Dela Cruz');
+});
+
+test('the team members list shows active staff of that team only, and only that team can read it', async () => {
+  const gso = (await workOrders.listTeamMembers({ team: 'GSO' }, gsoOne)).map((member) => member.id);
+  assert.ok(gso.includes('1') && gso.includes('2') && !gso.includes('4'));
+  const itss = (await workOrders.listTeamMembers({ team: 'ITSS' }, itStaff)).map((member) => member.id);
+  assert.ok(itss.includes('4') && itss.includes('5') && !itss.includes('1'));
+  await rejects(workOrders.listTeamMembers({ team: 'ITSS' }, gsoOne), /do not have access to the ITSS/, 403);
 });

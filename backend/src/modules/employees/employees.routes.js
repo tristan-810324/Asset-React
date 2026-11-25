@@ -6,7 +6,7 @@ const employeesController = require('./employees.controller');
 const router = express.Router();
 
 router.use(authenticate);
-router.get('/positions', requireRole('GSO_STAFF', 'BORROWER'), employeesController.listEmployeePositions);
+router.get('/positions', requireRole('GSO_STAFF', 'GSO_HEAD', 'BORROWER'), employeesController.listEmployeePositions);
 // IT Admin reads the employee list for repair checks; everything else below stays GSO only.
 router.get('/', requireRole('GSO_STAFF', 'IT_ADMIN'), employeesController.listEmployees);
 router.use(requireRole('GSO_STAFF'));

@@ -19,7 +19,7 @@ export type GsoNavigationItem =
   | 'Return Issuance'
   | 'Return Items'
   | 'Loss & Damage Cases'
-  | 'Payments to Collect'
+  | 'Proof of Settlements'
   | 'Repair & Maintenance'
   | 'Notifications'
   | 'Profile'
@@ -180,7 +180,7 @@ const navigation: NavigationEntry[] = [
   },
   { kind: 'link', name: 'Service Workboard', icon: 'wrench', href: '/gso/service-workboard' },
   { kind: 'link', name: 'Loss & Damage Cases', icon: 'alert', href: '/gso/loss-damage-cases' },
-  { kind: 'link', name: 'Payments to Collect', icon: 'clipboard-check', href: '/gso/payments' },
+  { kind: 'link', name: 'Proof of Settlements', icon: 'clipboard-check', href: '/gso/payments' },
   { kind: 'link', name: 'Repair & Maintenance', icon: 'settings', href: '/gso/to-be-repaired' },
   { kind: 'link', name: 'History', icon: 'history', href: '/gso/history' },
   { kind: 'link', name: 'Notifications', icon: 'bell', href: '/gso/notifications' },

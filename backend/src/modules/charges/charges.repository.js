@@ -48,7 +48,7 @@ const CHARGES_CTE = `
 const CHARGE_COLUMNS = `
   charge.kind, charge.ref, charge."referenceNo", charge."itemName", charge."personName",
   charge.amount, charge."chargedAt", charge."settlementStatus",
-  receipt.receipt_name AS "receiptName", receipt.note AS "receiptNote", receipt.uploaded_at AS "uploadedAt",
+  receipt.receipt_name AS "receiptName", receipt.note AS "receiptNote", receipt.uploaded_at AS "uploadedAt", receipt.amount_paid AS "amountPaid",
   uploader.name AS "uploadedBy", (receipt.id IS NOT NULL) AS paid`;
 
 async function listCharges() {
@@ -89,7 +89,7 @@ async function getReceipt(kind, ref) {
 }
 
 // Stores the receipt and marks the charge Paid in its own record, in one transaction.
-async function payCharge({ kind, ref, receiptData, receiptName, note, userId }) {
+async function payCharge({ kind, ref, receiptData, receiptName, note, userId, amountPaid }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -98,9 +98,9 @@ async function payCharge({ kind, ref, receiptData, receiptName, note, userId }) 
     if (charge.paid) throw httpError(409, 'This charge is already paid.');
 
     await client.query(
-      `INSERT INTO charge_receipts (source_kind, source_ref, receipt_data, receipt_name, note, uploaded_by_user_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [kind, ref, receiptData, receiptName, note, userId],
+      `INSERT INTO charge_receipts (source_kind, source_ref, receipt_data, receipt_name, note, uploaded_by_user_id, amount_paid)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [kind, ref, receiptData, receiptName, note, userId, amountPaid],
     );
     if (kind === 'FACILITY') {
       await client.query(
@@ -128,4 +128,110 @@ async function payCharge({ kind, ref, receiptData, receiptName, note, userId }) 
   }
 }
 
-module.exports = { listCharges, findCharge, getReceipt, payCharge };
+// Waived charges: the same three places a charge comes from, when the decision was to waive it (no payment).
+const WAIVED_CTE = `
+  WITH waived AS (
+    SELECT 'FACILITY'::TEXT AS kind, asset.id::TEXT AS ref,
+           request.reference_no::TEXT AS "referenceNo",
+           COALESCE(NULLIF(item.item_name, ''), item.description, request.title)::TEXT AS "itemName",
+           requester.name::TEXT AS "personName",
+           asset.write_off_estimated_value AS amount,
+           asset.write_off_at AS "decidedAt"
+      FROM service_request_assets AS asset
+      JOIN service_requests AS request ON request.id = asset.request_id
+      LEFT JOIN item_catalog AS item ON item.id = asset.item_id
+      LEFT JOIN users AS requester ON requester.id = request.requested_by_user_id
+     WHERE asset.write_off_decision = 'WAIVED'
+    UNION ALL
+    SELECT 'RETURN'::TEXT AS kind, ret.id::TEXT AS ref,
+           item.item_code::TEXT AS "referenceNo",
+           COALESCE(NULLIF(item.item_name, ''), item.description)::TEXT AS "itemName",
+           (employee.first_name || ' ' || employee.last_name)::TEXT AS "personName",
+           ret.write_off_estimated_value AS amount,
+           ret.write_off_at AS "decidedAt"
+      FROM employee_issuance_returns AS ret
+      JOIN employee_issuances AS issuance ON issuance.id = ret.issuance_id
+      JOIN employees AS employee ON employee.id = issuance.employee_id
+      JOIN item_catalog AS item ON item.id = issuance.item_id
+     WHERE ret.write_off_decision = 'WAIVED'
+    UNION ALL
+    SELECT 'LOSS'::TEXT AS kind, settlement.id::TEXT AS ref,
+           request.reference_no::TEXT AS "referenceNo",
+           request.title::TEXT AS "itemName",
+           requester.name::TEXT AS "personName",
+           settlement.charge_amount AS amount,
+           settlement.assessed_at AS "decidedAt"
+      FROM loss_damage_settlements AS settlement
+      JOIN service_requests AS request ON request.id = settlement.request_id
+      LEFT JOIN users AS requester ON requester.id = request.requested_by_user_id
+     WHERE settlement.resolution = 'NO_CHARGE'
+  )`;
+
+const WAIVER_COLUMNS = `
+  waived.kind, waived.ref, waived."referenceNo", waived."itemName", waived."personName", waived.amount, waived."decidedAt",
+  proof.proof_name AS "proofName", proof.proof_mime AS "proofMime", proof.uploaded_at AS "proofUploadedAt",
+  uploader.name AS "proofUploadedBy", (proof.id IS NOT NULL) AS "hasProof"`;
+
+async function listWaivedCharges() {
+  const result = await pool.query(
+    `${WAIVED_CTE}
+     SELECT ${WAIVER_COLUMNS}
+       FROM waived
+       LEFT JOIN charge_waiver_proofs AS proof ON proof.source_kind = waived.kind AND proof.source_ref = waived.ref
+       LEFT JOIN users AS uploader ON uploader.id = proof.uploaded_by_user_id
+      ORDER BY "hasProof" ASC, waived."decidedAt" DESC NULLS LAST`,
+  );
+  return result.rows;
+}
+
+async function findWaived(queryable, kind, ref) {
+  const result = await queryable.query(
+    `${WAIVED_CTE}
+     SELECT ${WAIVER_COLUMNS}
+       FROM waived
+       LEFT JOIN charge_waiver_proofs AS proof ON proof.source_kind = waived.kind AND proof.source_ref = waived.ref
+       LEFT JOIN users AS uploader ON uploader.id = proof.uploaded_by_user_id
+      WHERE waived.kind = $1 AND waived.ref = $2`,
+    [kind, ref],
+  );
+  return result.rows[0] || null;
+}
+
+async function getWaiverProof(kind, ref) {
+  const result = await pool.query(
+    `SELECT proof.proof_data AS "proofData", proof.proof_name AS "proofName", proof.proof_mime AS "proofMime",
+            proof.note, proof.uploaded_at AS "uploadedAt", uploader.name AS "uploadedBy"
+       FROM charge_waiver_proofs AS proof
+       LEFT JOIN users AS uploader ON uploader.id = proof.uploaded_by_user_id
+      WHERE proof.source_kind = $1 AND proof.source_ref = $2`,
+    [kind, ref],
+  );
+  return result.rows[0] || null;
+}
+
+// Attaches the proof to a waived charge. A later upload replaces the earlier file; the audit log keeps both.
+async function saveWaiverProof({ kind, ref, proofData, proofName, proofMime, note, userId }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const waived = await findWaived(client, kind, ref);
+    if (!waived) throw httpError(404, 'This item is not waived.');
+    await client.query(
+      `INSERT INTO charge_waiver_proofs (source_kind, source_ref, proof_data, proof_name, proof_mime, note, uploaded_by_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (source_kind, source_ref) DO UPDATE
+         SET proof_data = EXCLUDED.proof_data, proof_name = EXCLUDED.proof_name, proof_mime = EXCLUDED.proof_mime,
+             note = EXCLUDED.note, uploaded_by_user_id = EXCLUDED.uploaded_by_user_id, uploaded_at = NOW()`,
+      [kind, ref, proofData, proofName, proofMime, note, userId],
+    );
+    await client.query('COMMIT');
+    return waived;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { listCharges, findCharge, getReceipt, payCharge, listWaivedCharges, findWaived, getWaiverProof, saveWaiverProof };

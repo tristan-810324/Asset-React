@@ -145,6 +145,15 @@ function validateReject(input) {
   return { reason: text(input?.reason, 'Rejection reason', 2000) };
 }
 
+// Starting work names the person in charge, typed as a name.
+function validateStart(input) {
+  return { note: validateNote(input, 'Start note'), inChargeName: text(input?.inChargeName, 'Name of the person in charge', 200) };
+}
+
+function validateTeam(query = {}) {
+  return normalizeTeam(query.team);
+}
+
 module.exports = {
   invalid,
   requestId,
@@ -160,5 +169,7 @@ module.exports = {
   validatePhotos,
   validateReopen,
   validateReject,
+  validateStart,
+  validateTeam,
   RESOLUTION_LABELS,
 };

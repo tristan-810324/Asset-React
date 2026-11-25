@@ -6,7 +6,7 @@ const departmentsController = require('./departments.controller');
 const router = express.Router();
 
 router.use(authenticate);
-router.get('/', requireRole('GSO_STAFF', 'BORROWER', 'IT_ADMIN', 'IT_STAFF'), departmentsController.listDepartments);
+router.get('/', requireRole('GSO_STAFF', 'GSO_HEAD', 'BORROWER', 'IT_ADMIN', 'IT_STAFF'), departmentsController.listDepartments);
 router.post('/', requireRole('GSO_STAFF'), departmentsController.createDepartment);
 router.put('/:departmentId', requireRole('GSO_STAFF'), departmentsController.renameDepartment);
 router.delete('/:departmentId', requireRole('GSO_STAFF'), departmentsController.deleteDepartment);

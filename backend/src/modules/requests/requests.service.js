@@ -56,7 +56,7 @@ async function notifyPurchaseRequester(request, status, note = '') {
     'Needs Information': `GSO needs more information before continuing. Sign in to A.S.SET and reply to this requisition.${note ? ` Details: ${note}` : ''}`,
     Approved: `The GSO Head approved the complete request. All requested items are reserved, so GSO Staff can prepare the full issuance.${declinedText}`,
     Rejected: `GSO declined the complete requisition.${declinedText}`,
-    'Items Declined': `GSO declined some items in your requisition.${declinedText} The other items continue; check My Requests for each item.`,
+    'Items Declined': `Some items in your requisition could not be issued.${declinedText} The other items continue; check My Requests for each item.`,
     Completed: `Your requisition is complete. Check My Requests for each item.${declinedText}`,
     'GSO Endorsed': 'GSO Head approved the request. The signed requisition is ready to print for Finance. In-stock items stay reserved.',
     'Sent to Finance': 'The signed requisition is with Finance. In-stock items stay reserved until every item arrives.',
@@ -640,10 +640,21 @@ async function staffReviewPurchaseRequisition(idValue, input, user) {
     rejectLineIds,
     changedBy: user.id,
   });
+  // Per-unit items reserved to issue now without GSO Head approval get a yellow flag in the GSO audit logs, not in the requester's timeline.
+  for (const line of request.purchaseLines || []) {
+    if (!issueNowLineIds.includes(String(line.id))) continue;
+    if ((request.formData?.items || [])[Number(line.lineNumber) - 1]?.itemKind !== 'PER_UNIT') continue;
+    await auditRequest(request, user, {
+      action: 'updated',
+      reason: `${line.itemName} × ${line.requestedQuantity} reserved to issue now without GSO Head approval, because the full quantity is in stock.`,
+      newValues: { lineId: line.id, issuedNow: line.requestedQuantity },
+      flag: 'PER_UNIT_ISSUED_WITHOUT_HEAD',
+    });
+  }
   // A rejection reaches the requester at once, even while the rest of the request waits for the GSO Head.
   const rejected = (request.purchaseLines || []).some((line) => line.routeStatus === 'REJECTED');
   const requesterNotified = rejected || ['Needs Information', 'Approved'].includes(request.status)
-    ? await notifyPurchaseRequester(request, rejected && request.status !== 'Rejected' ? 'Items Declined' : request.status, note)
+    ? await notifyPurchaseRequester(request, rejected && !['Rejected', 'Completed'].includes(request.status) ? 'Items Declined' : request.status, note)
     : null;
   await resolveNotices(`staff-new:${id}:`, `staff-reply:${id}:`);
   const waitingForHead = (request.purchaseLines || []).filter((line) => line.routeStatus === 'WAITING_GSO_HEAD');
@@ -652,14 +663,14 @@ async function staffReviewPurchaseRequisition(idValue, input, user) {
     await notifyHead(request, {
       key: `head-approval:${id}:${Date.now()}`,
       title: 'Purchase requisition needs your decision',
-      message: `GSO Staff sent the complete request (${waitingForHead.length} item line${waitingForHead.length === 1 ? '' : 's'}) for one approval decision (${request.formData?.departmentOrganization || request.requesterName || 'requester'}). Any in-stock quantities are reserved; do not issue any part while an item is short.`,
+      message: `GSO Staff sent ${waitingForHead.length} item line${waitingForHead.length === 1 ? '' : 's'} for one approval decision (${request.formData?.departmentOrganization || request.requesterName || 'requester'}).${(request.purchaseLines || []).some((line) => line.routeStatus === 'READY_FOR_STAFF') ? ' Items already in stock are issued separately and are not part of this decision.' : ''}`,
     });
   }
   await auditRequest(request, user, {
     action: 'updated',
     reason: input.action === 'NEEDS_INFORMATION'
       ? `GSO Staff asked the requester for more information: ${note}`
-      : `GSO Staff checked and routed the complete requisition${waitingForHead.length ? `; the whole request is with the GSO Head across ${waitingForHead.length} line(s)` : ''}${rejectLineIds.length ? `; ${rejectLineIds.length} consumable line(s) rejected` : ''}.${note ? ` Note: ${note}` : ''}`,
+      : `GSO Staff checked and routed the requisition${waitingForHead.length ? `; ${waitingForHead.length} line(s) are with the GSO Head` : ''}${rejectLineIds.length ? `; ${rejectLineIds.length} consumable line(s) rejected` : ''}.${note ? ` Note: ${note}` : ''}`,
     newValues: { routes: (request.purchaseLines || []).map((line) => ({
       lineId: line.id,
       itemName: line.itemName,
@@ -832,13 +843,15 @@ function purchaseLineReadyForStaffIssuance(line) {
 }
 
 function purchaseRequestReadyForStaffIssuance(request) {
-  const lines = request?.purchaseLines;
-  const allLinesAreAvailable = Array.isArray(lines) && lines.length > 0 && lines.every((line) => (
+  // Rejected lines are not part of the request any more.
+  const lines = Array.isArray(request?.purchaseLines) ? request.purchaseLines.filter((line) => line.routeStatus !== 'REJECTED') : [];
+  const allLinesAreAvailable = lines.length > 0 && lines.every((line) => (
     ['READY_FOR_STAFF', 'PARTIALLY_ISSUED', 'HANDOVER_PENDING', 'ISSUED'].includes(line.routeStatus)
       && Number(line.financeQuantity || 0) === 0
       && Number(line.reservedQuantity || 0) >= Number(line.requestedQuantity || 0)
   ));
-  return allLinesAreAvailable && lines.some(purchaseLineReadyForStaffIssuance);
+  // While the GSO Head is still deciding, items already in stock can be issued now.
+  return (allLinesAreAvailable || request?.status === 'Under Review') && lines.some(purchaseLineReadyForStaffIssuance);
 }
 
 async function getStaffPurchaseRequisitionForIssuance(idValue) {
@@ -873,13 +886,13 @@ async function reviewPurchaseRequisition(idValue, input, user) {
   if (request.status !== 'GSO Endorsed') {
     const shortageLines = (request.purchaseLines || []).filter((line) => Number(line.financeQuantity || 0) > 0);
     const approvedMessage = decision === 'DECLINE'
-      ? `GSO Head declined the entire request${note ? `: ${note}` : '.'}`
+      ? `GSO Head declined the items waiting for approval${note ? `: ${note}` : '.'}`
       : shortageLines.length
         ? `GSO Head approved the request. ${shortageLines.length} item line(s) go to Finance. In-stock items stay reserved. Nothing is issued until every item is available.`
-        : 'GSO Head approved the entire request. All requested items are reserved and ready for GSO Staff issuance.';
+        : 'GSO Head approved the items waiting for approval. All of them are reserved and ready for GSO Staff issuance.';
     await notifyStaff(request, {
       key: `staff-head-decided:${id}:${Date.now()}`,
-      title: decision === 'DECLINE' ? 'GSO Head declined the request' : 'GSO Head approved the entire request',
+      title: decision === 'DECLINE' ? 'GSO Head declined the request' : 'GSO Head approved the request',
       message: approvedMessage,
     });
   }

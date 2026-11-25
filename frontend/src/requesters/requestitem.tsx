@@ -355,7 +355,7 @@ function ItemKindDialog({ current, onChoose, onClose }: { current: string; onCho
 }
 
 function RequestItemContent() {
-  const { identity, identityLoading, refreshIdentity } = useRequesterIdentity()
+  const { user, identity, identityLoading, refreshIdentity } = useRequesterIdentity()
   const params = new URLSearchParams(window.location.search)
   const requestedType = params.get('type') as RequestType | 'ITEM_REQUEST' | null
   const unifiedItemRequest = requestedType === 'ITEM_REQUEST'
@@ -396,6 +396,8 @@ function RequestItemContent() {
     .filter(Boolean)
     .join(' ') || identity?.accountName || ''
   const verifiedDepartment = identity?.matchedDepartment || identity?.department || ''
+  // The account that files the job is recorded with it, so the name shown here is the one staff see.
+  const madeByName = user?.name || identity?.accountName || ''
   const verifiedPosition = identity?.matchedPosition || identity?.position || ''
   // The venue list comes from GSO, so it is loaded only for the facilities request form.
   useEffect(() => {
@@ -425,10 +427,19 @@ function RequestItemContent() {
       const person = item.recipientEmployeeName ? `${item.recipientEmployeeName} · ${item.recipientEmployeeCode}` : item.recipientEmployeeCode || ''
       const units = (item.tags ?? []).filter((tag) => tag.custodyStatus !== 'Available')
       if (item.trackingMode === 'individual' && units.length > 0) {
-        return units.map((tag) => ({ key: `${item.issuanceId}:${tag.tagCode}`, issuanceId: item.issuanceId, tagCode: tag.tagCode, name: item.itemName, code: tag.tagCode, unit: item.unitOfMeasure, outstanding: 1, place, person, itemNumber: Number(tag.unitNumber) || 0 }))
+        return units.map((tag) => ({ key: `${item.issuanceId}:${tag.tagCode}`, issuanceId: item.issuanceId, tagCode: tag.tagCode, name: item.itemName, code: tag.tagCode, itemCode: item.itemCode, unit: item.unitOfMeasure, outstanding: 1, place, person, itemNumber: Number(tag.unitNumber) || 0 }))
       }
-      return [{ key: item.issuanceId, issuanceId: item.issuanceId, tagCode: '', name: item.itemName, code: item.itemCode, unit: item.unitOfMeasure, outstanding, place, person, itemNumber: 0 }]
+      return [{ key: item.issuanceId, issuanceId: item.issuanceId, tagCode: '', name: item.itemName, code: item.itemCode, itemCode: item.itemCode, unit: item.unitOfMeasure, outstanding, place, person, itemNumber: 0 }]
     })), [issuedBatches])
+  // Why no units are listed in the Loss / Damage Report. Consumables are used up and cannot be reported; returned units are no longer with the requester.
+  const issuedNotice = useMemo(() => {
+    const lines = (issuedBatches ?? []).flatMap((batch) => batch.items.map((item) => ({ ...item, status: item.status ?? batch.status })))
+    const consumables = lines.filter((item) => item.issueBehavior === 'consumable' && item.status === 'Issued').length
+    const returned = lines.filter((item) => item.status === 'Returned').length
+    if (consumables > 0) return `You have ${consumables} issued consumable item${consumables === 1 ? '' : 's'}. Consumables are used up, so they cannot be reported as lost or damaged.`
+    if (returned > 0) return 'The items issued to you were already returned to GSO, so none are left to report.'
+    return 'No items are issued to you right now.'
+  }, [issuedBatches])
   const requestDateLabel = useMemo(() => new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium' }).format(new Date()), [])
 
   useEffect(() => {
@@ -1151,6 +1162,9 @@ function RequestItemContent() {
           {type === 'JOB_REQUEST' && <section className={formCardClass}>
             <h2 className="text-lg font-black tracking-tight">Job / Service Request</h2>
             <div className="mt-5 space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Made by"><input className={inputClass} value={madeByName} readOnly aria-readonly="true" placeholder="Your account name" /></Field>
+              </div>
               <FormGroup title="Service routing">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <Field label="Service category">
@@ -1395,7 +1409,7 @@ function RequestItemContent() {
                 {issuedBatches === null && !issuedError
                   ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">Loading your issued items…</p>
                   : heldGroups.length === 0
-                    ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">No items are issued to you right now.</p>
+                    ? <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-500">{issuedNotice}</p>
                     : <div className="space-y-4">{heldSections.map(([label, groups]) => <div key={label}>
                       <p className="mb-2 text-xs font-extrabold text-slate-700">{label} <span className="font-semibold text-slate-500">· {groups.length} item{groups.length === 1 ? '' : 's'}</span></p>
                       <div className="grid gap-3 sm:grid-cols-2">{groups.map((group) => {
@@ -1428,7 +1442,7 @@ function RequestItemContent() {
                       <div className="min-w-0">
                         <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Asset tags</p>
                         <h2 id="asset-tag-picker-title" className="mt-0.5 truncate text-base font-black text-slate-900 sm:text-lg">{openTagGroup.name}</h2>
-                        <p className="mt-1 text-xs text-slate-600">Select the exact unit(s) by asset tag.</p>
+                        <p className="mt-1 text-xs text-slate-600">Select the exact unit(s) by item code.</p>
                       </div>
                       <button type="button" onClick={() => setOpenGroupKey('')} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100">Close</button>
                     </header>
@@ -1447,8 +1461,7 @@ function RequestItemContent() {
                             return <label key={held.key} className={`flex cursor-pointer items-center gap-3 rounded-xl border-2 p-3 transition ${checked ? 'border-blue-400 bg-blue-50 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-blue-300 hover:bg-blue-50/40'}`}>
                               <input type="checkbox" checked={checked} onChange={() => toggleUnit(openTagGroup, held)} className="h-4 w-4 shrink-0 accent-blue-600" />
                               <span className="min-w-0">
-                        <span className="block text-[0.65rem] font-extrabold text-blue-700">ITEM {held.itemNumber}</span>
-                        <span className="block break-all font-mono text-xs font-bold text-slate-900">{held.code}</span>
+                        <span className="block break-all font-mono text-xs font-bold text-slate-900">{held.itemCode}</span>
                       </span>
                             </label>
                           })}

@@ -36,6 +36,12 @@ const actOnWorkOrder = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { workOrder } });
 });
 
+// The staff members a job can be put in charge of, for the team in the query string.
+const listTeamMembers = asyncHandler(async (req, res) => {
+  const members = await serviceWorkOrdersService.listTeamMembers(req.query, req.user);
+  res.json({ success: true, data: { members } });
+});
+
 // The requester adds details after submitting, such as the exact room or a photo of the problem.
 const addRequesterInfo = asyncHandler(async (req, res) => {
   const workOrder = await serviceWorkOrdersService.addRequesterInfo(req.params.id, req.body, req.user);
@@ -47,4 +53,5 @@ module.exports = {
   getWorkOrder,
   actOnWorkOrder,
   addRequesterInfo,
+  listTeamMembers,
 };

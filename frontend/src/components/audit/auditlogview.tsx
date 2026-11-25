@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { listAuditLogs, type AuditLogAction, type AuditLogEntityType, type AuditLogEntry, type AuditLogFlag } from '../../admin/auditLogsApi'
+import { getChargeReceipt, type ChargeKind, type ChargeReceipt } from '../../gso/paymentsApi'
 
 const pageSize = 25
 
@@ -21,6 +22,7 @@ const actionOptions: Array<{ value: AuditLogAction; label: string; tone: string 
 ]
 
 const flagOptions: Array<{ value: AuditLogFlag; label: string; hint: string; tone: string }> = [
+  { value: 'PER_UNIT_ISSUED_WITHOUT_HEAD', label: 'Issued without GSO Head', hint: 'A per-unit item was issued now by GSO Staff, without GSO Head approval, because the full quantity was in stock.', tone: 'bg-amber-50 text-amber-800 ring-amber-200' },
   { value: 'MANUAL_ENTRY', label: 'Typed code', hint: 'The barcode was typed in, not scanned.', tone: 'bg-amber-50 text-amber-800 ring-amber-200' },
   { value: 'ITEM_LOST', label: 'Reported lost', hint: 'A unit was reported lost. A settlement is needed.', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
   { value: 'DELIVERY_UNDONE', label: 'Delivery undone', hint: 'A recorded purchase delivery was taken back.', tone: 'bg-amber-50 text-amber-800 ring-amber-200' },
@@ -157,13 +159,40 @@ function readFlagFromUrl(): FlagFilter {
 
 // The audit view is shared by GSO Staff, GSO Head, and IT Admin. Each page passes its own frame.
 // variant="activity" is the requester-style card list used on the GSO Head page; "table" stays for GSO Staff.
-export default function AuditLogView({ frame, variant = 'table' }: { frame: (content: ReactNode) => ReactNode; variant?: 'table' | 'activity' }) {
+// A payment entry links to its charge, so the uploaded receipt picture is shown in the entry's details.
+function AuditReceipt({ log }: { log: AuditLogEntry }) {
+  const kind = log.newValues?.chargeKind
+  const ref = log.newValues?.chargeRef
+  const hasCharge = typeof kind === 'string' && typeof ref === 'string' && ref.length > 0
+  const [receipt, setReceipt] = useState<ChargeReceipt | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    if (!hasCharge) return
+    let active = true
+    getChargeReceipt(kind as ChargeKind, ref as string)
+      .then((value) => { if (active) setReceipt(value) })
+      .catch(() => { if (active) setFailed(true) })
+    return () => { active = false }
+  }, [hasCharge, kind, ref])
+  if (!hasCharge) return null
+  if (failed) return <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">The receipt picture could not be loaded.</p>
+  if (!receipt) return <p className="mt-4 text-xs font-semibold text-slate-500">Loading the receipt picture…</p>
+  return (
+    <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+      <p className="text-[0.62rem] font-extrabold uppercase text-slate-400">Receipt</p>
+      <img src={receipt.receiptData} alt={`Receipt for ${log.entityName}`} className="mt-2 max-h-96 w-full rounded-xl border border-slate-200 bg-white object-contain" />
+      <p className="mt-2 text-xs font-semibold text-slate-600">{receipt.receiptName || 'Receipt'} · uploaded by {receipt.uploadedBy || 'GSO Staff'} on {formatDate(receipt.uploadedAt)}</p>
+    </div>
+  )
+}
+
+export default function AuditLogView({ frame, variant = 'table', defaultSearch = '' }: { frame: (content: ReactNode) => ReactNode; variant?: 'table' | 'activity'; defaultSearch?: string }) {
   const [logs, setLogs] = useState<AuditLogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [flaggedCount, setFlaggedCount] = useState(0)
   const [page, setPage] = useState(0)
-  const [searchDraft, setSearchDraft] = useState('')
-  const [search, setSearch] = useState('')
+  const [searchDraft, setSearchDraft] = useState(defaultSearch)
+  const [search, setSearch] = useState(defaultSearch)
   const [action, setAction] = useState<'all' | AuditLogAction>('all')
   const [entityType, setEntityType] = useState<'all' | AuditLogEntityType>('all')
   const [flag, setFlag] = useState<FlagFilter>(readFlagFromUrl)
@@ -460,6 +489,7 @@ export default function AuditLogView({ frame, variant = 'table' }: { frame: (con
               <div><dt className="text-[0.62rem] font-extrabold uppercase text-slate-400">Date and time</dt><dd className="mt-1 text-xs font-bold text-slate-700">{formatDate(selectedLog.changedAt)}</dd></div>
               <div className="sm:col-span-2"><dt className="text-[0.62rem] font-extrabold uppercase text-slate-400">Reason</dt><dd className="mt-1 whitespace-pre-wrap text-sm font-semibold leading-relaxed text-slate-700">{selectedLog.reason}</dd></div>
             </dl>
+            <AuditReceipt key={selectedLog.id} log={selectedLog} />
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <ValueList title="Before" values={selectedLog.oldValues} />
               <ValueList title="After" values={selectedLog.newValues} />

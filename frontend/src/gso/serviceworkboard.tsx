@@ -11,9 +11,11 @@ import {
   forwardServiceWorkOrder,
   getServiceWorkOrder,
   listServiceWorkOrders,
+  listServiceWorkTeamMembers,
   rejectServiceWorkOrder,
   startServiceWorkOrder,
   takeOverServiceWorkOrder,
+  type ServiceTeamMember,
   type ServiceWorkOrder,
   type ServiceWorkQueue,
   type ServiceWorkSummary,
@@ -214,7 +216,7 @@ function jobButtons(order: ServiceWorkOrder, viewerId: string, otherLabel: strin
   // Claimed by me and not in progress yet: start the work, or send it to the other team, or reject it.
   return {
     buttons: [
-      { key: 'start', label: 'Start work', tone: 'primary', quick: 'start' },
+      { key: 'start', label: 'Start work', tone: 'primary', dialog: 'start' },
       forward,
       reject,
     ],
@@ -360,7 +362,7 @@ function JobCard({ order, viewerId, otherLabel, busy, onOpen, onButton }: {
       <div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-[0.67rem] font-semibold text-slate-600">
         <p className="flex min-w-0 items-center gap-2"><Icon name="location" className="h-3.5 w-3.5 shrink-0 text-slate-400" /><span className="truncate">{order.location || 'Location not set'}</span></p>
         <p className={`flex min-w-0 items-center gap-2 ${order.isOverdue ? 'text-rose-700' : ''}`}><Icon name={order.isOverdue ? 'warning' : 'clock'} className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{deadline}</span></p>
-        <p className="flex min-w-0 items-center gap-2"><Icon name="user" className="h-3.5 w-3.5 shrink-0 text-slate-400" /><span className="truncate">{handler ? `Claimed by ${handler}` : (order.requester?.name || 'Not claimed yet')}</span></p>
+        <p className="flex min-w-0 items-center gap-2"><Icon name="user" className="h-3.5 w-3.5 shrink-0 text-slate-400" /><span className="truncate">{order.inChargeStaffName ? `In charge: ${order.inChargeStaffName}` : handler ? `Claimed by ${handler}` : (order.requester?.name || 'Not claimed yet')}</span></p>
       </div>
 
       {checklist.length > 0 && (
@@ -392,6 +394,7 @@ function ActionDialogPanel({
   kind,
   order,
   otherLabel,
+  teamMembers,
   onDismiss,
   onSubmit,
   busy,
@@ -400,8 +403,9 @@ function ActionDialogPanel({
   kind: DialogKind
   order: ServiceWorkOrder
   otherLabel: string
+  teamMembers: ServiceTeamMember[]
   onDismiss: () => void
-  onSubmit: (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished: boolean; expectedDate: string; photos: string[] }) => void
+  onSubmit: (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished: boolean; expectedDate: string; photos: string[]; inChargeName: string }) => void
   busy: boolean
   error: string
 }) {
@@ -414,6 +418,9 @@ function ActionDialogPanel({
   const [expectedDate, setExpectedDate] = useState('')
   const [photos, setPhotos] = useState<string[]>([])
   const [photoError, setPhotoError] = useState('')
+  // Start work only: the person in charge is typed as a name, with suggestions from the team.
+  const [inChargeName, setInChargeName] = useState('')
+  const inChargeReady = kind !== 'start' || Boolean(inChargeName.trim())
   const copy = dialogCopy(kind, otherLabel)
   const isComplete = kind === 'complete'
   const notFinished = isComplete && !finished
@@ -427,9 +434,9 @@ function ActionDialogPanel({
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (!canSubmit || busy) return
+    if (!canSubmit || busy || !inChargeReady) return
     // The completion note field was replaced by a yes/no confirmation; the backend still needs a note, so a fixed one is sent.
-    onSubmit({ note: isComplete && !notFinished ? 'Work finished.' : note.trim(), tasks, incompleteReason: notFinished ? reasonText : incompleteReason.trim(), finished: !notFinished, expectedDate, photos })
+    onSubmit({ note: isComplete && !notFinished ? 'Work finished.' : note.trim(), tasks, incompleteReason: notFinished ? reasonText : incompleteReason.trim(), finished: !notFinished, expectedDate, photos, inChargeName: inChargeName.trim() })
   }
 
   return (
@@ -502,6 +509,14 @@ function ActionDialogPanel({
             <textarea autoFocus={copy.required} value={note} onChange={(event) => setNote(event.target.value)} rows={4} maxLength={1000} placeholder={copy.placeholder} className={fieldClass} />
           </label>}
 
+        {kind === 'start' && (
+          <label className="mt-4 block">
+            <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Person in charge <span className="text-rose-600">*</span></span>
+            <input value={inChargeName} onChange={(event) => setInChargeName(event.target.value)} maxLength={200} disabled={busy} list="service-team-members" autoComplete="off" placeholder="Type the name of the IT or GSO staff member" className={fieldClass} />
+            <datalist id="service-team-members">{teamMembers.map((member) => <option key={member.id} value={member.name} />)}</datalist>
+          </label>
+        )}
+
         {(kind === 'progress' || (isComplete && !notFinished)) && (
           <div className="mt-4">
             <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Photos (optional)</span>
@@ -514,7 +529,7 @@ function ActionDialogPanel({
 
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" disabled={busy} onClick={onDismiss} className={quietButton}>Cancel</button>
-          <button type="submit" disabled={busy || !canSubmit} className={kind === 'reject' ? dangerButton : primaryButton}>{busy ? 'Saving...' : notFinished ? 'Save reason' : copy.submit}</button>
+          <button type="submit" disabled={busy || !canSubmit || !inChargeReady} className={kind === 'reject' ? dangerButton : primaryButton}>{busy ? 'Saving...' : notFinished ? 'Save reason' : copy.submit}</button>
         </div>
       </form>
     </div>
@@ -524,6 +539,7 @@ function ActionDialogPanel({
 export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
   const copy = TEAM_COPY[team]
   const [viewerId, setViewerId] = useState('')
+  const [teamMembers, setTeamMembers] = useState<ServiceTeamMember[]>([])
   const [queue, setQueue] = useState<ServiceWorkQueue>(readQueueParam)
   const [searchDraft, setSearchDraft] = useState('')
   const [search, setSearch] = useState('')
@@ -566,7 +582,14 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
     return () => { active = false }
   }, [])
 
-  // Notifications and dashboard links open a job directly: ?request=ID, and ?action=complete opens the completion form.
+  // The staff who can be put in charge of a started job. A failed load leaves the list empty, so Start work stays disabled.
+  useEffect(() => {
+    let active = true
+    void listServiceWorkTeamMembers(team).then((members) => { if (active) setTeamMembers(members) }).catch(() => undefined)
+    return () => { active = false }
+  }, [team])
+
+  // Notifications and dashboard links open a job directly: ?request=ID, ?action=start opens Start work, and ?action=complete opens the completion form.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const requestId = params.get('request')
@@ -577,6 +600,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
         if (!active) return
         setSelected(order)
         if (params.get('action') === 'complete' && statusKey(order.status) === 'in progress') setDialog('complete')
+        if (params.get('action') === 'start' && ['submitted', 'under review'].includes(statusKey(order.status))) setDialog('start')
       })
       .catch((error) => { if (active) setDetailError(error instanceof Error ? error.message : 'This job could not be opened.') })
     return () => { active = false }
@@ -622,9 +646,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
     setBusyId(order.id)
     try {
       const quick = button.quick
-      const updated = quick === 'claim'
-        ? await claimServiceWorkOrder(order.id)
-        : await startServiceWorkOrder(order.id)
+      const updated = await claimServiceWorkOrder(order.id)
       await applyUpdatedOrder(updated, NOTICE[quick])
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'The job could not be updated.')
@@ -633,7 +655,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
     }
   }
 
-  const submitDialog = async (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished?: boolean; expectedDate?: string; photos?: string[] }) => {
+  const submitDialog = async (input: { note: string; tasks: WorkOrderChecklistItem[]; incompleteReason: string; finished?: boolean; expectedDate?: string; photos?: string[]; inChargeName?: string }) => {
     if (!selected || !dialog) return
     setBusyId(selected.id)
     setActionError('')
@@ -644,7 +666,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
         updated = await forwardServiceWorkOrder(selected.id, copy.otherTeam, input.note)
         message = `Job forwarded to ${copy.otherTeam === 'ITSS' ? 'ITSS Support' : 'GSO Facilities'}.`
       } else if (dialog === 'start') {
-        updated = await startServiceWorkOrder(selected.id, input.note)
+        updated = await startServiceWorkOrder(selected.id, input.inChargeName ?? '', input.note)
         message = 'Work started.'
       } else if (dialog === 'complete' && input.finished === false) {
         updated = await notFinishServiceWorkOrder(selected.id, input.incompleteReason, input.expectedDate ?? '')
@@ -776,6 +798,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
                   <DetailValue label="Requester" value={selected.requester?.name} icon="user" />
                   <DetailValue label="Department" value={selected.requester?.department} icon="document" />
                   <DetailValue label="Claimed by" value={assignedName(selected) || 'Not claimed yet'} icon="user" />
+                  <DetailValue label="In charge" value={selected.inChargeStaffName || 'Not started yet'} icon="user" />
                   <DetailValue label="Submitted" value={dateText(selected.createdAt, true)} icon="clock" />
                 </div>
                 {selected.description && <div className="mt-4 border-t border-slate-100 pt-4"><p className="text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">Reported concern</p><p className="mt-1.5 whitespace-pre-wrap text-xs font-medium leading-relaxed text-slate-700">{selected.description}</p></div>}
@@ -832,7 +855,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
         </div>
       )}
 
-      {selected && dialog && <ActionDialogPanel kind={dialog} order={selected} otherLabel={copy.otherLabel} busy={actionBusy} error={actionError} onDismiss={() => { if (!actionBusy) { setDialog(null); setActionError('') } }} onSubmit={(input) => { void submitDialog(input) }} />}
+      {selected && dialog && <ActionDialogPanel kind={dialog} order={selected} otherLabel={copy.otherLabel} teamMembers={teamMembers} busy={actionBusy} error={actionError} onDismiss={() => { if (!actionBusy) { setDialog(null); setActionError('') } }} onSubmit={(input) => { void submitDialog(input) }} />}
     </>
   )
 }

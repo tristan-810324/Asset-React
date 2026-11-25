@@ -24,4 +24,20 @@ router.post('/:kind/:ref/paid', asyncHandler(async (req, res) => {
   res.json({ success: true, data: { result } });
 }));
 
+// Waived charges: the list, and the proof attached to each one (a PDF or a picture of the signed waiver).
+router.get('/waivers', asyncHandler(async (req, res) => {
+  const waivers = await service.listWaivedCharges();
+  res.json({ success: true, data: { waivers } });
+}));
+
+router.get('/:kind/:ref/proof', asyncHandler(async (req, res) => {
+  const proof = await service.getWaiverProof(req.params.kind, req.params.ref);
+  res.json({ success: true, data: { proof } });
+}));
+
+router.post('/:kind/:ref/proof', asyncHandler(async (req, res) => {
+  const result = await service.saveWaiverProof(req.params.kind, req.params.ref, req.body, req.user);
+  res.json({ success: true, data: { result } });
+}));
+
 module.exports = router;

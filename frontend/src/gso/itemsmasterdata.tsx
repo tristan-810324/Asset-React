@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
+import { GsoHeadPageFrame } from '../gsohead/gsoheadnavbar'
 import {
   createInventoryCategory,
   createInventoryCategoryItemName,
@@ -893,7 +894,14 @@ function readProcurementPrefill(): ProcurementPrefill | null {
   }
 }
 
-export default function ItemsMasterData() {
+// GSO Staff keep their own navigation. The GSO Head view uses the head navigation around the same page.
+function ItemsPageFrame({ readOnly, children }: { readOnly: boolean; children: React.ReactNode }) {
+  if (readOnly) return <GsoHeadPageFrame activePage="items">{children}</GsoHeadPageFrame>
+  return <GsoPageFrame activePage="Item Master Data" searchPlaceholder="Item name, code, or assigned recipient">{children}</GsoPageFrame>
+}
+
+// The GSO Head view (readOnly) is the same page. The actions that change inventory are hidden for it.
+export default function ItemsMasterData({ readOnly = false }: { readOnly?: boolean } = {}) {
   const [showAddItemModal, setShowAddItemModal] = useState(false)
   const [procurementGuide, setProcurementGuide] = useState<ProcurementGuide | null>(null)
 
@@ -1109,7 +1117,7 @@ export default function ItemsMasterData() {
         setItems(savedItems)
         setCategories(categoryRecords)
         setItemNameOptions(itemNameRecords)
-        const prefill = readProcurementPrefill()
+        const prefill = readOnly ? null : readProcurementPrefill()
         const defaultCategory = categoryRecords[0]?.name || ''
         const prefilledCategory = prefill ? matchingInventoryCategory(prefill.category, categoryRecords) : undefined
         const prefilledItemName = prefilledCategory && prefill
@@ -1150,7 +1158,7 @@ export default function ItemsMasterData() {
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [readOnly])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target
@@ -1824,10 +1832,7 @@ export default function ItemsMasterData() {
   ]
 
   return (
-    <GsoPageFrame
-      activePage="Item Master Data"
-      searchPlaceholder="Item name, code, or assigned recipient"
-    >
+    <ItemsPageFrame readOnly={readOnly}>
       {/* HEADER SECTION */}
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
@@ -1844,8 +1849,8 @@ export default function ItemsMasterData() {
          
         </div>
 
-        {/* INVENTORY ACTION */}
-        <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
+        {/* INVENTORY ACTION: GSO Staff only */}
+        {!readOnly && <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
           <button
             type="button"
             onClick={() => setShowAddItemModal(true)}
@@ -1853,7 +1858,7 @@ export default function ItemsMasterData() {
           >
             + Add & Overview
           </button>
-        </div>
+        </div>}
       </section>
 
       <section aria-label="Inventory summary" className="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4 lg:gap-4">
@@ -2983,7 +2988,7 @@ export default function ItemsMasterData() {
 
             <footer className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-8">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                {selectedItem.id ? (
+                {selectedItem.id && !readOnly ? (
                   <button
                     type="button"
                     onClick={beginEditSelectedItem}
@@ -3379,6 +3384,6 @@ export default function ItemsMasterData() {
           </div>
         </div>
       )}
-    </GsoPageFrame>
+    </ItemsPageFrame>
   )
 }

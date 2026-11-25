@@ -95,7 +95,7 @@ function tabsFor(request: ServiceRequest): Tab[] {
 
 // Who has the request now, in words a staff member can act on.
 function waitingOn(request: ServiceRequest) {
-  if (request.status === 'Under Review') return { label: 'With GSO Head', tone: 'bg-amber-50 text-amber-800', detail: `The GSO Head is deciding the complete request (${countLines(request, ['WAITING_GSO_HEAD'])} item line(s)). Available units stay reserved; nothing is issued separately.` }
+  if (request.status === 'Under Review') return { label: 'With GSO Head', tone: 'bg-amber-50 text-amber-800', detail: `The GSO Head is deciding ${countLines(request, ['WAITING_GSO_HEAD'])} item line(s). Items already in stock can be issued now.` }
   if (request.status === 'Needs Information') return { label: 'With requester', tone: 'bg-amber-50 text-amber-800', detail: 'Waiting for the requester to answer. Their reply brings the request back to "To check".' }
   if (request.status === 'GSO Endorsed') return { label: 'Ready for handoff', tone: 'bg-indigo-50 text-indigo-700', detail: 'The signed PDF is ready in Procurement. Download or print it and give it to Finance before buying the shortage quantities.' }
   if (request.status === 'Sent to Finance') return { label: 'To buy', tone: 'bg-indigo-50 text-indigo-700', detail: `GSO Staff handed the signed requisition to Finance${request.financeSentAt ? ` on ${formatDate(request.financeSentAt)}` : ''}. Stocked items remain reserved; do not issue anything until every requested line is complete.` }
@@ -324,7 +324,9 @@ function DeliveryForm({ request, line, inventory, refreshing, similarOffer, onRe
 function routedMessage(request: ServiceRequest) {
   if (request.status === 'Rejected') return `${request.referenceNo} rejected. The requester has been told the reason.`
   const toHead = countLines(request, ['WAITING_GSO_HEAD'])
-  return `${request.referenceNo} routed. ${toHead ? `The entire request (${toHead} item line(s)) is with the GSO Head. In-stock items stay reserved until the full request is ready.` : 'The complete request is available in Main Issuance.'}`
+  const reservedNow = countLines(request, ['READY_FOR_STAFF'])
+  const issued = reservedNow ? ` ${reservedNow} item line(s) reserved for ${request.requesterName}. Issue them in Main Issuance.` : ''
+  return `${request.referenceNo} routed.${issued} ${toHead ? `${toHead} item line(s) are with the GSO Head as one package.` : 'Nothing is with the GSO Head.'}`
 }
 
 function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest; onSaved: (message: string) => void; onRefresh: () => void }) {
@@ -356,26 +358,40 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
   })
   const requestRows = (Array.isArray(request.formData.items) ? request.formData.items : []) as Array<Record<string, unknown>>
   const requestedRow = (line: PurchaseRequisitionLine) => requestRows[line.lineNumber - 1] || {}
-  // A consumable can be issued now only when its matched units cover the full request and the item allows staff issue.
+  // A consumable can be issued now when some of it is in stock and the item allows staff issue. The rest is not issued.
+  // A per-unit item can be issued now only when all of it is in stock and its policy lets GSO Staff decide. Otherwise the GSO Head decides.
   const canIssueNow = (line: PurchaseRequisitionLine, check: PurchaseRequisitionStockCheck) => requestedRow(line).itemKind === 'CONSUMABLE'
-    && check.options.includes('ISSUE')
-    && coveredOf(line, check) >= line.requestedQuantity
+    ? Boolean(check.issueAllowed) && coveredOf(line, check) > 0
+    : Boolean(check.issueAllowed) && coveredOf(line, check) >= line.requestedQuantity
   const issueNowLineIds = checks
     .filter(({ line, check }) => issueNow[line.id] && canIssueNow(line, check))
     .map(({ line }) => line.id)
   const allIssueNow = checks.length > 0 && issueNowLineIds.length === checks.length
+  // Issue now lines with only part of the request in stock. The rest is declined when the route is confirmed.
+  const partialLines = checks.filter(({ line, check }) => issueNowLineIds.includes(line.id) && coveredOf(line, check) < line.requestedQuantity)
+  const partialNote = partialLines.length ? ` ${partialLines.length} item(s) only partly in stock: only the units in stock are issued, and the rest is not issued.` : ''
   // Consumables get the Issue now and Reject choices in step 3. A per-unit item always goes to the GSO Head.
   const isConsumable = (line: PurchaseRequisitionLine) => requestedRow(line).itemKind === 'CONSUMABLE'
   const consumableChecks = checks
     .filter(({ line }) => isConsumable(line))
     .map(({ line, check }) => ({ line, check, unit: String(requestedRow(line).unitOfMeasure || '') }))
+  const perUnitChecks = checks.filter(({ line }) => requestedRow(line).itemKind === 'PER_UNIT')
   const rejectLineIds = checks
     .filter(({ line }) => rejected[line.id] && isConsumable(line))
     .map(({ line }) => line.id)
-  const unmatchedTotal = checks.reduce((total, { line, check }) => total + (rejectLineIds.includes(line.id) ? 0 : Math.max(line.requestedQuantity - coveredOf(line, check), 0)), 0)
+  // Issue now takes the in-stock consumables out of the Head's package. Any other consumable not issued is rejected here.
+  const autoRejected = issueNowLineIds.length > 0
+    ? checks.filter(({ line }) => isConsumable(line) && !issueNowLineIds.includes(line.id) && !rejectLineIds.includes(line.id))
+    : []
+  const autoRejectLineIds = autoRejected.map(({ line }) => line.id)
+  // Every line that leaves the request now: explicit rejects plus the automatic ones.
+  const dropLineIds = [...rejectLineIds, ...autoRejectLineIds]
+  const autoNote = autoRejected.length ? 'Sorry, we cannot issue this item because it is out of stock. You may request it again so it can be purchased.' : ''
+  const routeNote = [rejectLineIds.length ? rejectReason.trim() : '', autoNote].filter(Boolean).join(' ')
+  const unmatchedTotal = checks.reduce((total, { line, check }) => total + (dropLineIds.includes(line.id) ? 0 : Math.max(line.requestedQuantity - coveredOf(line, check), 0)), 0)
   // Lines still going to the GSO Head. The rest are issued now or rejected.
-  const headLines = checks.length - issueNowLineIds.length - rejectLineIds.length
-  const rejectOnly = rejectLineIds.length > 0 && headLines === 0 && issueNowLineIds.length === 0
+  const headLines = checks.length - issueNowLineIds.length - dropLineIds.length
+  const rejectOnly = dropLineIds.length > 0 && headLines === 0 && issueNowLineIds.length === 0
   // Issue now and reject are mutually exclusive for a line.
   const chooseIssueNow = (lineId: string) => {
     setIssueNow((current) => ({ ...current, [lineId]: !current[lineId] }))
@@ -397,7 +413,7 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
           line.id,
           (picked[line.id] || []).filter((itemId) => check.matches.some((unit) => unit.itemId === itemId)),
         ]))
-        const result = await staffReviewPurchaseRequisition(request.id, { action, selectedUnits, issueNowLineIds, rejectLineIds, note: rejectLineIds.length ? rejectReason.trim() : undefined })
+        const result = await staffReviewPurchaseRequisition(request.id, { action, selectedUnits, issueNowLineIds, rejectLineIds: dropLineIds, note: dropLineIds.length ? routeNote : undefined })
         onSaved(routedMessage(result.request))
       } else {
         await staffReviewPurchaseRequisition(request.id, { action, note: question.trim() })
@@ -429,30 +445,54 @@ function ReviewPanel({ request, onSaved, onRefresh }: { request: ServiceRequest;
         status="upcoming"
         titleId={`route-confirmation-${request.id}`}
         title="Confirm route"
-        description={checks.length > 0 && headLines === 0 ? 'Nothing goes to the GSO Head. The choices above take effect now.' : 'The whole request goes to the GSO Head as one package.'}
+        description={checks.length > 0 && headLines === 0 ? 'Nothing goes to the GSO Head. The choices above take effect now.' : dropLineIds.length > 0 || issueNowLineIds.length > 0 ? 'The rest of the request goes to the GSO Head as one package.' : 'The whole request goes to the GSO Head as one package.'}
       />
       <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/60 p-4">
       {mode === 'route' ? <>
+        {perUnitChecks.length > 0 && <div className="mb-3 rounded-xl border border-blue-100 bg-white/80 p-3">
+          <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Per-unit items</p>
+          <ul className="mt-2 divide-y divide-slate-100">
+            {perUnitChecks.map(({ line, check }) => <li key={line.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2 first:pt-0 last:pb-0">
+              <div className="min-w-0">
+                <p className="text-xs font-extrabold text-slate-900">{line.itemName} <span className="font-bold text-slate-500">× {line.requestedQuantity}</span></p>
+                {issueNow[line.id] && <p className="mt-1 rounded-md bg-amber-50 px-2 py-1 text-[0.65rem] font-semibold text-amber-900 ring-1 ring-amber-300">Yellow warning: this is recorded in the GSO audit logs as reserved without GSO Head approval.</p>}
+              </div>
+              <div className="flex items-center gap-2 text-xs font-semibold">
+                {canIssueNow(line, check) ? <>
+                  <button type="button" aria-pressed={Boolean(issueNow[line.id])} onClick={() => { if (!issueNow[line.id]) chooseIssueNow(line.id) }} className={`rounded-lg px-3 py-2 text-xs font-extrabold transition ${issueNow[line.id] ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/20' : 'border border-slate-300 bg-white text-slate-600 hover:bg-slate-50'}`}>Issue now</button>
+                  <button type="button" aria-pressed={!issueNow[line.id]} onClick={() => { if (issueNow[line.id]) chooseIssueNow(line.id) }} className={`rounded-lg px-3 py-2 text-xs font-extrabold transition ${issueNow[line.id] ? 'border border-slate-300 bg-white text-slate-600 hover:bg-slate-50' : 'bg-blue-600 text-white shadow-sm shadow-blue-600/20'}`}>Ask GSO Head first</button>
+                </> : coveredOf(line, check) < line.requestedQuantity ? <span className="text-amber-800">{coveredOf(line, check)} of {line.requestedQuantity} in stock · GSO Head approves</span> : <span className="text-slate-600">Needs GSO Head approval (item policy)</span>}
+              </div>
+            </li>)}
+          </ul>
+        </div>}
         {consumableChecks.length > 0 && <div className="mb-3 rounded-xl border border-blue-100 bg-white/80 p-3">
           <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Consumables</p>
           <ul className="mt-2 divide-y divide-slate-100">
             {consumableChecks.map(({ line, check, unit }) => <li key={line.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2 first:pt-0 last:pb-0">
               <p className="min-w-0 text-xs font-extrabold text-slate-900">{line.itemName} <span className="font-bold text-slate-500">× {line.requestedQuantity}{unit ? ` ${unit}` : ''}</span></p>
               <div className="flex items-center gap-4 text-xs font-semibold text-slate-700">
-                {canIssueNow(line, check) && <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" checked={Boolean(issueNow[line.id])} onChange={() => chooseIssueNow(line.id)} className="h-4 w-4 accent-emerald-600" />Issue now</label>}
-                <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" checked={Boolean(rejected[line.id])} onChange={() => chooseReject(line.id)} className="h-4 w-4 accent-rose-600" />Reject</label>
+                {autoRejectLineIds.includes(line.id) ? <span className="text-rose-700">Not issued · rejected automatically</span> : <>
+                  {coveredOf(line, check) > 0 && coveredOf(line, check) < line.requestedQuantity && <span className="text-amber-800">{coveredOf(line, check)} of {line.requestedQuantity} in stock{issueNow[line.id] ? ' · the rest is not issued' : ''}</span>}
+                  {canIssueNow(line, check) && <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" checked={Boolean(issueNow[line.id])} onChange={() => chooseIssueNow(line.id)} className="h-4 w-4 accent-emerald-600" />Issue now</label>}
+                  <label className="flex cursor-pointer items-center gap-1.5"><input type="checkbox" checked={Boolean(rejected[line.id])} onChange={() => chooseReject(line.id)} className="h-4 w-4 accent-rose-600" />Reject</label>
+                </>}
               </div>
             </li>)}
           </ul>
         </div>}
         <div className="rounded-xl border border-blue-100 bg-white/80 p-3">
           <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-blue-700">Route summary</p>
-          <p className="mt-2 text-xs leading-relaxed text-slate-700">{rejectLineIds.length > 0 && headLines === 0
-            ? `${rejectLineIds.length} item(s) rejected. Nothing is reserved for them, and ${requester} is told the reason.${issueNowLineIds.length > 0 ? ' The other items are issued now by GSO Staff.' : ''}`
-            : allIssueNow
-            ? 'Every item is a consumable in stock. GSO Staff issue it now from storage; the GSO Head is not needed.'
+          <p className="mt-2 text-xs leading-relaxed text-slate-700">{allIssueNow && partialLines.length === 0
+            ? 'Every item is in stock and reserved now. GSO Staff issue them in Main Issuance; the GSO Head is not needed.'
+            : headLines === 0 && issueNowLineIds.length > 0
+            ? `${issueNowLineIds.length} item(s) reserved for ${requester} now, so nothing waits for the GSO Head. Issue them in Main Issuance.${partialNote}${dropLineIds.length ? ` ${dropLineIds.length} item(s) not issued ${dropLineIds.length === 1 ? 'is' : 'are'} rejected; ${requester} sees the reason and can ask for them to be purchased or submit a new request.` : ''}`
+            : headLines === 0 && rejectLineIds.length > 0
+            ? `${rejectLineIds.length} item(s) rejected. Nothing is reserved for them, and ${requester} is told the reason.`
+            : dropLineIds.length > 0
+              ? `${dropLineIds.length} item(s) rejected and not bought. ${requester} is told the reason.${unmatchedTotal === 0 ? ' Every other unit is matched.' : ` ${unmatchedTotal} unit(s) are not matched and go to purchase.`}${issueNowLineIds.length > 0 ? ' The in-stock items are reserved now.' : ''}${partialNote} The GSO Head approves the rest as one package.`
             : issueNowLineIds.length > 0
-              ? 'Consumables in stock are reserved now, but the whole request waits for the GSO Head as one package.'
+              ? `In-stock items are reserved for ${requester} now, without waiting for the GSO Head. Issue them in Main Issuance. The rest goes to the GSO Head as one package.${partialNote}`
               : unmatchedTotal === 0
                 ? 'Every requested unit is matched. The GSO Head approves, then the request is ready to issue.'
                 : `${unmatchedTotal} unit(s) are not matched. They go to purchase, and the GSO Head approves the complete request.`}</p>

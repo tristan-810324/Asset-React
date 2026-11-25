@@ -3,7 +3,7 @@ const actions = new Set([
   'requested', 'issued', 'returned', 'received', 'approved', 'rejected', 'cancelled', 'moved',
 ]);
 const entityTypes = new Set(['item', 'category', 'employee', 'request', 'signature']);
-const flags = new Set(['MANUAL_ENTRY', 'ITEM_LOST', 'DELIVERY_UNDONE', 'RECORD_DELETED', 'LABEL_REPRINT', 'FINANCE_PDF_REPRINT', 'ACCOUNT_EDITED']);
+const flags = new Set(['MANUAL_ENTRY', 'ITEM_LOST', 'DELIVERY_UNDONE', 'RECORD_DELETED', 'LABEL_REPRINT', 'FINANCE_PDF_REPRINT', 'ACCOUNT_EDITED', 'PER_UNIT_ISSUED_WITHOUT_HEAD']);
 
 function invalid(message) {
   throw Object.assign(new Error(message), { status: 400 });

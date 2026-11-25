@@ -63,10 +63,10 @@ Calculated from the target date, using the Manila date, when the job is read.
 
 1. **New:** the job appears in the team's New Jobs queue, unclaimed.
 2. **Claim:** a staff member takes the job. The status stays Submitted, shown as "Claimed".
-3. **Start work:** the job moves to In progress. Optional start note.
+3. **Start work:** the job moves to In progress. The staff member who claimed it types the name of the person in charge, the IT or GSO staff member who will do the job. The claimed staff member keeps the claim and does the progress updates and the completion. Optional start note.
 4. **Forward:** before work starts, the job can be sent to the other team (for example, ITSS to GSO). It becomes a new unclaimed job in that queue, and the transfer stays in the history. Not allowed once work has started.
 5. **Reject:** before work starts, with a required reason. The requester is told the reason.
-6. **Take over:** a staff member of the same team takes a claimed job, with a required reason.
+6. **Take over:** a staff member of the same team takes a claimed job, with a required reason. The typed name of the person in charge stays as it was.
 7. **Complete:** the team marks the job completed with a completion note and an optional task checklist. The status becomes "Awaiting Requester Confirmation".
 8. **Requester confirms or reopens:**
    - "Yes, issue resolved" closes the job.
@@ -108,7 +108,8 @@ Runs from `backend/index.js` (every minute) and from the expiry sweep middleware
 
 **Routes**
 - Requester: `POST /requests/mine/:id/confirm-service`, `POST /requests/mine/:id/reopen-service`.
-- Team: `GET /requests/service-work-orders`, `GET /requests/service-work-orders/:id`, `POST /requests/service-work-orders/:id/:action` where action is `claim`, `review`, `need-info`, `forward`, `start`, `complete`, `takeover`, or `reject`.
+- Team: `GET /requests/service-work-orders`, `GET /requests/service-work-orders/team-members?team=GSO|ITSS` (suggestions for the person in charge), `GET /requests/service-work-orders/:id`, `POST /requests/service-work-orders/:id/:action` where action is `claim`, `review`, `need-info`, `forward`, `start` (needs `inChargeName`), `progress`, `complete`, `not-finished`, `takeover`, or `reject`.
+- Migrations `013_service_work_in_charge.sql` and `014_service_work_in_charge_name.sql` add `service_work_orders.in_charge_name`. 013 first added a user link, which 014 replaces. Apply both before the backend that uses them is deployed.
 - Pages: `/gso/service-workboard` (GSO_STAFF), `/itss/service-workboard` (IT_STAFF and IT_ADMIN), `/admin/support-queue` (IT_ADMIN).
 
 **Frontend**

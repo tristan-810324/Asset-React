@@ -2,7 +2,7 @@ import JsBarcode from 'jsbarcode'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import { getEmployeeIssuanceBatch, listUnitLabels, recordLabelPrintBatch, reprintUnitLabel, type EmployeeIssuanceBatchDetails, type UnitLabel } from './issuancesApi'
+import { getEmployeeIssuanceBatch, listApprovedIssuanceBatches, listUnitLabels, recordLabelPrintBatch, reprintUnitLabel, type EmployeeIssuanceBatchDetails, type UnitLabel } from './issuancesApi'
 import { RequisitionIssuanceShortcuts } from './requisitionIssuanceShortcuts'
 
 type PrintableBarcodeLabel = Pick<UnitLabel, 'tagCode' | 'itemCode' | 'itemName' | 'itemDescription' | 'unitNumber'> & Pick<UnitLabel, 'holderName' | 'holderCode'>
@@ -29,6 +29,11 @@ const reprintReasons = ['Damaged or unreadable', 'Torn or peeling', 'Label lost 
 
 function formatLabelDate(value: string) {
   return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date(value))
+}
+
+// Consumable stock has no barcodes, so its issuance only gets the recipient sheet.
+function isConsumableBatch(batch: EmployeeIssuanceBatchDetails) {
+  return batch.items.length > 0 && batch.items.every((item) => item.trackingMode === 'quantity')
 }
 
 function toPrintableLabel(label: UnitLabel): PrintableBarcodeLabel {
@@ -65,13 +70,15 @@ function recipientSheetHtml(batch: EmployeeIssuanceBatchDetails, requisitionRefe
       return '<div class="signature"><div class="signature-line"></div><strong>' + signerLabel + ': ' + escapePrintText(recipient.employeeName) + ' (' + escapePrintText(recipient.employeeCode) + ')</strong><span>Signature / date · Confirms receipt of assigned items</span></div>'
     }),
   ].join('')
+  // Consumable stock has no location or purpose on the sheet; only individually tracked items keep those columns.
+  const withPlacement = batch.items.some((item) => item.trackingMode !== 'quantity')
   const rows = batch.items.flatMap((item) => {
     const tags = item.tags.length > 0 ? item.tags : [{ tagCode: `Quantity · ${item.quantity} ${item.unitOfMeasure}`, unitNumber: 0 }]
     return tags.map((tag) => '<tr><td><strong>' + escapePrintText(item.itemName) + '</strong><br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Item ' + tag.unitNumber : ' · ' + item.quantity + ' ' + escapePrintText(item.unitOfMeasure)) + '</small></td>'
-      + '<td>' + escapePrintText(tag.tagCode) + '</td>'
+      + (withPlacement ? '<td>' + escapePrintText(tag.tagCode) + '</td>' : '')
       + '<td>' + escapePrintText(item.recipientEmployeeName) + '<br><small>' + escapePrintText(item.recipientEmployeeCode) + '</small></td>'
-      + '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td>'
-      + '<td>' + escapePrintText(item.recipientPurpose || 'Not specified') + '</td><td>[ ] Received</td></tr>')
+      + (withPlacement ? '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td><td>' + escapePrintText(item.recipientPurpose || 'Not specified') + '</td>' : '')
+      + '<td>[ ] Received</td></tr>')
   }).join('')
   const reference = requisitionReference ? escapePrintText(requisitionReference) : 'Issuance batch #' + escapePrintText(batch.id)
   const logoUrl = escapePrintText(`${window.location.origin}/dyci_img/dual_logo.jpg`)
@@ -85,7 +92,7 @@ function recipientSheetHtml(batch: EmployeeIssuanceBatchDetails, requisitionRefe
     + 'small { color: #64748b; } .signature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 28px 36px; margin-top: 34px; } .signature { min-width: 0; break-inside: avoid; } .signature-line { height: 22px; border-bottom: 1px solid #64748b; margin-bottom: 6px; } .signature strong,.signature span { display: block; } .signature strong { font-size: 11px; } .signature span { margin-top: 2px; color: #475569; font-size: 10px; }'
     + '</style></head><body><div class="header"><img class="logo" src="' + logoUrl + '" alt="DYCI and A.S.SET logo"></div><h1>Asset Recipient Sheet</h1>'
     + '<div class="meta"><p><strong>Request:</strong> ' + reference + '</p><p><strong>Physical handover:</strong> ' + escapePrintText(batch.employeeName) + ' (' + escapePrintText(batch.employeeCode) + ')</p><p><strong>Date:</strong> ' + new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date()) + '</p></div>'
-    + '<table><thead><tr><th>Item</th><th>Barcode</th><th>Assigned to</th><th>Location</th><th>Purpose</th><th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<table><thead><tr><th>Item</th>' + (withPlacement ? '<th>Barcode</th>' : '') + '<th>Assigned to</th>' + (withPlacement ? '<th>Location</th><th>Purpose</th>' : '') + '<th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
     + '<div class="signature-grid">' + signatureBlocks + '</div></body></html>'
 }
 
@@ -119,6 +126,7 @@ function BarcodeSvg({ value, height = 64, className = 'mx-auto h-11 max-w-full' 
 
 export default function AssetLabels() {
   const [unitLabels, setUnitLabels] = useState<UnitLabel[]>([])
+  const [consumableBatches, setConsumableBatches] = useState<EmployeeIssuanceBatchDetails[]>([])
   const [labelSearch, setLabelSearch] = useState('')
   const [labelStatusFilter, setLabelStatusFilter] = useState<LabelFilter>('all')
   const [isLabelsExpanded, setIsLabelsExpanded] = useState(true)
@@ -141,9 +149,10 @@ export default function AssetLabels() {
     let active = true
     const refreshLabels = async () => {
       try {
-        const labels = await listUnitLabels()
+        const [labels, batches] = await Promise.all([listUnitLabels(), listApprovedIssuanceBatches()])
         if (!active) return
         setUnitLabels(labels)
+        setConsumableBatches(batches.filter(isConsumableBatch))
         setLoadError('')
       } catch (error) {
         if (active) setLoadError(error instanceof Error ? error.message : 'Unable to load asset labels.')
@@ -231,6 +240,14 @@ export default function AssetLabels() {
     })).sort((first, second) => (Date.parse(second.issuedAt || '') || 0) - (Date.parse(first.issuedAt || '') || 0))
   }, [visibleUnitLabels])
 
+  // Consumable batches have no barcode labels, so they only appear under All issued, with their recipient sheet.
+  const visibleConsumableBatches = useMemo(() => labelStatusFilter !== 'all' ? [] : consumableBatches.filter((batch) => !labelSearchText || [
+    batch.id,
+    batch.employeeName,
+    batch.employeeCode,
+    ...batch.items.flatMap((item) => [item.itemName, item.itemCode, item.recipientEmployeeName, item.recipientEmployeeCode]),
+  ].some((value) => value.toLowerCase().includes(labelSearchText))), [consumableBatches, labelStatusFilter, labelSearchText])
+
   function previewBarcodeLabels(labels: PrintableBarcodeLabel[]) {
     if (labelsToPrint.length) return
     const uniqueLabels = [...new Map(labels.map((label) => [label.tagCode, label])).values()]
@@ -240,7 +257,7 @@ export default function AssetLabels() {
     setLabelsToPrint(uniqueLabels)
   }
 
-  async function printRecipientSheet(group: UnitLabelGroup) {
+  async function printRecipientSheet(group: Pick<UnitLabelGroup, 'id' | 'batchId' | 'purchaseRequisitionReference'>) {
     if (!group.batchId || recipientSheetLoadingId) return
     const printWindow = window.open('', '_blank', 'width=960,height=760')
     if (!printWindow) {
@@ -328,7 +345,7 @@ export default function AssetLabels() {
 
   const emptyMessage = labelStatusFilter === 'returned' && !returnedUnitLabels.length
     ? 'No returned labels yet.'
-    : !activeUnitLabels.length
+    : !activeUnitLabels.length && !consumableBatches.length
       ? 'No issued asset labels yet.'
       : labelStatusFilter === 'toPrint' && !labelSearchText
         ? 'All labels are printed.'
@@ -408,7 +425,7 @@ export default function AssetLabels() {
               </div>
               <div className="max-h-[58vh] overflow-y-auto bg-slate-50 p-3 sm:p-4">
                 {isLoading && <p role="status" className="rounded-xl bg-white px-4 py-8 text-center text-xs font-semibold text-slate-400">Loading asset labels…</p>}
-                {!isLoading && !loadError && visibleGroups.length > 0 && <div className="space-y-3">
+                {!isLoading && !loadError && (visibleGroups.length > 0 || visibleConsumableBatches.length > 0) && <div className="space-y-3">
                   {visibleGroups.map((group, index) => {
                     const printableLabels = group.labels.filter((label) => label.needsPrinting && !label.isReturned)
                     const printedLabels = group.labels.filter((label) => !label.needsPrinting && !label.isReturned)
@@ -486,8 +503,47 @@ export default function AssetLabels() {
                       </div>
                     </article>
                   })}
+                  {visibleConsumableBatches.map((batch, index) => {
+                    const sheetSource = { id: `batch-${batch.id}`, batchId: batch.id, purchaseRequisitionReference: null }
+                    return <article key={sheetSource.id} className={`overflow-hidden rounded-2xl border-2 border-slate-300/80 ${(visibleGroups.length + index) % 2 === 0 ? 'bg-blue-50/70' : 'bg-white'} shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5`}>
+                      <div className="p-4 sm:p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-extrabold uppercase tracking-wide text-blue-700">Issuance complete</p>
+                            <h3 className="mt-1 truncate text-base font-black text-slate-900">Issued to {batch.employeeName}</h3>
+                            <p className="mt-1 text-sm font-medium text-slate-700">{batch.employeeCode} <span className="px-1 text-slate-400">·</span> Issuance #{batch.id}{batch.decidedAt ? ` · ${formatLabelDate(batch.decidedAt)}` : ''}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">{batch.items.length} {batch.items.length === 1 ? 'item' : 'items'}</span>
+                            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">Consumable</span>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                          <div className="divide-y divide-slate-100">
+                            {batch.items.map((item) => <div key={item.issuanceId} className="px-3 py-2.5">
+                              <p className="text-sm font-semibold text-slate-800">{item.itemName} · {item.quantity} {item.unitOfMeasure}</p>
+                              <p className="mt-0.5 text-sm text-slate-700">For <span className="font-bold">{item.recipientEmployeeName}</span> · {item.recipientEmployeeCode}</p>
+                            </div>)}
+                          </div>
+                        </div>
+                        <p className="mt-3 border-t border-slate-200 pt-3 text-xs font-semibold text-slate-600">Stock deducted. No barcode labels for consumable items, so only the recipient sheet is printed.</p>
+
+                        <div className="mt-4">
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-600">Print steps</p>
+                          <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                            <div className="flex min-w-0 items-start gap-2.5">
+                              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-blue-700 text-xs font-black text-white">1</span>
+                              <div><h4 className="text-sm font-extrabold text-slate-900">Full issuance sheet</h4><p className="mt-0.5 text-sm text-slate-700">All items and assigned users</p></div>
+                            </div>
+                            <button type="button" disabled={recipientSheetLoadingId === sheetSource.id} onClick={() => void printRecipientSheet(sheetSource)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">{recipientSheetLoadingId === sheetSource.id ? 'Preparing…' : 'Print full sheet'}</button>
+                          </section>
+                        </div>
+                      </div>
+                    </article>
+                  })}
                 </div>}
-                {!isLoading && !loadError && visibleGroups.length === 0 && <p className="rounded-xl bg-white px-4 py-8 text-center text-xs font-semibold text-slate-400">{emptyMessage}</p>}
+                {!isLoading && !loadError && visibleGroups.length === 0 && visibleConsumableBatches.length === 0 && <p className="rounded-xl bg-white px-4 py-8 text-center text-xs font-semibold text-slate-400">{emptyMessage}</p>}
               </div>
             </div>}
           </section>

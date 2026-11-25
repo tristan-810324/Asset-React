@@ -12,8 +12,8 @@ const MODULES: { key: ModuleKey; label: string; entityTypes: string[] }[] = [
   { key: 'repair', label: 'Repair & Maintenance', entityTypes: ['item'] },
 ]
 
-const HEADERS = ['Date', 'Reference', 'Details', 'Action']
-const HEADER_WIDTHS: Record<string, number> = { Date: 170, Reference: 240, Details: 380, Action: 130 }
+const HEADERS = ['Name', 'Date & time', 'Reference', 'Details', 'Action']
+const HEADER_WIDTHS: Record<string, number> = { Name: 170, 'Date & time': 150, Reference: 150, Details: 260, Action: 130 }
 const ATTENTION_ACTIONS = ['Deleted', 'Deactivated']
 const DONE_ACTIONS = ['Created', 'Activated', 'Completed', 'Repaired', 'Confirmed', 'Returned', 'Approved', 'Verified']
 
@@ -39,11 +39,19 @@ const actionLabel = (action: string) => {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : '—'
 }
 
+// One history row: the record it was about, when, what was done, and the reason.
+type HistoryView = { id: string; date: string; day: string; name: string; reference: string; details: string; action: string }
+const historyAvatarTone = (index: number) => (index % 2 === 0
+  ? 'border-[#d6b333] bg-[#17377f] text-white'
+  : 'border-[#17377f] bg-[#d6b333] text-[#17377f]')
+const initialsOf = (name: string) => name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '—'
+// The record key, shown in its own column because the name has its own column.
+const keyText = (row: { name: string; reference: string }) => (row.reference === row.name ? '—' : row.reference.replace(`${row.name} · `, ''))
 const actionTone = (label: string) => ATTENTION_ACTIONS.includes(label)
-  ? 'border-rose-300 bg-rose-50 text-rose-700'
+  ? 'bg-rose-50 text-rose-700'
   : DONE_ACTIONS.includes(label)
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-    : 'border-blue-200 bg-blue-50 text-blue-700'
+    ? 'bg-emerald-50 text-emerald-700'
+    : 'bg-blue-50 text-blue-700'
 
 const reportActionStyle = (label: string) => ATTENTION_ACTIONS.includes(label)
   ? 'background:#fff1f2;color:#be123c;'
@@ -51,22 +59,25 @@ const reportActionStyle = (label: string) => ATTENTION_ACTIONS.includes(label)
     ? 'background:#ecfdf5;color:#047857;'
     : 'background:#eff6ff;color:#1d4ed8;'
 
-// The same styled report the GSO History exports use: a banner, a summary, then the table.
+// The styled report used by both exports, the same look as the GSO History exports.
 function reportParts(title: string, generatedAt: string, rows: string[][]) {
+  const statusIndex = HEADERS.length - 1
   const widths = HEADERS.map((label) => HEADER_WIDTHS[label] ?? 160)
-  const totalWidth = widths.reduce((sum, width) => sum + width, 0)
-  const columns = widths.map((width) => `<col style="width:${((width / totalWidth) * 100).toFixed(1)}%;">`).join('')
-  const attention = rows.filter((cells) => ATTENTION_ACTIONS.includes(cells[HEADERS.length - 1])).length
+  const attention = rows.filter((cells) => ATTENTION_ACTIONS.includes(cells[statusIndex])).length
   const header = `<table style="width:100%;margin-bottom:14px;border-collapse:collapse;"><tr><td colspan="${HEADERS.length}" style="padding:18px 20px;background:#09244a;color:#ffffff;">
     <div style="font-size:9pt;font-weight:bold;letter-spacing:1.2px;color:#bfdbfe;">ASSET CUSTODY &amp; TRACKING</div>
     <h1 style="margin:7px 0 4px;font-size:22pt;color:#ffffff;">${escapeHtml(title)}</h1>
     <div style="font-size:9pt;color:#dbeafe;">Generated ${escapeHtml(generatedAt)} · Actions performed by you as IT Admin</div>
   </td></tr></table>`
+  // The two tiles split the table's width between them, so they line up with the columns in Excel and Word.
   const firstSpan = Math.ceil(HEADERS.length / 2)
   const tile = (label: string, value: number, background: string, color: string, span: number) => `<td colspan="${span}" style="padding:10px 12px;border:1px solid #dbe3ef;background:${background};"><div style="font-size:8pt;color:${color};text-transform:uppercase;">${label}</div><strong style="font-size:16pt;color:${color};">${value}</strong></td>`
   const summary = `<table style="width:100%;margin-bottom:16px;border-collapse:collapse;"><tr>${tile('Records in this report', rows.length, '#f8fafc', '#09244a', firstSpan)}${tile('Needs attention', attention, '#fff1f2', '#be123c', HEADERS.length - firstSpan)}</tr></table>`
-  const head = HEADERS.map((label) => `<th style="padding:9px 10px;background:#09244a;color:#ffffff;border:1px solid #09244a;text-align:left;">${label}</th>`).join('')
-  const body = rows.map((cells, index) => `<tr style="background:${index % 2 ? '#f8fafc' : '#ffffff'};">${cells.map((cell, column) => column === HEADERS.length - 1
+  // Columns take their share of the full table width, so Word and Excel fill the same space as the banner.
+  const totalWidth = widths.reduce((sum, width) => sum + width, 0)
+  const columns = widths.map((width) => `<col style="width:${((width / totalWidth) * 100).toFixed(1)}%;">`).join('')
+  const head = HEADERS.map((label) => `<th style="padding:9px 10px;background:#09244a;color:#ffffff;border:1px solid #09244a;text-align:left;">${escapeHtml(label)}</th>`).join('')
+  const body = rows.map((cells, index) => `<tr style="background:${index % 2 ? '#f8fafc' : '#ffffff'};">${cells.map((cell, column) => column === statusIndex
     ? `<td style="padding:8px 10px;border:1px solid #dbe3ef;vertical-align:top;"><span style="${reportActionStyle(cell)}display:inline-block;padding:4px 7px;font-weight:bold;">${escapeHtml(cell)}</span></td>`
     : `<td style="padding:8px 10px;border:1px solid #dbe3ef;vertical-align:top;">${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')
   const table = `<table style="width:100%;border-collapse:collapse;font-size:9pt;table-layout:fixed;"><colgroup>${columns}</colgroup><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`
@@ -82,6 +93,7 @@ export default function AdminHistory() {
   const [actionFilter, setActionFilter] = useState('all')
   const [dateFilter, setDateFilter] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('newest')
+  const [detailRow, setDetailRow] = useState<HistoryView | null>(null)
 
   useEffect(() => {
     let active = true
@@ -127,21 +139,22 @@ export default function AdminHistory() {
       : filtered
   }, [moduleRows, search, actionFilter, dateFilter, sortKey])
 
-  const exportRows = visible.map((row) => [formatDateTime(row.date), row.reference, row.details, row.action])
-  const generatedAt = new Date().toLocaleString('en-PH')
+  const exportRows = visible.map((row) => [row.name, formatDateTime(row.date), keyText(row), row.details, row.action])
+  const generatedAt = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date())
   const title = `My ${current.label} history`
   const reportName = current.label.replaceAll(/[^A-Za-z0-9]+/g, '_').replaceAll(/^_|_$/g, '')
 
+  // CSV opens as a styled spreadsheet, like the GSO History export.
   const exportCsv = () => {
     const report = reportParts(title, generatedAt, exportRows)
     const workbook = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><meta name="ProgId" content="Excel.Sheet"><title>${escapeHtml(title)}</title><style>body { font-family: Calibri, Arial, sans-serif; color: #1e293b; } table { border-collapse: collapse; }</style></head><body>${report.header}${report.summary}${report.table}</body></html>`
-    downloadFile(`IT_Admin_${reportName}_History_${today}.xls`, ['﻿', workbook], 'application/vnd.ms-excel;charset=utf-8')
+    downloadFile(`IT_Admin_${reportName}_Styled_Report_${today}.xls`, ['﻿', workbook], 'application/vnd.ms-excel;charset=utf-8')
   }
 
   const exportWord = () => {
     const report = reportParts(title, generatedAt, exportRows)
     const wordDocument = `<!DOCTYPE html><html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>@page Section1 { size: 11in 8.5in; mso-page-orientation: landscape; margin: 0.45in; } div.Section1 { page: Section1; } body { font-family: Arial, sans-serif; color: #1e293b; font-size: 10pt; } table { border-collapse: collapse; } thead { display: table-header-group; } tr { page-break-inside: avoid; }</style></head><body><div class="Section1">${report.header}${report.summary}${report.table}</div></body></html>`
-    downloadFile(`IT_Admin_${reportName}_History_${today}.doc`, ['﻿', wordDocument], 'application/msword;charset=utf-8')
+    downloadFile(`IT_Admin_${reportName}_Styled_Report_${today}.doc`, ['﻿', wordDocument], 'application/msword;charset=utf-8')
   }
 
   const changeModule = (key: ModuleKey) => {
@@ -184,7 +197,7 @@ export default function AdminHistory() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-5 sm:px-6">
           <div>
             <h2 className="text-base font-black tracking-tight text-slate-900">{current.label} history</h2>
-            <p className="mt-1 text-xs font-medium text-slate-500">Use the filters to narrow the list. Generate CSV or Word exports what is shown.</p>
+            <p className="mt-1 text-xs font-medium text-slate-500">Click on any row to open the full record. Generate CSV or Word exports what is shown.</p>
             <span className="mt-2 inline-flex rounded-lg bg-blue-50 px-3 py-2 text-[0.65rem] font-extrabold text-blue-700">{loading ? 'Loading…' : `${visible.length} record(s) found`}</span>
           </div>
           <div className="flex flex-wrap items-end gap-2">
@@ -232,32 +245,69 @@ export default function AdminHistory() {
 
         {error && <p role="alert" className="px-5 py-4 text-xs font-bold text-rose-700">{error}</p>}
         {!error && !loading && visible.length === 0 && <p className="px-5 py-12 text-center text-xs font-semibold text-slate-500">{moduleRows.length === 0 ? `No ${current.label.toLowerCase()} history yet.` : 'No records match these filters.'}</p>}
-        {visible.length > 0 && <div className="max-h-144 overflow-auto border-t border-slate-100">
-          <table className="w-full min-w-200 text-left text-xs">
+        {visible.length > 0 && <div className="inventory-list-scrollbar max-h-144 overflow-auto border-t border-slate-100">
+          <table className="min-w-200 w-full text-left">
             <thead className="bg-slate-50/70 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-slate-400">
               <tr>
-                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Date</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Name</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Date &amp; time</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Reference</th>
                 <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Details</th>
-                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5">Action</th>
+                <th className="sticky top-0 z-10 bg-slate-50 px-5 py-3.5 sm:px-6">Action</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {visible.map((row) => (
-                <tr key={row.id} className="align-top transition hover:bg-blue-50/40">
-                  <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-700 sm:px-6">{formatDateTime(row.date)}</td>
-                  <td className="px-5 py-4">
-                    <p className="font-extrabold text-slate-900">{row.name}</p>
-                    {row.reference !== row.name && <p className="mt-0.5 text-[0.68rem] text-slate-500">{row.reference.replace(`${row.name} · `, '')}</p>}
+            <tbody>
+              {visible.map((row, rowIndex) => (
+                <tr key={row.id} onClick={() => setDetailRow(row)} className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50/50">
+                  <td className="px-5 py-4 sm:px-6">
+                    <div className="flex min-w-52 items-center gap-3">
+                      <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-xs font-black shadow-sm ${historyAvatarTone(rowIndex)}`}>{initialsOf(row.name)}</span>
+                      <span className="min-w-0 text-xs font-extrabold text-slate-800">{row.name}</span>
+                    </div>
                   </td>
-                  <td className="max-w-md px-5 py-4 leading-relaxed text-slate-600">{row.details}</td>
-                  <td className="px-5 py-4">
-                    <span className={`inline-flex rounded-lg border px-2.5 py-1 text-[0.65rem] font-extrabold ${actionTone(row.action)}`}>{row.action}</span>
-                  </td>
+                  <td className="px-5 py-4"><span className="block whitespace-nowrap text-xs font-semibold text-slate-700">{formatDateTime(row.date)}</span></td>
+                  <td className="px-5 py-4"><span className="block text-xs font-extrabold text-slate-900">{keyText(row)}</span></td>
+                  <td className="px-5 py-4"><span className="block max-w-md text-xs text-slate-600">{row.details}</span></td>
+                  <td className="px-5 py-4 sm:px-6"><span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[0.62rem] font-extrabold ${actionTone(row.action)}`}>{row.action}</span></td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>}
+
+        {detailRow && <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/65 p-3 backdrop-blur-sm sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailRow(null) }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="admin-history-detail-title" className="flex max-h-[88vh] min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl shadow-slate-950/30">
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4 sm:px-6">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-full border-2 text-sm font-black ${historyAvatarTone(0)}`}>{initialsOf(detailRow.name)}</div>
+                <div className="min-w-0">
+                  <p className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em] text-blue-600">{current.label}</p>
+                  <h2 id="admin-history-detail-title" className="mt-0.5 truncate text-lg font-black text-slate-900">{detailRow.name}</h2>
+                  <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{keyText(detailRow)}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setDetailRow(null)} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50">Close</button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50 px-4 py-5 sm:px-6">
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <span className={`inline-flex rounded-full px-3 py-1 text-xs font-extrabold ${actionTone(detailRow.action)}`}>{detailRow.action}</span>
+                <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {[
+                    { label: 'Name', value: detailRow.name, wide: false },
+                    { label: 'Date & time', value: formatDateTime(detailRow.date), wide: false },
+                    { label: 'Reference', value: keyText(detailRow), wide: false },
+                    { label: 'Reason', value: detailRow.details, wide: true },
+                  ].map((fact) => (
+                    <div key={fact.label} className={`rounded-xl bg-slate-50 px-4 py-3 ${fact.wide ? 'sm:col-span-2' : ''}`}>
+                      <dt className="text-xs font-semibold text-slate-500">{fact.label}</dt>
+                      <dd className="mt-1 break-words text-sm font-bold text-slate-900">{fact.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            </div>
+          </section>
         </div>}
       </section>
     </AdminPageFrame>

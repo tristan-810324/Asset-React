@@ -108,7 +108,7 @@ function pageFromPath(path: string): RequesterPage {
   return 'Home'
 }
 
-function IdentityPrompt({ identity, onSaved, onClose }: { identity: RequesterIdentity; onSaved: (next: RequesterIdentity) => void; onClose: () => void }) {
+export function IdentityPrompt({ identity, onSaved, onClose }: { identity: RequesterIdentity; onSaved: (next: RequesterIdentity) => void; onClose: () => void }) {
   const canEdit = identity.status === 'Incomplete' || identity.status === 'Needs Correction' || identity.status === 'Rejected'
   return <div className="fixed inset-0 z-100 grid place-items-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm" role="presentation">
         <section role="dialog" aria-modal="true" aria-labelledby="requester-identity-title" className="my-4 flex max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-2xl shadow-slate-950/30">

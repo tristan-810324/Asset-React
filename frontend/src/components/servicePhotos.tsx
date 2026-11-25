@@ -1,4 +1,5 @@
-import { useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { createPortal } from 'react-dom'
 
 // Photos on a job / service request. They are sent as small JPEG data URLs (see the backend photo limits).
 export type ServicePhoto = {
@@ -106,18 +107,53 @@ const SOURCE_LABELS: Record<string, string> = {
   STAFF_COMPLETION: 'Staff at completion',
 }
 
+// Photos sit side by side. Pressing one opens it larger in a pop-up.
 export function PhotoGallery({ photos }: { photos: ServicePhoto[] }) {
+  const [enlarged, setEnlarged] = useState<ServicePhoto | null>(null)
   if (photos.length === 0) return null
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-      {photos.map((photo, index) => (
-        <figure key={photo.id} className="overflow-hidden rounded-xl border-2 border-slate-300 bg-white shadow-sm">
-          <img src={photo.dataUrl} alt={SOURCE_LABELS[photo.source] ?? `Photo ${index + 1}`} className="h-44 w-full object-cover" />
-          <figcaption className="px-3 py-2 text-sm font-bold text-slate-800">
-            {SOURCE_LABELS[photo.source] ?? 'Photo'}
-          </figcaption>
-        </figure>
-      ))}
-    </div>
+    <>
+      <div className="flex flex-wrap gap-3">
+        {photos.map((photo, index) => {
+          const label = SOURCE_LABELS[photo.source] ?? `Photo ${index + 1}`
+          return (
+            <figure key={photo.id} className="w-36 overflow-hidden rounded-xl border-2 border-slate-300 bg-white shadow-sm sm:w-44">
+              <button type="button" onClick={() => setEnlarged(photo)} aria-label={`Open photo: ${label}`} className="block w-full bg-slate-100 outline-none transition hover:opacity-90 focus-visible:ring-2 focus-visible:ring-blue-500">
+                <img src={photo.dataUrl} alt={label} className="h-32 w-full object-contain sm:h-36" />
+              </button>
+              <figcaption className="truncate px-2.5 py-2 text-xs font-bold text-slate-800">{label}</figcaption>
+            </figure>
+          )
+        })}
+      </div>
+      {enlarged && <PhotoPopup photo={enlarged} onClose={() => setEnlarged(null)} />}
+    </>
+  )
+}
+
+// The enlarged photo. Escape, the Close button, or a press outside the picture closes it.
+function PhotoPopup({ photo, onClose }: { photo: ServicePhoto; onClose: () => void }) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+  const label = SOURCE_LABELS[photo.source] ?? 'Photo'
+  const when = photo.createdAt ? new Date(photo.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }) : ''
+  const details = [photo.addedBy, when].filter(Boolean).join(' · ')
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <figure role="dialog" aria-modal="true" aria-label={label} onClick={(event) => event.stopPropagation()} className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <img src={photo.dataUrl} alt={label} className="max-h-[70vh] w-full bg-slate-100 object-contain" />
+        <figcaption className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
+          <span className="min-w-0">
+            <span className="block text-sm font-bold text-slate-800">{label}</span>
+            {details && <span className="block text-xs font-medium text-slate-500">{details}</span>}
+          </span>
+          <button type="button" onClick={onClose} className="shrink-0 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50">Close</button>
+        </figcaption>
+      </figure>
+    </div>,
+    document.body,
   )
 }

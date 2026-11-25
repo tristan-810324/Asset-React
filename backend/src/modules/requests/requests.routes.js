@@ -26,6 +26,7 @@ router.post('/mine/:id/reopen-service', requireRole('BORROWER'), requestsControl
 router.post('/mine/:id/service-info', requireRole('BORROWER'), serviceWorkOrdersController.addRequesterInfo);
 
 router.get('/service-work-orders', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.listWorkOrders);
+router.get('/service-work-orders/team-members', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.listTeamMembers);
 router.get('/service-work-orders/:id', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.getWorkOrder);
 router.post('/service-work-orders/:id/:action', requireRole(...SERVICE_TEAM_ROLES), serviceWorkOrdersController.actOnWorkOrder);
 

@@ -21,6 +21,8 @@ const {
   validateRequesterInfo,
   validateReopen,
   validateReject,
+  validateStart,
+  validateTeam,
   RESOLUTION_LABELS,
 } = require('./service-work-orders.validation');
 
@@ -43,7 +45,6 @@ function teamPath(team) {
 function teamName(team) {
   return team === 'ITSS' ? 'ITSS Support' : 'GSO Facilities';
 }
-
 function toManilaDate(value = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -140,7 +141,6 @@ function assertAssignedTo(user, current) {
     invalid('Claim this job first. Only the staff member who claimed it can change it.', 403);
   }
 }
-
 function assertNonTerminal(current) {
   if (TERMINAL_SERVICE_STATUSES.has(current.status)) invalid('This service request is already closed.', 409);
 }
@@ -241,6 +241,13 @@ async function getWorkOrder(idValue, user) {
   if (!workOrder) invalid('Service work order not found.', 404);
   assertCurrentTeamAccess(user, workOrder);
   return presentWorkOrder(workOrder);
+}
+
+// The staff members who can be put in charge of a job in this team's queue.
+async function listTeamMembers(query, user) {
+  const team = validateTeam(query);
+  assertTeamAccess(user, team);
+  return repository.listTeamMembers(TEAM_ROLES[team]);
 }
 
 // Claim only assigns the job. The staff member then starts the review, or starts work directly.
@@ -364,9 +371,10 @@ async function forwardWorkOrder(idValue, input, user) {
   return workOrder;
 }
 
+// Starting work names the person in charge, typed as a name. The claimed staff member starts the job.
 async function startWork(idValue, input, user) {
   const id = requestId(idValue);
-  const note = validateNote(input, 'Start note');
+  const { note, inChargeName } = validateStart(input);
   const result = await repository.withLockedWorkOrder(id, async (client, current) => {
     assertCurrentTeamAccess(user, current);
     assertNonTerminal(current);
@@ -375,18 +383,22 @@ async function startWork(idValue, input, user) {
       invalid('Work can start only on a claimed job that is not waiting for information.', 409);
     }
     await repository.updateRequestStatus(client, { requestId: id, status: 'In Progress' });
-    await repository.updateWorkOrder(client, id, { startedAt: new Date() });
+    await repository.updateWorkOrder(client, id, { startedAt: new Date(), inChargeStaffName: inChargeName });
     await repository.insertHistory(client, {
       requestId: id,
       previousStatus: current.status,
       status: 'In Progress',
-      note: statusNote('Work started.', note),
+      note: statusNote(`Work started. In charge: ${inChargeName}.`, note),
       changedByUserId: user.id,
     });
   });
   const workOrder = presentWorkOrder(result.workOrder);
   await notifyRequester(workOrder, 'Work started', 'The assigned team started work on your request.', `service-started:${id}:${workOrder.startedAt || Date.now()}`);
-  await writeAudit(workOrder, user, { reason: 'Service work started.', oldValues: { status: result.current.status } });
+  await writeAudit(workOrder, user, {
+    reason: `Service work started. In charge: ${inChargeName}.`,
+    oldValues: { status: result.current.status },
+    newValues: { inChargeStaffName: inChargeName },
+  });
   return workOrder;
 }
 
@@ -726,6 +738,7 @@ async function runServiceWorkOrderAutomation() {
 module.exports = {
   presentWorkOrder,
   listWorkOrders,
+  listTeamMembers,
   getWorkOrder,
   claimWorkOrder,
   reviewWorkOrder,

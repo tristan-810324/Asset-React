@@ -50,15 +50,16 @@ export function purchaseLineReadyForIssuance(line: PurchaseRequisitionLine) {
     && Number(line.reservedQuantity || 0) >= Number(line.requestedQuantity || 0)
 }
 
-// A request enters Main Issuance only when every requested line is fully reserved.
+// A request enters Main Issuance only when every requested line is fully reserved, or while the GSO Head is still
+// deciding and some items are already in stock (those can be issued now). Rejected lines are left out.
 export function purchaseRequisitionReadyForIssuance(request: ServiceRequest) {
-  const lines = linesOf(request)
+  const lines = linesOf(request).filter((line) => line.routeStatus !== 'REJECTED')
   const complete = lines.length > 0 && lines.every((line) => (
     ['READY_FOR_STAFF', 'PARTIALLY_ISSUED', 'HANDOVER_PENDING', 'ISSUED'].includes(line.routeStatus)
       && Number(line.financeQuantity || 0) === 0
       && Number(line.reservedQuantity || 0) >= Number(line.requestedQuantity || 0)
   ))
-  return complete && lines.some(purchaseLineReadyForIssuance)
+  return (complete || request.status === 'Under Review') && lines.some(purchaseLineReadyForIssuance)
 }
 
 export const FINANCE_STATUSES = ['GSO Endorsed', 'Finance Handoff Pending', 'Finance Handoff Failed', 'Sent to Finance']
