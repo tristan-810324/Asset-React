@@ -161,22 +161,24 @@ export default function RequesterVerification({ admin = false }: { admin?: boole
         <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
           <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
           <div className="relative">
-          <span className="inline-flex rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
-            GSO identity checks
+          <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-400" /> {admin ? 'IT Admin workspace' : 'GSO identity checks'}
           </span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Requester Verification</h1>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
             Check staff details and approve requester accounts before they can submit requests.
           </p>
-          <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Employees and requester pages">
-            <a
-              href="/gso/employees"
-              className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              View Employees
-            </a>
-          </nav>
           </div>
+          <nav className="relative mt-5 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label={admin ? 'User management pages' : 'Employees and requester pages'}>
+            {admin ? (
+              <>
+                <a href="/admin/users" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">User management</a>
+                <a href="/admin/requester-verification" aria-current="page" className="rounded-xl border border-white bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition">Requester Verification</a>
+              </>
+            ) : (
+              <a href="/gso/employees" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">View Employees</a>
+            )}
+          </nav>
         </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Verification summary">

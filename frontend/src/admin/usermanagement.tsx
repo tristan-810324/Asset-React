@@ -269,21 +269,16 @@ export default function UserManagement() {
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">User management</h1>
           <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">View every account, add IT Staff, GSO Staff, GSO Head, or requester logins, edit names and positions, and deactivate accounts.</p>
         </div>
-        <div className="relative mt-6 flex gap-2 border-t border-blue-400/20 pt-4">
+        <nav className="relative mt-5 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="User management pages">
           <button
             type="button"
             onClick={openAddModal}
-            className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50"
+            className="rounded-xl border border-white bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50"
           >
             + Add user account
           </button>
-          <a
-            href="/admin/requester-verification"
-            className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-extrabold text-white transition hover:bg-white/15"
-          >
-            Requester Verification
-          </a>
-        </div>
+          <a href="/admin/requester-verification" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">Requester Verification</a>
+        </nav>
       </section>
 
       <section className="mt-6 grid gap-3 sm:grid-cols-3 sm:gap-4" aria-label="System user summary">
