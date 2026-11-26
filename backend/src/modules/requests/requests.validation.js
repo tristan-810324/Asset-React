@@ -42,7 +42,7 @@ function text(value, label, max = 500, { optional = false } = {}) {
   return normalized;
 }
 
-function date(value, label, { optional = false, notPast = false, notFuture = false } = {}) {
+function date(value, label, { optional = false, notPast = false, notFuture = false, beforeToday = false } = {}) {
   if (optional && (value === undefined || value === null || value === '')) return '';
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) invalid(`Invalid ${label}.`);
   const [year, month, day] = value.split('-').map(Number);
@@ -54,6 +54,12 @@ function date(value, label, { optional = false, notPast = false, notFuture = fal
     const today = new Date();
     const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     if (value < todayIso) invalid(`${label} cannot be in the past.`);
+  }
+  if (beforeToday) {
+    // Only days that have already ended: today is still open and cannot be reported yet.
+    const today = new Date();
+    const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    if (value >= todayIso) invalid(`${label} must be a day that has already ended.`);
   }
   if (notFuture) {
     const today = new Date();
@@ -168,7 +174,7 @@ function validateCreateRequest(input) {
     // The category decides the receiving team and the starting priority. The client's values are never trusted.
     const serviceCategory = text(data.serviceCategory, 'service category', 60);
     if (!SERVICE_CATEGORIES.has(serviceCategory)) invalid('Choose a valid service category.');
-    const requiredDate = date(data.requiredDate, 'target date', { notPast: true });
+    const requiredDate = date(data.requiredDate, 'target date', { beforeToday: true });
     // "Others" needs the requester to say what the service is. The text is ignored for every other category.
     const serviceOther = serviceCategory === 'OTHERS' ? text(data.serviceOther, 'description of the service', 200) : '';
     return {

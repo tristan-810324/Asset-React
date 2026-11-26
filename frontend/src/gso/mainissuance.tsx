@@ -160,22 +160,25 @@ function printRecipientSheet(batch: SubmittedBatch, requisitionReference: string
   const withPlacement = batch.items.some((item) => item.trackingMode !== 'quantity')
   const rows = batch.items.map((item) => {
     const tags = item.tags.length > 0 ? item.tags : [{ tagCode: 'Quantity allocation', unitNumber: 0 }]
-    return tags.map((tag) => '<tr><td>' + escapePrintText(item.itemName) + '<br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Item ' + tag.unitNumber : ' · Qty ' + item.quantity) + '</small></td>'
+    return tags.map((tag) => '<tr><td><strong>' + escapePrintText(item.itemName) + '</strong><br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Item ' + tag.unitNumber : ' · Qty ' + item.quantity) + '</small></td>'
       + '<td>' + escapePrintText(tag.tagCode) + '</td>'
-      + '<td><strong>' + escapePrintText(item.recipientEmployeeName) + '</strong><br><small>' + escapePrintText(item.recipientEmployeeCode) + '</small></td>'
-      + (withPlacement ? '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td><td>' + escapePrintText(item.recipientPurpose || 'Not specified') + '</td>' : '')
+      + '<td>' + escapePrintText(item.recipientEmployeeName) + '<br><small>' + escapePrintText(item.recipientEmployeeCode) + '</small></td>'
+      + (withPlacement ? '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td>' : '')
       + '<td>[ ] Received</td></tr>').join('')
   }).join('')
   const reference = requisitionReference ? escapePrintText(requisitionReference) : 'Issuance batch #' + escapePrintText(batch.id)
+  const logoUrl = escapePrintText(`${window.location.origin}/dyci_img/dual_logo.jpg`)
   const html = '<!doctype html><html><head><meta charset="utf-8"><title>Asset Distribution Receipt</title><style>'
     + '@page { size: A4 landscape; margin: 14mm; } body { font: 12px Arial, sans-serif; color: #0f172a; }'
     + 'h1 { margin: 0 0 6px; font-size: 20px; } p { margin: 4px 0; color: #475569; }'
+    + '* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }'
+    + '.header { border-bottom: 2px solid #09244a; padding-bottom: 10px; margin-bottom: 14px; } .logo { height: 62px; display: block; }'
     + '.meta { margin: 16px 0; display: flex; gap: 40px; } table { width: 100%; border-collapse: collapse; margin-top: 14px; }'
     + 'th,td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; } th { background: #eff6ff; font-size: 10px; text-transform: uppercase; }'
     + 'small { color: #64748b; } .signature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 28px 36px; margin-top: 34px; } .signature { min-width: 0; break-inside: avoid; } .signature-line { height: 22px; border-bottom: 1px solid #64748b; margin-bottom: 6px; } .signature strong,.signature span { display: block; } .signature strong { font-size: 11px; } .signature span { margin-top: 2px; color: #475569; font-size: 10px; }'
-    + '</style></head><body><h1>Asset Distribution Receipt</h1>'
+    + '</style></head><body><div class="header"><img class="logo" src="' + logoUrl + '" alt="DYCI and A.S.SET logo"></div><h1>Asset Distribution Receipt</h1>'
     + '<div class="meta"><p><strong>Request:</strong> ' + reference + '</p><p><strong>Head:</strong> ' + escapePrintText(batch.employeeName) + ' (' + escapePrintText(batch.employeeCode) + ')</p><p><strong>Date:</strong> ' + new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date()) + '</p></div>'
-    + '<table><thead><tr><th>Item</th><th>Barcode</th><th>Assigned to</th>' + (withPlacement ? '<th>Location</th><th>Purpose</th>' : '') + '<th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<table><thead><tr><th>Item</th><th>Barcode</th><th>Assigned to</th>' + (withPlacement ? '<th>Location</th>' : '') + '<th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
     + '<div class="signature-grid">' + signatureBlocks + '</div></body></html>'
   printWindow.document.open()
   printWindow.document.write(html)
@@ -1267,7 +1270,7 @@ export default function MainIssuance() {
       `}</style>
       <div className="mx-auto max-w-7xl pb-8">
         <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
           <div className="relative">
           <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff issuance</span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Main Issuance</h1>

@@ -77,7 +77,7 @@ function recipientSheetHtml(batch: EmployeeIssuanceBatchDetails, requisitionRefe
     return tags.map((tag) => '<tr><td><strong>' + escapePrintText(item.itemName) + '</strong><br><small>' + escapePrintText(item.itemCode) + (tag.unitNumber ? ' · Item ' + tag.unitNumber : ' · ' + item.quantity + ' ' + escapePrintText(item.unitOfMeasure)) + '</small></td>'
       + (withPlacement ? '<td>' + escapePrintText(tag.tagCode) + '</td>' : '')
       + '<td>' + escapePrintText(item.recipientEmployeeName) + '<br><small>' + escapePrintText(item.recipientEmployeeCode) + '</small></td>'
-      + (withPlacement ? '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td><td>' + escapePrintText(item.recipientPurpose || 'Not specified') + '</td>' : '')
+      + (withPlacement ? '<td>' + escapePrintText(item.recipientLocation || 'Not specified') + '</td>' : '')
       + '<td>[ ] Received</td></tr>')
   }).join('')
   const reference = requisitionReference ? escapePrintText(requisitionReference) : 'Issuance batch #' + escapePrintText(batch.id)
@@ -92,7 +92,7 @@ function recipientSheetHtml(batch: EmployeeIssuanceBatchDetails, requisitionRefe
     + 'small { color: #64748b; } .signature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 28px 36px; margin-top: 34px; } .signature { min-width: 0; break-inside: avoid; } .signature-line { height: 22px; border-bottom: 1px solid #64748b; margin-bottom: 6px; } .signature strong,.signature span { display: block; } .signature strong { font-size: 11px; } .signature span { margin-top: 2px; color: #475569; font-size: 10px; }'
     + '</style></head><body><div class="header"><img class="logo" src="' + logoUrl + '" alt="DYCI and A.S.SET logo"></div><h1>Asset Recipient Sheet</h1>'
     + '<div class="meta"><p><strong>Request:</strong> ' + reference + '</p><p><strong>Physical handover:</strong> ' + escapePrintText(batch.employeeName) + ' (' + escapePrintText(batch.employeeCode) + ')</p><p><strong>Date:</strong> ' + new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date()) + '</p></div>'
-    + '<table><thead><tr><th>Item</th>' + (withPlacement ? '<th>Barcode</th>' : '') + '<th>Assigned to</th>' + (withPlacement ? '<th>Location</th><th>Purpose</th>' : '') + '<th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<table><thead><tr><th>Item</th>' + (withPlacement ? '<th>Barcode</th>' : '') + '<th>Assigned to</th>' + (withPlacement ? '<th>Location</th>' : '') + '<th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
     + '<div class="signature-grid">' + signatureBlocks + '</div></body></html>'
 }
 
@@ -389,7 +389,7 @@ export default function AssetLabels() {
       <GsoPageFrame activePage="Asset Labels" searchPlaceholder="Search asset labels...">
         <div className="mx-auto max-w-7xl space-y-6 pb-8">
           <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-            <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+            <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
             <div className="relative">
               <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> GSO Staff workspace</span>
               <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Print Asset Labels</h1>

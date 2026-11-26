@@ -1,5 +1,6 @@
 const repository = require('./charges.repository');
 const auditRepository = require('../audit/audit.repository');
+const requesterAlerts = require('../notifications/requester-alerts');
 
 const invalid = (message, status = 400) => Object.assign(new Error(message), { status });
 const KINDS = new Set(['FACILITY', 'RETURN', 'LOSS']);
@@ -51,6 +52,18 @@ async function payCharge(kindValue, refValue, input, user) {
   const note = typeof input.note === 'string' ? input.note.trim().slice(0, 500) : '';
 
   const charge = await repository.payCharge({ kind, ref, receiptData, receiptName, note, userId: user.id, amountPaid });
+
+  // The requester is told the charge is settled, in the app and by email; the receipt shows in their request details.
+  const recipient = await repository.findChargeRecipient(kind, ref);
+  await requesterAlerts.notifyRequester({
+    userId: recipient?.userId,
+    employeeCode: recipient?.employeeCode,
+    employeeEmail: recipient?.employeeEmail,
+    title: 'Your payment is settled',
+    message: `Your payment of ${pesoText(amountPaid)} for ${charge.itemName || 'the damaged item'} is recorded and settled by GSO. The receipt is in your request details.`,
+    href: recipient?.requestId ? `/requester/requests/${recipient.requestId}` : '/requester/my-requests',
+    dedupeKey: `charge-settled:${kind}:${ref}`,
+  });
 
   // The uploader is recorded in the audit log, so a fake receipt traces back to the staff member who uploaded it.
   await auditRepository.writeLog(null, {

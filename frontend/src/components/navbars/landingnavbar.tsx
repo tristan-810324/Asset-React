@@ -97,14 +97,14 @@ export function LandingNavbar({
             href={isHero ? '#home' : '/#home'}
             onClick={() => handleNavigationClick('home')}
             className="flex min-w-0 items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-            aria-label="A.SSET home"
+            aria-label="A.S.S.E.T home"
           >
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white p-1.5 shadow-sm ring-1 ring-slate-200/80 sm:h-11 sm:w-11">
-              <img src="/dyci_img/A.sset.webp" alt="" className="h-full w-full object-contain" />
+              <img src="/dyci_img/final_assetlogo.webp" alt="" className="h-full w-full object-contain" />
             </span>
             <span className="min-w-0">
               <span className={`block truncate text-sm font-black tracking-[0.18em] sm:text-base ${isHero ? 'text-white' : 'text-slate-950'}`}>
-                A.SSET
+                A.S.S.E.T
               </span>
               <span className={`mt-0.5 hidden text-[0.58rem] font-bold uppercase tracking-[0.12em] sm:block ${isHero ? 'text-blue-100/80' : 'text-slate-500'}`}>
                 DYCI equipment tracking

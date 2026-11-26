@@ -236,7 +236,7 @@ const RESOLUTION_LABELS: Record<string, string> = Object.fromEntries(RESOLUTION_
 function dialogCopy(kind: DialogKind, otherLabel: string) {
   switch (kind) {
     case 'forward': return { heading: `Forward to ${otherLabel}`, description: 'Use this when the job belongs to the other team. It returns to the New Jobs queue there.', label: 'Handoff note (optional)', placeholder: 'What the other team should know.', required: false, submit: `Forward to ${otherLabel}` }
-    case 'start': return { heading: 'Start work', description: 'The job moves to In Progress and the requester is told that work has started.', label: 'Start note (optional)', placeholder: 'e.g. Materials are on the way.', required: false, submit: 'Start work' }
+    case 'start': return { heading: 'Start work', description: 'The job moves to In Progress and the requester is told that work has started.', label: '', placeholder: '', required: false, submit: 'Start work' }
     case 'progress': return { heading: 'Add progress update', description: 'The requester sees this note in the job history right away. Use it for what was done, what is next, or what the requester should know.', label: 'Progress note', placeholder: 'e.g. Replacement starter arrived. Installing it tomorrow morning.', required: true, submit: 'Post update' }
     case 'complete': return { heading: 'Mark work completed', description: 'Confirm the job is finished. The requester is then asked to confirm the result.', label: '', placeholder: '', required: false, submit: 'Yes, mark completed' }
     case 'takeover': return { heading: 'Take over this job', description: 'The job moves to you. The reason stays in the job history.', label: 'Reason for taking over', placeholder: 'e.g. The assigned staff member is on leave.', required: true, submit: 'Take over job' }
@@ -504,6 +504,7 @@ function ActionDialogPanel({
             <p className="text-sm font-extrabold text-slate-900">Are you sure this job is finished?</p>
             <p className="mt-1 text-xs leading-relaxed text-slate-600">Once you confirm, the job moves to the requester to check the result.</p>
           </div>
+          : kind === 'start' ? null
           : <label className="mt-4 block">
             <span className="mb-1.5 block text-[0.62rem] font-extrabold uppercase tracking-widest text-slate-500">{copy.label}</span>
             <textarea autoFocus={copy.required} value={note} onChange={(event) => setNote(event.target.value)} rows={4} maxLength={1000} placeholder={copy.placeholder} className={fieldClass} />
@@ -716,7 +717,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
   return (
     <>
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-        <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+        <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> {copy.eyebrow}</span>

@@ -201,7 +201,7 @@ export type ServiceRequest = {
   assignedStaffName?: string | null
   completionNote?: string | null
   autoCloseAt?: string | null
-  returnedItems?: Array<{ id: string; itemName: string; itemCode: string; tagCode: string | null; quantity: number; unitOfMeasure: string; employeeName: string; condition: string; status: string; returnedAt: string }>
+  returnedItems?: Array<{ id: string; itemName: string; itemCode: string; tagCode: string | null; quantity: number; unitOfMeasure: string; employeeName: string; condition: string; status: string; returnedAt: string; writeOffDecision?: 'WAIVED' | 'CHARGED' | null; writeOffEstimatedValue?: number | string | null; writeOffReason?: string | null; paidAt?: string | null; repairOutcome?: 'Repaired' | 'Written Off' | null; repairResolvedAt?: string | null; writeOffAt?: string | null }>
   purchaseLines?: PurchaseRequisitionLine[]
 }
 

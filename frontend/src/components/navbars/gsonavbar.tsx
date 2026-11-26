@@ -205,15 +205,15 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoN
         aria-label="GSO navigation"
       >
         <div className="flex items-center justify-between px-2">
-          <a href="/" className="flex items-center gap-3" aria-label="A.SSET home">
-            <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-blue-950/30">
-              <img src="/dyci_img/A.sset.webp" alt="A.SSET" className="h-full w-full object-contain" />
-            </span>
-            <span>
-              <span className="block text-sm font-black tracking-tight text-white">A.SSET</span>
-              <span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">GSO Command Center</span>
-            </span>
-          </a>
+          <a href="/" className="flex items-center gap-3" aria-label="A.S.S.E.T home">
+  <span className="grid h-12 w-12 place-items-center overflow-hidden">
+    <img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-full w-full object-contain" />
+  </span>
+  <span>
+    <span className="block text-sm font-black tracking-tight text-white">A.S.S.E.T</span>
+    <span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">GSO Staff Portal</span>
+  </span>
+</a>
           <button
             type="button"
             onClick={onClose}
@@ -224,7 +224,8 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoN
           </button>
         </div>
 
-        <nav className="mt-9 space-y-1.5" aria-label="Primary navigation">
+        <div className="mt-7 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-blue-200/60">GSO Staff</div>
+        <nav className="mt-3 space-y-1" aria-label="Primary navigation">
           {navigation.map((item) => {
             const isActive = item.kind === 'group'
               ? item.activePages.includes(currentPage)
@@ -234,14 +235,14 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoN
                 key={item.name}
                 href={item.href}
                 onClick={onClose}
-                className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left text-sm font-bold transition ${
+                className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-left text-[0.85rem] font-bold transition ${
                   isActive
                     ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35'
                     : 'text-slate-300 hover:bg-white/8 hover:text-white'
                 }`}
                 aria-current={isActive ? 'page' : undefined}
               >
-                <NavigationIcon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
+                <NavigationIcon name={item.icon} className={`h-[1.05rem] w-[1.05rem] ${isActive ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} />
                 <span className="flex-1">{item.name}</span>
               </a>
             )
@@ -326,6 +327,7 @@ export function GsoPageHeader({
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <GsoMenuButton onClick={onOpenMenu} />
+          <div className="flex shrink-0 items-center gap-3"><span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-slate-300/50 ring-1 ring-slate-200"><img src="/dyci_img/final_assetlogo.webp" alt="A.S.S.E.T" className="h-full w-full object-contain" /></span></div>
           <div className="min-w-0">
             <p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">General Services Office / <span className="text-slate-700">{pageName}</span></p>
             <p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p>

@@ -39,7 +39,7 @@ export default function BackupRecovery() {
       <section className="min-h-screen lg:pl-72">
         <AdminPageHeader pageName="Backup & recovery" subtitle="Database protection and recovery procedure" onOpenMenu={() => setMobileMenuOpen(true)} onSignOut={signOut} />
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-9">
-          <section className="rounded-3xl bg-[#09244a] p-6 text-white shadow-xl shadow-blue-950/15">
+          <section className="relative isolate overflow-hidden rounded-3xl bg-[#09244a] p-6 text-white shadow-xl shadow-blue-950/15"><div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
             <span className="rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">Operational security</span>
             <h1 className="mt-3 text-2xl font-black sm:text-3xl">Backup &amp; Recovery</h1>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-blue-100">Configure the scheduled backup in the secured database environment. Credentials stay in the backend environment and never reach this browser page.</p>

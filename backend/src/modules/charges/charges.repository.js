@@ -234,4 +234,27 @@ async function saveWaiverProof({ kind, ref, proofData, proofName, proofMime, not
   }
 }
 
-module.exports = { listCharges, findCharge, getReceipt, payCharge, listWaivedCharges, findWaived, getWaiverProof, saveWaiverProof };
+// Who a charge belongs to: the employee for a returned unit, or the requester of the request for the other kinds.
+async function findChargeRecipient(kind, ref) {
+  if (kind === 'RETURN') {
+    const result = await pool.query(
+      `SELECT employee.employee_code AS "employeeCode", employee.email AS "employeeEmail", line.request_id::TEXT AS "requestId"
+         FROM employee_issuance_returns AS ret
+         JOIN employee_issuances AS issuance ON issuance.id = ret.issuance_id
+         JOIN employees AS employee ON employee.id = issuance.employee_id
+         LEFT JOIN purchase_requisition_lines AS line ON line.id = issuance.purchase_requisition_line_id
+        WHERE ret.id::TEXT = $1`,
+      [ref],
+    );
+    return result.rows[0] || null;
+  }
+  const sql = kind === 'FACILITY'
+    ? `SELECT request.requested_by_user_id AS "userId", request.id::TEXT AS "requestId" FROM service_request_assets AS asset
+         JOIN service_requests AS request ON request.id = asset.request_id WHERE asset.id::TEXT = $1`
+    : `SELECT request.requested_by_user_id AS "userId", request.id::TEXT AS "requestId" FROM loss_damage_settlements AS settlement
+         JOIN service_requests AS request ON request.id = settlement.request_id WHERE settlement.id::TEXT = $1`;
+  const result = await pool.query(sql, [ref]);
+  return result.rows[0] || null;
+}
+
+module.exports = { listCharges, findCharge, getReceipt, payCharge, findChargeRecipient, listWaivedCharges, findWaived, getWaiverProof, saveWaiverProof };

@@ -1326,6 +1326,7 @@ async function applyRepairOutcome(client, record, { outcome, note, userId, appro
     itemName: record.description,
     tagCode: record.tag?.tag_code || null,
     employeeEmail: record.employee_email || null,
+    employeeCode: record.employee_code || null,
     repairOwner: record.repair_owner || null,
     writeOff,
   };
@@ -1782,8 +1783,22 @@ async function listRepairHistory({ limit = 1000 } = {}) {
   return result.rows;
 }
 
+// The request a returned unit came from, so the notice opens that request.
+async function requestIdForReturn(returnId) {
+  const result = await pool.query(
+    `SELECT line.request_id::TEXT AS "requestId"
+       FROM employee_issuance_returns AS ret
+       JOIN employee_issuances AS issue ON issue.id = ret.issuance_id
+       LEFT JOIN purchase_requisition_lines AS line ON line.id = issue.purchase_requisition_line_id
+      WHERE ret.id = $1`,
+    [returnId],
+  );
+  return result.rows[0]?.requestId || null;
+}
+
 module.exports = {
   listRepairHistory,
+  requestIdForReturn,
   resolveReturnRepair,
   findAccountIdByEmail,
   updateReturnSettlement,

@@ -183,6 +183,12 @@ function groupAssets(assets: CatalogAsset[], keyOf: (asset: CatalogAsset) => str
   return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right))
 }
 
+// The job's target date is a day that has already ended, so the latest choice is yesterday.
+const yesterday = () => {
+  const date = new Date()
+  date.setDate(date.getDate() - 1)
+  return date.toLocaleDateString('en-CA')
+}
 const today = () => {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -878,7 +884,7 @@ function RequestItemContent() {
     <div>
       <div className="mx-auto max-w-4xl">
         <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
           <div className="relative"><span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {unifiedItemRequest ? 'Item request' : 'New school request'}</span><h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">{unifiedItemRequest ? 'Request item for issuance' : REQUEST_TYPE_LABELS[type]}</h1><p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">{unifiedItemRequest || type === 'PURCHASE_REQUISITION' ? 'Request department items. GSO checks stock and decides whether to issue or purchase them.' : type === 'BORROWING' ? 'Borrow reusable items and confirm when you will return them.' : type === 'JOB_REQUEST' ? 'Choose a category and tell us where the problem is.' : 'Complete the form below. GSO will review your request.'}</p></div>
         </section>
         <a href="/requester/request-center" className="inline-flex items-center gap-2 text-xs font-extrabold text-blue-700 hover:underline">← Request Center</a>
@@ -1187,7 +1193,7 @@ function RequestItemContent() {
                     </select>
                   </Field>
                   <Field label="Target date">
-                    <input className={inputClass} type="date" min={today()} value={String(form.requiredDate || '')} onChange={(event) => setField('requiredDate', event.target.value)} required />
+                    <input className={inputClass} type="date" max={yesterday()} value={String(form.requiredDate || '')} onChange={(event) => setField('requiredDate', event.target.value)} required />
                   </Field>
                 </div>
                 {form.serviceCategory === 'OTHERS' && (

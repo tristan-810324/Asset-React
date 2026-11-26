@@ -4,6 +4,7 @@ const { waitUntil } = require('@vercel/functions');
 const env = require('../../config/env');
 const returnsRepository = require('./returns.repository');
 const notificationsRepository = require('../notifications/notifications.repository');
+const requesterAlerts = require('../notifications/requester-alerts');
 
 // In-app notices for a return. They never block the return itself, so a failure is only logged.
 async function notifyReturnRecorded({ employeeCode, requesterTitle, requesterMessage, requesterKey, departmentHeadMessage, headMessage, headKey }) {
@@ -565,18 +566,28 @@ async function resolveReturnRepair(returnIdValue, input, user) {
     const writeOff = { reason, decision: input.writeOffDecision, estimatedValue };
     const result = await returnsRepository.resolveReturnRepair({ returnId, outcome: 'Written Off', note: reason, userId: user.id, writeOff });
     if (writeOff.decision === 'CHARGED') {
-      const accountId = await returnsRepository.findAccountIdByEmail(result.employeeEmail);
-      if (accountId) {
-        const value = estimatedValue === null ? '' : ` Estimated value: ₱${estimatedValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`;
-        await notificationsRepository.createUserNotification({
-          userId: accountId,
-          type: 'RETURN',
-          title: 'Payment needed for a damaged item',
-          message: `${result.itemName} (${result.tagCode || 'unit'}) came back unserviceable (${reason}).${value} Please pay at the Finance office in person.`,
-          href: '/requester',
-          dedupeKey: `tagged-writeoff:${returnId}:${Date.now()}`,
-        });
-      }
+      const value = estimatedValue === null ? '' : ` Estimated value: ₱${estimatedValue.toLocaleString('en-PH', { minimumFractionDigits: 2 })}.`;
+      const requestId = await returnsRepository.requestIdForReturn(returnId);
+      await requesterAlerts.notifyRequester({
+        employeeCode: result.employeeCode,
+        employeeEmail: result.employeeEmail,
+        title: 'Payment needed for a damaged item',
+        message: `${result.itemName} (${result.tagCode || 'unit'}) came back unserviceable (${reason}).${value} Please pay at the Finance office in person. GSO settles it after your payment.`,
+        href: requestId ? `/requester/requests/${requestId}` : '/requester/my-requests',
+        dedupeKey: `tagged-writeoff:${returnId}:${Date.now()}`,
+      });
+    }
+    if (writeOff.decision === 'WAIVED') {
+      // A waived write-off is not charged, so the requester is told there is nothing to pay.
+      const requestId = await returnsRepository.requestIdForReturn(returnId);
+      await requesterAlerts.notifyRequester({
+        employeeCode: result.employeeCode,
+        employeeEmail: result.employeeEmail,
+        title: 'Damaged item waived',
+        message: `${result.itemName} (${result.tagCode || 'unit'}) came back unserviceable (${reason}). GSO waived the charge, so there is no payment needed.`,
+        href: requestId ? `/requester/requests/${requestId}` : '/requester/my-requests',
+        dedupeKey: `tagged-waived:${returnId}:${Date.now()}`,
+      });
     }
     await notifyGsoOfItssOutcome(result, `unserviceable (${reason})`);
     return result;

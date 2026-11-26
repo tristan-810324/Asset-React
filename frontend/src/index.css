@@ -8,6 +8,8 @@
 }
 
 html {
+  /* Slightly smaller base size (about 15px) so every rem-based size and text scales down a little across the app. */
+  font-size: 94%;
   scroll-behavior: smooth;
   scroll-padding-top: 6rem;
 }

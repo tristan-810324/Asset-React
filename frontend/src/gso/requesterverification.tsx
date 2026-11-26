@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
+import { AdminPageFrame } from '../components/navbars/adminnavbar'
 import { getRequesterIdentityPicture, listRequesterDepartments, listRequesterIdentityReviews, listRequesterPositions, reviewRequesterIdentity, type RequesterIdentity, type RequesterIdentityStatus } from '../requesters/requesterApi'
 
 const statuses: Array<'all' | RequesterIdentityStatus> = ['all', 'Pending', 'Needs Correction', 'Rejected', 'Verified']
@@ -21,7 +22,13 @@ function masterChoice(value: string, options: string[], selected?: string) {
   return options.find((option) => option.trim().toLowerCase() === value.trim().toLowerCase()) || ADD_PROPOSED_VALUE
 }
 
-export default function RequesterVerification() {
+// The same page for GSO Staff (their sidebar) and IT Admin (inside User management).
+function RequesterFrame({ admin, children }: { admin: boolean; children: ReactNode }) {
+  if (admin) return <AdminPageFrame activePath="/admin/users" pageName="Requester Verification" subtitle="Check staff details and approve requester accounts">{children}</AdminPageFrame>
+  return <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search requester identity">{children}</GsoPageFrame>
+}
+
+export default function RequesterVerification({ admin = false }: { admin?: boolean } = {}) {
   const [profiles, setProfiles] = useState<RequesterIdentity[]>([])
   const [filter, setFilter] = useState<'all' | RequesterIdentityStatus>('Pending')
   const [search, setSearch] = useState('')
@@ -149,10 +156,10 @@ export default function RequesterVerification() {
   }
 
   return (
-    <GsoPageFrame activePage="Employees & Requesters" searchPlaceholder="Search requester identity">
+    <RequesterFrame admin={admin}>
       <div className="mx-auto max-w-7xl space-y-5 pb-8">
         <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+          <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
           <div className="relative">
           <span className="inline-flex rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.62rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
             GSO identity checks
@@ -167,13 +174,6 @@ export default function RequesterVerification() {
               className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-extrabold text-blue-50 transition hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               View Employees
-            </a>
-            <a
-              href="/gso/requester-verification"
-              aria-current="page"
-              className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#123c70]"
-            >
-              Requestors Verification
             </a>
           </nav>
           </div>
@@ -296,6 +296,6 @@ export default function RequesterVerification() {
         })}</div>}
       </section>
       </div>
-    </GsoPageFrame>
+    </RequesterFrame>
   )
 }

@@ -102,7 +102,7 @@ export default function Register() {
 
               <div className="mb-3.5 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
                 <img
-                  src="/dyci_img/A.sset.webp"
+                  src="/dyci_img/final_assetlogo.webp"
                   alt="A.SSET logo"
                   className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16"
                 />

@@ -15,7 +15,7 @@ export default function VerifyEmailOtp() {
   const [noticeMessage, setNoticeMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isResending, setIsResending] = useState(false)
-  const [resendSeconds, setResendSeconds] = useState(60)
+  const [resendSeconds, setResendSeconds] = useState(20)
 
   useEffect(() => {
     if (!pending) window.location.replace('/login')
@@ -74,7 +74,7 @@ export default function VerifyEmailOtp() {
       const updatedPending = { ...pending, ...result }
       savePendingEmailVerification(updatedPending)
       setPending(updatedPending)
-      setResendSeconds(60)
+      setResendSeconds(20)
       setNoticeMessage(result.message || 'A new verification code has been sent to your email.')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Unable to resend the code. Please try again.')
@@ -134,7 +134,7 @@ export default function VerifyEmailOtp() {
             </div>
 
             <div className="mb-4 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
-              <img src="/dyci_img/A.sset.webp" alt="A.SSET logo" className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16" />
+              <img src="/dyci_img/final_assetlogo.webp" alt="A.SSET logo" className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16" />
               <div className="h-6 w-px bg-slate-300/80 sm:h-8" />
               <img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-9 w-9 object-contain transition-transform hover:scale-105 sm:h-11 sm:w-11 lg:h-14 lg:w-14" />
             </div>

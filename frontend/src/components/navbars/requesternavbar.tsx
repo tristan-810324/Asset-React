@@ -39,23 +39,23 @@ export function RequesterSidebar({ currentPage, mobileMenuOpen, onClose }: { cur
   return <>
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-y-auto bg-[#071b35] px-5 py-6 text-slate-300 shadow-2xl shadow-slate-900/20 transition-transform duration-300 lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`} aria-label="Requester navigation">
       <div className="flex items-center justify-between px-2">
-        <a href="/requester" className="flex items-center gap-3" aria-label="A.S.SET Requester Portal home">
-          <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-blue-950/30"><img src="/dyci_img/A.sset.webp" alt="A.S.SET" className="h-full w-full object-contain" /></span>
-          <span><span className="block text-sm font-black tracking-tight text-white">A.S.SET</span><span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">Requester Portal</span></span>
-        </a>
+        <a href="/requester" className="flex items-center gap-3" aria-label="A.S.S.E.T Requester Portal home">
+  <span className="grid h-12 w-12 place-items-center overflow-hidden"><img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-full w-full object-contain" /></span>
+  <span><span className="block text-sm font-black tracking-tight text-white">A.S.S.E.T</span><span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">Requester Portal</span></span>
+</a>
         <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white lg:hidden" aria-label="Close navigation menu"><Icon name="close" /></button>
       </div>
 
-      <div className="mt-9 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
-      <nav className="mt-3 space-y-1.5" aria-label="Primary navigation">
+      <div className="mt-7 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-blue-200/60">Requester</div>
+      <nav className="mt-3 space-y-1" aria-label="Primary navigation">
         {navigation.map((item) => {
           const active = currentPage === item.name || (item.name === 'My Requests' && currentPath.startsWith('/requester/requests/') && currentPath !== '/requester/requests/new')
-          return <a key={item.name} href={item.href} onClick={onClose} aria-current={active ? 'page' : undefined} className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-bold transition ${active ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35' : 'text-slate-300 hover:bg-white/8 hover:text-white'}`}>
-            <Icon name={item.icon} className={`h-[1.15rem] w-[1.15rem] ${active ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} /><span className="flex-1">{item.label}</span>
+          return <a key={item.name} href={item.href} onClick={onClose} aria-current={active ? 'page' : undefined} className={`group flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-[0.85rem] font-bold transition ${active ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35' : 'text-slate-300 hover:bg-white/8 hover:text-white'}`}>
+            <Icon name={item.icon} className={`h-[1.05rem] w-[1.05rem] ${active ? 'text-white' : 'text-blue-200 group-hover:text-white'}`} /><span className="flex-1">{item.label}</span>
           </a>
         })}
       </nav>
-    </aside>
+      </aside>
     {mobileMenuOpen && <button type="button" className="fixed inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] lg:hidden" aria-label="Close navigation menu" onClick={onClose} />}
   </>
 }
@@ -82,6 +82,7 @@ export function RequesterPageHeader({ pageName, today, user, onOpenMenu, onSignO
     <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3">
         <button type="button" onClick={onOpenMenu} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-blue-100 lg:hidden" aria-label="Open navigation menu"><Icon name="menu" /></button>
+        <div className="flex shrink-0 items-center gap-3"><span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-slate-300/50 ring-1 ring-slate-200"><img src="/dyci_img/final_assetlogo.webp" alt="A.S.S.E.T" className="h-full w-full object-contain" /></span></div>
         <div className="min-w-0"><p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">Requester Portal / <span className="text-slate-700">{pageName}</span></p><p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p></div>
       </div>
       <div className="flex items-center gap-2 sm:gap-3">

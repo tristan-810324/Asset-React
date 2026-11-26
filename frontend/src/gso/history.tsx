@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
-import { listFacilityFinanceReport, listGsoRequests, type FacilityFinanceRow } from '../requesters/requesterApi'
+import { getRequesterIdentityPicture, listFacilityFinanceReport, listGsoRequests, listRequesterIdentityReviews, type FacilityFinanceRow, type RequesterIdentity } from '../requesters/requesterApi'
 import { formatDateTime } from '../requesters/requesterrequestutils'
 import { listIssuanceRecords, listRepairHistory, type RepairHistoryRecord } from './issuancesApi'
 import { getChargeReceipt, listCharges, type ChargeKind, type ChargeReceipt } from './paymentsApi'
@@ -48,7 +48,7 @@ const TABS: { key: TabKey; label: string; ready: boolean }[] = [
   { key: 'payments', label: 'To Pay / Settled', ready: true },
 ]
 
-type HistoryRow = { id: string; date: string | null; reference: string; detail: string; items?: string; view?: 'issued' | 'declined' | 'returned'; itemName?: string; condition?: string | null; reason?: string; charge?: { kind: string; ref: string }; person: string; personEmail?: string; status: string; service?: { title: string; team: string; claimedBy: string | null; closedAt: string | null }; actorName?: string; actorEmail?: string; category?: LossCategory; tag?: string; place?: string; handledBy?: string; chargeText?: string }
+type HistoryRow = { id: string; date: string | null; reference: string; detail: string; items?: string; view?: 'issued' | 'declined' | 'returned'; itemName?: string; condition?: string | null; reason?: string; charge?: { kind: string; ref: string }; person: string; personEmail?: string; status: string; service?: { title: string; team: string; claimedBy: string | null; closedAt: string | null }; actorName?: string; actorEmail?: string; category?: LossCategory; tag?: string; place?: string; handledBy?: string; chargeText?: string; identity?: RequesterIdentity }
 
 // Service Workboard job statuses, coloured the way the workboard cards are.
 const serviceStatusTone = (status: string) => {
@@ -60,8 +60,6 @@ const serviceStatusTone = (status: string) => {
   return 'bg-slate-100 text-slate-700'
 }
 
-const FACILITY_DONE = ['Completed', 'Closed', 'Rejected']
-const BORROW_DONE = ['Returned', 'Closed', 'Rejected']
 const LOSS_DONE = ['Completed', 'Closed']
 // Charged reports read To pay or Settled from the charge receipts (see settledStatus), the same as an unserviceable write-off.
 const LOSS_STATUS: Record<string, string> = { NO_CHARGE: 'Waived', FOR_REPAIR: 'For repair', RESOLVED: 'Resolved' }
@@ -191,7 +189,7 @@ function RecordReceipt({ charge }: { charge: { kind: string; ref: string } }) {
     return () => { active = false }
   }, [charge.kind, charge.ref])
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5">
+    <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
       <h3 className="text-sm font-extrabold text-slate-900">Payment receipt</h3>
       <p className="mt-0.5 text-xs text-slate-500">The picture uploaded when this charge was paid.</p>
       <div className="mt-4">
@@ -211,6 +209,25 @@ function RecordReceipt({ charge }: { charge: { kind: string; ref: string } }) {
   )
 }
 
+
+// The name as the requester entered it: first, middle, last, and suffix.
+const requesterFullName = (identity: RequesterIdentity) => [identity.firstName, identity.middleName, identity.lastName, identity.suffix]
+  .map((part) => part?.trim()).filter(Boolean).join(' ') || identity.accountName
+// The employee's photo from the requester profile, shown in the record popup. Initials show when there is no photo.
+function EmployeePhoto({ userId, name }: { userId: string | number; name: string }) {
+  const [picture, setPicture] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    getRequesterIdentityPicture(userId)
+      .then((value) => { if (active) setPicture(value) })
+      .catch(() => { if (active) setPicture(null) })
+    return () => { active = false }
+  }, [userId])
+  // No card when the requester has no photo, so the popup does not show an empty box.
+  return picture
+    ? <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5"><img src={picture} alt={`Photo of ${name}`} className="h-28 w-28 rounded-2xl border border-slate-200 bg-slate-50 object-cover" /></section>
+    : null
+}
 
 async function loadSource(tab: SourceKey): Promise<HistoryRow[]> {
   if (tab === 'returns') {
@@ -272,31 +289,6 @@ async function loadSource(tab: SourceKey): Promise<HistoryRow[]> {
       })
     return [...issued, ...declined, ...returned, ...facilityReturns]
   }
-  if (false) {
-    // Finished facility requests, plus borrowed equipment that has been returned or closed.
-    const [facilityRequests, borrowings] = await Promise.all([
-      listGsoRequests({ type: 'FACILITY_USE' }),
-      listGsoRequests({ type: 'BORROWING' }),
-    ])
-    // The items each request took, e.g. "Laptop × 2, Projector × 1", so the history shows what was borrowed.
-    const itemsText = (formData: Record<string, unknown> | undefined, key: 'equipment' | 'items') => {
-      const list = (formData?.[key] as Array<{ name?: string; itemName?: string; quantity?: number }> | undefined) || []
-      return list.map((row) => `${row.name || row.itemName || 'Item'} × ${row.quantity ?? 1}`).join(', ')
-    }
-    const facilityRows = facilityRequests
-      .filter((request) => FACILITY_DONE.includes(request.status))
-      .map((request) => {
-        const items = itemsText(request.formData, 'equipment')
-        return { id: `fac-${request.id}`, date: request.createdAt, reference: request.referenceNo, detail: request.title, items, person: request.requesterName, personEmail: request.requesterEmail, status: request.status }
-      })
-    const borrowRows = borrowings
-      .filter((request) => BORROW_DONE.includes(request.status))
-      .map((request) => {
-        const items = itemsText(request.formData, 'items')
-        return { id: `brw-${request.id}`, date: request.createdAt, reference: request.referenceNo, detail: request.title, items, person: request.requesterName, personEmail: request.requesterEmail, status: request.status }
-      })
-    return [...facilityRows, ...borrowRows]
-  }
   if (tab === 'service') {
     // Every job on the GSO Service Workboard and the ITSS Support Queue, with who claimed it and when it closed.
     // A queue the user cannot open is skipped. The status filter narrows the list.
@@ -345,19 +337,28 @@ async function loadSource(tab: SourceKey): Promise<HistoryRow[]> {
   }
   if (tab === 'employees') {
     // Requester accounts verified or sent back for correction in Requester Verification.
-    const page = await listAuditLogs({ limit: 100, offset: 0, action: 'all', entityType: 'employee', flag: 'all', search: '', from: '', to: '' })
+    // The review queue gives each account's full name and profile; without it the rows keep the login name.
+    const [page, identities] = await Promise.all([
+      listAuditLogs({ limit: 100, offset: 0, action: 'all', entityType: 'employee', flag: 'all', search: '', from: '', to: '' }),
+      listRequesterIdentityReviews().catch((): RequesterIdentity[] => []),
+    ])
+    const identityByUser = new Map(identities.map((identity) => [String(identity.userId), identity]))
     return page.logs
       .filter((log) => log.newValues?.requesterVerification === true)
-      .map((log) => ({
-        id: `emp-${log.id}`,
-        date: log.changedAt,
-        reference: `ACC-${log.entityId}`,
-        detail: log.reason,
-        person: log.entityName,
-        status: log.newValues.status === 'Verified' ? 'Verified' : log.newValues.status === 'Rejected' ? 'Rejected' : 'Needs Correction',
-        actorName: typeof log.newValues.reviewerName === 'string' ? log.newValues.reviewerName : (log.changedBy || 'GSO'),
-        actorEmail: typeof log.newValues.reviewerEmail === 'string' ? log.newValues.reviewerEmail : undefined,
-      }))
+      .map((log) => {
+        const identity = identityByUser.get(String(log.entityId))
+        return {
+          id: `emp-${log.id}`,
+          date: log.changedAt,
+          reference: `ACC-${log.entityId}`,
+          detail: log.reason,
+          person: identity ? requesterFullName(identity) : log.entityName,
+          status: log.newValues.status === 'Verified' ? 'Verified' : log.newValues.status === 'Rejected' ? 'Rejected' : 'Needs Correction',
+          actorName: typeof log.newValues.reviewerName === 'string' ? log.newValues.reviewerName : (log.changedBy || 'GSO'),
+          actorEmail: typeof log.newValues.reviewerEmail === 'string' ? log.newValues.reviewerEmail : undefined,
+          identity,
+        }
+      })
   }
   if (tab === 'loss') {
     // One list for Loss, Repair & Unserviceable. Each row carries its category, which the Category dropdown filters by:
@@ -538,7 +539,8 @@ export default function GsoHistory() {
     return TABS.some((item) => item.key === key) ? key : 'returns'
   })
   const [rows, setRows] = useState<HistoryRow[]>([])
-  const [loading, setLoading] = useState(false)
+  // Starts true because the first tab loads on mount; selectModule sets it when another tab is picked.
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -550,7 +552,8 @@ export default function GsoHistory() {
     if (!detailRow) return
     let active = true
     const key = detailRow.id
-    listAuditLogs({ limit: 20, offset: 0, action: 'all', entityType: 'all', flag: 'all', search: detailRow.reference, from: '', to: '' })
+    // The audit search matches the login name, not the ACC- label, so an employee's activity is found by its login name.
+    listAuditLogs({ limit: 20, offset: 0, action: 'all', entityType: 'all', flag: 'all', search: detailRow.identity?.accountName || detailRow.reference, from: '', to: '' })
       .then((page) => { if (active) setDetailAudit({ key, logs: page.logs }) })
       .catch(() => { if (active) setDetailAudit({ key, logs: [] }) })
     return () => { active = false }
@@ -572,6 +575,10 @@ export default function GsoHistory() {
   const current = TABS.find((item) => item.key === tab) ?? TABS[0]
 
   const selectModule = (key: TabKey) => {
+    if (key !== tab) {
+      setLoading(true)
+      setError('')
+    }
     setTab(key)
     setSearch('')
     setStatusFilter('all')
@@ -588,8 +595,6 @@ export default function GsoHistory() {
     window.history.replaceState(null, '', `/gso/history?tab=${tab}`)
     if (!current.ready) return
     let cancelled = false
-    setLoading(true)
-    setError('')
     loadRows(tab)
       .then((result) => { if (!cancelled) setRows(result) })
       .catch((reason: unknown) => { if (!cancelled) { setRows([]); setError(reason instanceof Error ? reason.message : 'The history could not be loaded.') } })
@@ -681,9 +686,20 @@ export default function GsoHistory() {
       : <span className="block max-w-md text-xs text-slate-600">{row.detail}</span>),
   }
   const reviewerColumn: TableColumn = {
-    label: 'Reviewed by',
+    label: 'Approved by',
     text: (row) => reviewerName(row),
     render: (row) => <span className="text-xs font-semibold text-slate-800">{reviewerName(row)}</span>,
+  }
+  // Employees tab only: the staff code and position from the requester profile.
+  const employeeIdColumn: TableColumn = {
+    label: 'Employee ID',
+    text: (row) => row.identity?.employeeCode || '—',
+    render: (row) => <span className="block whitespace-nowrap text-xs font-extrabold text-slate-900">{row.identity?.employeeCode || '—'}</span>,
+  }
+  const positionColumn: TableColumn = {
+    label: 'Position',
+    text: (row) => row.identity?.position || '—',
+    render: (row) => <span className="block text-xs font-semibold text-slate-700">{row.identity?.position || '—'}</span>,
   }
   const statusColumn: TableColumn = {
     label: 'Status',
@@ -746,7 +762,7 @@ export default function GsoHistory() {
       : tab === 'returns' && returnsView === 'returned'
         ? [nameColumn, dateColumn, itemColumn('Item returned'), conditionColumn]
         : tab === 'employees'
-          ? [nameColumn, dateColumn, referenceColumn('Reference'), detailsColumn, reviewerColumn, statusColumn]
+          ? [employeeIdColumn, nameColumn, reviewerColumn, positionColumn, statusColumn]
           : [nameColumn, dateColumn, referenceColumn('Reference'), detailsColumn, statusColumn]
   const reportHeaders = columns.map((column) => column.label)
   const reportCells = (row: HistoryRow) => columns.map((column) => column.text(row))
@@ -766,8 +782,23 @@ export default function GsoHistory() {
     downloadHistoryFile(`GSO_${reportName}_Styled_Report_${today}.doc`, ['﻿', wordDocument], 'application/msword;charset=utf-8')
   }
 
+  // An employee's popup shows everything the requester profile and its review hold.
+  const employeeFactsOf = (row: HistoryRow, identity: RequesterIdentity) => [
+    { label: 'Full name', value: row.person },
+    { label: 'Login name', value: identity.accountName || '—' },
+    { label: 'Email', value: identity.accountEmail || '—' },
+    { label: 'Employee code', value: identity.employeeCode || '—' },
+    { label: 'Department / office', value: identity.department || '—' },
+    { label: 'Position', value: identity.position || '—' },
+    { label: 'Contact number', value: identity.contactNumber || '—' },
+    { label: 'Submitted', value: dateText(identity.submittedAt) },
+    { label: 'Reviewed by', value: reviewerName(row) },
+    { label: 'Reviewed', value: dateText(row.date) },
+    { label: 'Result', value: row.detail, wide: true },
+    identity.reviewNote ? { label: 'Review note', value: identity.reviewNote, wide: true } : null,
+  ].filter((fact): fact is { label: string; value: string; wide?: boolean } => Boolean(fact))
   // The facts shown in the record popup. Only the ones this record has are listed.
-  const factsOf = (row: HistoryRow) => [
+  const factsOf = (row: HistoryRow) => row.identity ? employeeFactsOf(row, row.identity) : [
     { label: 'Name', value: personName(row) },
     { label: 'Date & time', value: dateText(row.date) },
     { label: 'Reference', value: row.reference },
@@ -783,7 +814,7 @@ export default function GsoHistory() {
   return <GsoPageFrame activePage="History" searchPlaceholder="Search history...">
     <div className="space-y-6">
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-        <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+        <div aria-hidden="true" className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
         <div className="relative">
           <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Records</span>
           <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">History</h1>
@@ -890,8 +921,8 @@ export default function GsoHistory() {
                 </div>
                 <div className="min-w-0">
                   <p className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em] text-blue-600">{(detailRow.category && LOSS_CATEGORIES.find((option) => option.value === detailRow.category)?.label) || current.label}</p>
-                  <h2 id="history-detail-title" className="mt-0.5 truncate text-lg font-black text-slate-900">{detailRow.itemName || detailRow.detail || detailRow.reference}</h2>
-                  <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{detailRow.reference}</p>
+                  <h2 id="history-detail-title" className="mt-0.5 truncate text-lg font-black text-slate-900">{detailRow.identity ? detailRow.person : detailRow.itemName || detailRow.detail || detailRow.reference}</h2>
+                  {!detailRow.identity && <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">{detailRow.reference}</p>}
                 </div>
               </div>
               <button type="button" onClick={() => setDetailRow(null)} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50">Close</button>
@@ -899,23 +930,29 @@ export default function GsoHistory() {
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50 px-4 py-5 sm:px-6">
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-                <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                  <span className={`inline-flex rounded-full px-3 py-1 text-xs font-extrabold ${statusClass(detailRow)}`}>{detailRow.status}</span>
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                  {!(detailRow.identity && detailRow.status === 'Verified') && <span className={`inline-flex rounded-full px-3 py-1 text-xs font-extrabold ${statusClass(detailRow)}`}>{detailRow.status}</span>}
                   {STATUS_NOTE[detailRow.status] && <p className="mt-3 text-sm font-semibold leading-relaxed text-slate-700">{STATUS_NOTE[detailRow.status]}</p>}
                   <dl className="mt-4 grid gap-3 sm:grid-cols-2">
                     {factsOf(detailRow).map((fact) => (
-                      <div key={fact.label} className={`rounded-xl bg-slate-50 px-4 py-3 ${fact.wide ? 'sm:col-span-2' : ''}`}>
+                      <div key={fact.label} className={`rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 shadow-md shadow-slate-300/35 ${fact.wide ? 'sm:col-span-2' : ''}`}>
                         <dt className="text-xs font-semibold text-slate-500">{fact.label}</dt>
-                        <dd className="mt-1 break-words text-sm font-bold text-slate-900">{fact.value}</dd>
+                        <dd className="mt-1 wrap-break-word text-sm font-bold text-slate-900">{fact.value}</dd>
                       </div>
                     ))}
                   </dl>
                 </section>
 
                 <div className="space-y-4">
+                  {detailRow.identity && detailRow.status === 'Verified' && <section className="rounded-2xl border-2 border-blue-200 bg-blue-50/60 p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
+                    <span className="inline-flex rounded-full border border-blue-600 bg-blue-600 px-3 py-1 text-xs font-extrabold text-white">Verified</span>
+                    <p className="mt-3 text-sm font-black text-blue-950">Approved by {reviewerName(detailRow)}</p>
+                    <p className="mt-1 text-[0.68rem] leading-relaxed text-slate-700">{dateText(detailRow.date)}</p>
+                  </section>}
+                  {detailRow.identity && <EmployeePhoto key={detailRow.id} userId={detailRow.identity.userId} name={detailRow.person} />}
                   {detailRow.charge && <RecordReceipt key={detailRow.id} charge={detailRow.charge} />}
 
-                  <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
                     <h3 className="text-sm font-extrabold text-slate-900">Activity</h3>
                     <p className="mt-0.5 text-xs text-slate-500">What happened to this record, newest first.</p>
                     <div className="mt-4 max-h-72 overflow-y-auto pr-2">
@@ -925,7 +962,7 @@ export default function GsoHistory() {
                           : <ol className="ml-2 space-y-4 border-l-2 border-slate-100">
                             {detailAudit.logs.map((log) => (
                               <li key={log.id} className="relative pl-6">
-                                <span aria-hidden="true" className="absolute -left-[7px] top-1 h-3 w-3 rounded-full border-2 border-white bg-blue-500 shadow" />
+                                <span aria-hidden="true" className="absolute -left-1.75 top-1 h-3 w-3 rounded-full border-2 border-white bg-blue-500 shadow" />
                                 <p className="text-sm font-semibold leading-relaxed text-slate-800">{log.reason || log.action}</p>
                                 <p className="mt-1 text-xs text-slate-500">{log.changedBy || 'System'} · {dateText(log.changedAt)}</p>
                               </li>

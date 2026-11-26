@@ -106,7 +106,14 @@ const REQUEST_SELECT = `
              'employeeName', trim(concat_ws(' ', staff.first_name, staff.middle_name, staff.last_name, staff.suffix)),
              'condition', return_record.return_condition,
              'status', return_record.status,
-             'returnedAt', COALESCE(return_record.decided_at, return_record.requested_at)
+             'returnedAt', COALESCE(return_record.decided_at, return_record.requested_at),
+             'writeOffDecision', return_record.write_off_decision,
+             'writeOffEstimatedValue', return_record.write_off_estimated_value,
+             'writeOffReason', return_record.write_off_reason,
+             'paidAt', (SELECT receipt.uploaded_at FROM charge_receipts AS receipt WHERE receipt.source_kind = 'RETURN' AND receipt.source_ref = return_record.id::TEXT),
+             'writeOffAt', return_record.write_off_at,
+             'repairOutcome', return_record.repair_outcome,
+             'repairResolvedAt', return_record.repair_resolved_at
            ) ORDER BY COALESCE(return_record.decided_at, return_record.requested_at) DESC, return_record.id DESC)
              FROM purchase_requisition_lines AS line
              JOIN employee_issuances AS issue ON issue.purchase_requisition_line_id = line.id

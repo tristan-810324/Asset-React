@@ -205,8 +205,8 @@ export default function App() {
   if (path === '/gso/audit-logs') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><GsoAuditLogs /></ProtectedDashboard>
   }
-  if (path === '/gso/requester-verification') {
-    return <ProtectedDashboard requiredRole="GSO_STAFF"><RequesterVerification /></ProtectedDashboard>
+  if (path === '/admin/requester-verification') {
+    return <ProtectedDashboard requiredRole="IT_ADMIN"><RequesterVerification admin /></ProtectedDashboard>
   }
   if (path === '/gso/employees') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><EmployeeMasterData /></ProtectedDashboard>

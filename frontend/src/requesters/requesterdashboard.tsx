@@ -112,7 +112,7 @@ function RequesterDashboardContent() {
     {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-bold text-rose-700">{error}</p>}
 
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.85fr)]" aria-label="Requester overview" aria-busy={loading || departmentIssuanceLoading}>
-      <article className="relative isolate overflow-hidden rounded-2xl bg-[#09244a] p-4 text-white shadow-xl shadow-blue-950/15 sm:p-5">
+      <article className="relative isolate overflow-hidden rounded-2xl bg-[#09244a] p-4 text-white shadow-xl shadow-blue-950/15 sm:p-5"><div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
         <div className="absolute -right-12 -top-10 h-40 w-40 rounded-full border-16 border-white/5 sm:-right-16 sm:-top-14 sm:h-52 sm:w-52 sm:border-22" />
         <div className="absolute -bottom-24 right-16 h-36 w-36 rounded-full border-14 border-blue-300/10 sm:-bottom-28 sm:right-24 sm:h-48 sm:w-48 sm:border-18" />
         <div className="relative flex flex-col justify-between">

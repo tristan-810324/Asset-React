@@ -66,13 +66,13 @@ async function submitMine(input, user) {
   if (current.status === 'Pending') invalid('Your identity details are with GSO for review. Wait for the result.', 409);
   const profile = await repository.submitMine(user.id, identity);
 
-  // Notify GSO Staff that a new requester account needs verification
+  // Notify IT Admin, who verifies requester accounts from User management
   await notificationsRepository.createRoleNotification({
-    roleKey: 'GSO_STAFF',
+    roleKey: 'IT_ADMIN',
     type: 'REQUESTER_VERIFICATION_PENDING',
     title: 'New requester account to verify',
     message: `${user.name || 'A requester'} submitted their identity details for verification.`,
-    href: '/gso/requester-verification',
+    href: '/admin/requester-verification',
     dedupeKey: `requester-verification-pending:${user.id}`,
   });
 
@@ -138,13 +138,14 @@ async function review(userIdValue, input, reviewer) {
   // Resolve the pending verification notification since the review is complete
   await notificationsRepository.resolveByPrefix(`requester-verification-pending:${userId}`);
 
-  // Notify the requester of the result
+  // Notify the requester of the result. The wording names whoever decided: IT Admin or GSO Staff.
+  const reviewerLabel = reviewer?.roles?.includes('IT_ADMIN') ? 'IT Admin' : 'GSO Staff';
   if (status === 'Verified') {
     await notificationsRepository.createUserNotification({
       userId: String(userId),
       type: 'REQUESTER_VERIFIED',
       title: 'Your account has been verified!',
-      message: 'Your identity has been approved by GSO Staff. You can now submit service requests.',
+      message: `Your identity has been approved by ${reviewerLabel}. You can now submit service requests.`,
       href: '/requester/request-center',
       dedupeKey: `requester-verified:${userId}`,
     });
@@ -153,7 +154,7 @@ async function review(userIdValue, input, reviewer) {
       userId: String(userId),
       type: 'REQUESTER_NEEDS_CORRECTION',
       title: 'Please review your account details',
-      message: note || 'GSO Staff has requested corrections to your information. Please update and resubmit.',
+      message: note || `${reviewerLabel} has requested corrections to your information. Please update and resubmit.`,
       href: '/requester/profile',
       dedupeKey: `requester-needs-correction:${userId}`,
     });

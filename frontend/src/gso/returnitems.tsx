@@ -340,7 +340,7 @@ export default function ReturnItems() {
   return (
     <GsoPageFrame activePage="Return Items" searchPlaceholder="Search returned asset, code, or employee...">
       <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
@@ -464,11 +464,9 @@ export default function ReturnItems() {
 
                     <dl className="grid grid-cols-2 gap-2">
                       {([
-                        { label: 'Item code', value: <>{scannedTag.itemCode} · <span className="font-black text-blue-700">Item {scannedTag.unitNumber}</span></>, note: '' },
+                        { label: 'Item code', value: scannedTag.itemCode, note: '' },
                         { label: 'Issued by', value: issuerName, note: [issuerCode, scannedTag.issuedByDepartment].filter(Boolean).join(' · ') },
-                        holderIsIssuer && roomDesignated
-                          ? { label: 'Used by', value: 'Not assigned to a person', note: `Designated to the room. Under ${issuerName}.` }
-                          : { label: 'Used by', value: scannedTag.employeeName ?? '—', note: holderIsIssuer ? 'Same as issued by' : [scannedTag.employeeCode, currentAssignment?.department].filter(Boolean).join(' · ') },
+                        { label: 'Used by', value: scannedTag.employeeName ?? '—', note: holderIsIssuer ? 'Same as issued by' : [scannedTag.employeeCode, currentAssignment?.department].filter(Boolean).join(' · ') },
                         { label: 'Location', value: scannedTag.assignedLocation || 'No room recorded', note: '' },
                         { label: 'Issued on', value: formatBorrowerHistoryDate(currentAssignment?.issuedAt ?? null), note: '' },
                         { label: 'Condition on record', value: scannedTag.condition, note: '' },

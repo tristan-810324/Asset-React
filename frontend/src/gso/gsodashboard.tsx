@@ -5,7 +5,7 @@ import { listInventoryItems, type InventoryItemRecord } from './inventoryApi'
 import { listUnitLabels } from './issuancesApi'
 import { listStaffPurchaseRequisitions } from './purchaseRequisitionsApi'
 import { canRecordDelivery, deliveryOpen, linesOf, purchaseRequisitionReadyForIssuance } from './requisitionFlow'
-import { listRequesterIdentityReviews, type RequesterIdentity, type ServiceRequest } from '../requesters/requesterApi'
+import { type ServiceRequest } from '../requesters/requesterApi'
 import { claimServiceWorkOrder, listServiceWorkOrders, type ServiceWorkOrder, type ServiceWorkSummary } from './serviceWorkboardApi'
 
 // One job in the Service Operations lists. Claim acts here; Start work and Mark completed open the workboard form.
@@ -196,7 +196,6 @@ export default function GsoDashboard() {
   const [employeesLoading, setEmployeesLoading] = useState(true)
   const [employeesError, setEmployeesError] = useState('')
   const [requisitions, setRequisitions] = useState<ServiceRequest[]>([])
-  const [verifications, setVerifications] = useState<RequesterIdentity[]>([])
   const [labelsToPrint, setLabelsToPrint] = useState(0)
   const [serviceSummary, setServiceSummary] = useState<ServiceWorkSummary | null>(null)
   const [needsAttention, setNeedsAttention] = useState<ServiceWorkOrder[]>([])
@@ -217,12 +216,10 @@ export default function GsoDashboard() {
     () => requisitions.filter((row) => row.requestType === 'PURCHASE_REQUISITION' && purchaseRequisitionReadyForIssuance(row)),
     [requisitions],
   )
-  const pendingVerifications = verifications.filter((row) => ['Pending', 'Pending Review'].includes(row.status)).length
 
   useEffect(() => {
     let active = true
     void listStaffPurchaseRequisitions().then((rows) => { if (active) setRequisitions(rows) }).catch(() => undefined)
-    void listRequesterIdentityReviews().then((rows) => { if (active) setVerifications(rows) }).catch(() => undefined)
     void listUnitLabels().then((rows) => { if (active) setLabelsToPrint(rows.filter((row) => row.needsPrinting && !row.isReturned).length) }).catch(() => undefined)
     return () => { active = false }
   }, [])
@@ -451,7 +448,7 @@ export default function GsoDashboard() {
         <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-9">
           {/* DASHBOARD HERO BANNER */}
           <section className="relative overflow-hidden rounded-3xl bg-[#09244a] px-5 py-6 text-white shadow-xl shadow-blue-950/15 sm:px-7 sm:py-7">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
             <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
@@ -472,7 +469,6 @@ export default function GsoDashboard() {
           <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Requests and approvals">
             {[
               { label: 'Requisitions in queue', value: requisitionCounts.queue, note: 'New requests', href: '/gso/purchase-requisitions', icon: 'clipboard' as const },
-              { label: 'Account verifications', value: pendingVerifications, note: 'Pending review', href: '/gso/requester-verification', icon: 'users' as const },
               { label: 'Ready for Main Issuance', value: readyForIssuance.length, note: 'Ready to issue', href: '/gso/main-issuance', icon: 'cube' as const },
             ].map((card) => (
               <a key={card.label} href={card.href} className="group flex flex-col justify-between rounded-2xl border-2 border-slate-300/80 bg-linear-to-br from-blue-100/75 via-blue-50/25 to-white p-3 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 transition hover:border-blue-300 hover:shadow-lg hover:shadow-blue-950/15 sm:p-4">

@@ -16,7 +16,7 @@ export default function LandingPageFooter() {
               aria-label="A.SSET home"
             >
               <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white p-1.5 shadow-lg shadow-blue-950/30 ring-1 ring-white/30">
-                <img src="/dyci_img/A.sset.webp" alt="" className="h-full w-full object-contain" loading="lazy" />
+                <img src="/dyci_img/final_assetlogo.webp" alt="" className="h-full w-full object-contain" loading="lazy" />
               </span>
               <span>
                 <span className="block text-sm font-black tracking-[0.16em] text-white">A.SSET</span>

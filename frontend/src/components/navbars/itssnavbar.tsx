@@ -11,8 +11,8 @@ const iconPaths: Record<ITSSIconName, ReactNode> = {
   users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
 }
 
-function Icon({ name }: { name: ITSSIconName }) {
-  return <svg aria-hidden="true" className="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{iconPaths[name]}</svg>
+function Icon({ name, className = 'h-5 w-5' }: { name: ITSSIconName; className?: string }) {
+  return <svg aria-hidden="true" className={`${className} shrink-0`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{iconPaths[name]}</svg>
 }
 
 const navigation: Array<{ name: ITSSPage; href: string; icon: ITSSIconName }> = [
@@ -52,26 +52,26 @@ export default function ITSSNavbar({ currentPage, title, subtitle, children }: {
     <main className="min-h-screen bg-[#f4f7fb] font-['Plus_Jakarta_Sans'] text-slate-900 selection:bg-blue-200">
         <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-y-auto bg-[#071b35] px-6 py-7 text-white shadow-2xl shadow-slate-900/20 transition-transform duration-300 lg:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`} aria-label="IT Staff navigation">
           <div className="flex items-center justify-between">
-            <a href="/itss" className="flex items-center gap-3" aria-label="A.S.SET IT Staff dashboard">
-              <span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5"><img src="/dyci_img/A.sset.webp" alt="A.S.SET" className="h-full w-full object-contain" /></span>
-              <span><span className="block text-sm font-black tracking-tight">A.S.SET</span><span className="mt-0.5 block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">IT Staff Portal</span></span>
-            </a>
+            <a href="/itss" className="flex items-center gap-3" aria-label="A.S.S.E.T IT Staff dashboard">
+  <span className="grid h-12 w-12 place-items-center overflow-hidden"><img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-full w-full object-contain" /></span>
+  <span><span className="block text-sm font-black tracking-tight">A.S.S.E.T</span><span className="mt-0.5 block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">IT Staff Portal</span></span>
+</a>
             <button type="button" onClick={() => setMobileMenuOpen(false)} className="grid h-9 w-9 place-items-center rounded-lg text-slate-300 transition hover:bg-white/10 hover:text-white lg:hidden" aria-label="Close IT Staff navigation">
               <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
             </button>
           </div>
-          <div className="mt-10 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-slate-500">Workspace</div>
-          <nav className="mt-3 space-y-1.5" aria-label="IT Staff modules">
+          <div className="mt-7 px-3 text-[0.62rem] font-extrabold uppercase tracking-[0.17em] text-blue-200/60">IT Staff</div>
+          <nav className="mt-3 space-y-1" aria-label="IT Staff modules">
             {navigation.map((item) => {
               const active = currentPage === item.name
-              return <a key={item.href} href={item.href} onClick={() => setMobileMenuOpen(false)} aria-current={active ? 'page' : undefined} className={`group flex items-center gap-3 rounded-xl px-3.5 py-3 text-sm font-bold transition ${active ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35' : 'text-slate-300 hover:bg-white/8 hover:text-white'}`}><Icon name={item.icon} /><span>{item.name}</span></a>
+              return <a key={item.href} href={item.href} onClick={() => setMobileMenuOpen(false)} aria-current={active ? 'page' : undefined} className={`group flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-[0.85rem] font-bold transition ${active ? 'bg-linear-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-950/35' : 'text-slate-300 hover:bg-white/8 hover:text-white'}`}><Icon name={item.icon} className="h-[1.05rem] w-[1.05rem]" /><span>{item.name}</span></a>
             })}
           </nav>
           <div className="mt-auto rounded-2xl border border-blue-300/15 bg-linear-to-br from-blue-900/80 to-slate-900/70 p-4">
-            <div className="flex items-center gap-2 text-blue-200"><span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">IT Staff workspace</span></div>
-            <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">A separate workspace for IT Staff modules.</p>
+            <div className="flex items-center gap-2 text-blue-200"><span className="h-2 w-2 rounded-full bg-emerald-400" /><span className="text-[0.65rem] font-extrabold uppercase tracking-[0.14em]">IT Staff Portal</span></div>
+            <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-300">A separate portal for IT Staff modules.</p>
           </div>
-        </aside>
+      </aside>
 
         {mobileMenuOpen && <button type="button" className="fixed inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] lg:hidden" aria-label="Close IT Staff navigation" onClick={() => setMobileMenuOpen(false)} />}
 
@@ -79,6 +79,7 @@ export default function ITSSNavbar({ currentPage, title, subtitle, children }: {
           <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
             <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
+                <div className="flex shrink-0 items-center gap-3"><span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-slate-300/50 ring-1 ring-slate-200"><img src="/dyci_img/final_assetlogo.webp" alt="A.S.S.E.T" className="h-full w-full object-contain" /></span></div>
                 <button type="button" onClick={() => setMobileMenuOpen(true)} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden" aria-label="Open IT Staff navigation"><Icon name="menu" /></button>
                 <div className="min-w-0"><p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">IT Staff <span className="text-slate-300">/</span> <span className="text-slate-700">{currentPage}</span></p><p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p></div>
               </div>
