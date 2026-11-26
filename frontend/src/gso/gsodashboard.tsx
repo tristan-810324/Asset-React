@@ -466,7 +466,7 @@ export default function GsoDashboard() {
           {/* KPI CARDS */}
           {/* ANALYTICS CHARTS & DISTRIBUTION SECTION */}
 
-          <section className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-label="Requests and approvals">
+          <section className="mt-6 grid gap-4 sm:grid-cols-2" aria-label="Requests and approvals">
             {[
               { label: 'Requisitions in queue', value: requisitionCounts.queue, note: 'New requests', href: '/gso/purchase-requisitions', icon: 'clipboard' as const },
               { label: 'Ready for Main Issuance', value: readyForIssuance.length, note: 'Ready to issue', href: '/gso/main-issuance', icon: 'cube' as const },
