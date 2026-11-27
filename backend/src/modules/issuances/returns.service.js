@@ -5,6 +5,7 @@ const env = require('../../config/env');
 const returnsRepository = require('./returns.repository');
 const notificationsRepository = require('../notifications/notifications.repository');
 const requesterAlerts = require('../notifications/requester-alerts');
+const { escapeHtml, emailLayout, detailPanel, noticeBox } = require('../../lib/email-layout');
 
 // In-app notices for a return. They never block the return itself, so a failure is only logged.
 async function notifyReturnRecorded({ employeeCode, requesterTitle, requesterMessage, requesterKey, departmentHeadMessage, headMessage, headKey }) {
@@ -163,20 +164,11 @@ function emailReceiptInBackground({ returnIds, to, employeeName, title, intro, d
         '',
         'General Services Office',
       ].join('\n'),
-      html: [
-        '<div style="margin:0;background:#f1f5f9;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">',
-        '<div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;padding:32px">',
-        '<div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET | GSO</div>',
-        `<h1 style="margin:16px 0 8px;font-size:22px">${escapeHtml(title)}</h1>`,
-        `<p style="margin:0 0 24px;color:#475569">Dear ${escapeHtml(employeeName)}, ${escapeHtml(intro)}</p>`,
-        '<div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">',
-        ...details.map(([label, value]) => `<div style="margin-top:8px;color:#334155">${escapeHtml(label)}: <strong>${escapeHtml(value)}</strong></div>`),
-        '</div>',
-        `<p style="margin:24px 0 0;padding:12px 14px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:700">${escapeHtml(warning)}</p>`,
-        '<p style="margin:20px 0 0;color:#475569"><strong>General Services Office</strong></p>',
-        '</div>',
-        '</div>',
-      ].join(''),
+      html: emailLayout({
+        title,
+        intro: `Dear ${employeeName}, ${intro}`,
+        body: `${detailPanel(details)}${noticeBox(warning)}${gsoSignOff}`,
+      }),
     });
     for (const id of returnIds) {
       await returnsRepository.markReturnEmailSent(id).catch(() => {
@@ -195,6 +187,7 @@ function emailReceiptInBackground({ returnIds, to, employeeName, title, intro, d
 }
 
 const receiptWarning = 'If you did not return these items, or the details are wrong, report it to the General Services Office immediately.';
+const gsoSignOff = '<p style="margin:18px 0 0;font-size:14px;font-weight:700;color:#0f172a;">General Services Office</p>';
 
 function validateToken(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{40,128}$/.test(value)) {
@@ -207,15 +200,6 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character]);
-}
 
 async function createEmployeeReturn(input, user) {
   const { employeeCode, itemCode, reason, issuanceId } = validateCreateReturn(input);
@@ -456,18 +440,22 @@ async function emailReturnCode({ to, employeeName, summary, otp, warning }) {
         '',
         'General Services Office',
       ].join('\n'),
-      html: [
-        '<div style="margin:0;background:#f1f5f9;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">',
-        '<div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;padding:32px">',
-        '<div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET | GSO</div>',
-        '<h1 style="margin:16px 0 8px;font-size:22px">Return confirmation code</h1>',
-        `<p style="margin:0 0 20px;color:#475569">Dear ${escapeHtml(employeeName)}, ${escapeHtml(summary)}</p>`,
-        `<div style="margin:0 0 8px;font-size:32px;font-weight:800;letter-spacing:8px">${otp}</div>`,
-        '<p style="margin:0 0 20px;color:#64748b">It expires in 10 minutes.</p>',
-        `<p style="margin:0;padding:12px 14px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:700">${escapeHtml(warning)}</p>`,
-        '</div>',
-        '</div>',
-      ].join(''),
+      html: emailLayout({
+        title: 'Return confirmation code',
+        intro: `Dear ${employeeName}, ${summary}`,
+        body: `
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td align="center" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:18px 12px;">
+                <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#1d4ed8;">Your confirmation code</p>
+                <p style="margin:8px 0 0;font-size:32px;font-weight:800;letter-spacing:0.32em;color:#0f172a;font-family:'Courier New',Courier,monospace;">${otp}</p>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:#64748b;">It expires in 10 minutes.</p>
+          ${noticeBox(warning)}
+          ${gsoSignOff}`,
+      }),
     });
   } catch (error) {
     console.error('Return confirmation code email could not be delivered.', {
@@ -724,17 +712,15 @@ async function sendOverdueReminders() {
           '',
           'General Services Office',
         ].join('\n'),
-        html: [
-          '<div style="margin:0;background:#f1f5f9;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">',
-          '<div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;padding:32px">',
-          '<div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET | GSO</div>',
-          '<h1 style="margin:16px 0 8px;font-size:22px">Borrowed items are overdue</h1>',
-          `<p style="margin:0 0 16px;color:#475569">Dear ${escapeHtml(batch.employeeName)}, the items you borrowed were due on <strong>${escapeHtml(formatManilaDateTime(batch.dueAt))}</strong>:</p>`,
-          `<ul style="margin:0 0 16px;color:#334155">${itemLines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`,
-          '<p style="margin:0;padding:12px 14px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:700">Please return them to the GSO office as soon as possible. New issuances to you are on hold until they are returned.</p>',
-          '</div>',
-          '</div>',
-        ].join(''),
+        html: emailLayout({
+          title: 'Borrowed items are overdue',
+          intro: `Dear ${batch.employeeName}, the items you borrowed were due on ${formatManilaDateTime(batch.dueAt)}:`,
+          body: `
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+              ${itemLines.map((line, index) => `<tr><td style="padding:12px 16px;${index ? 'border-top:1px solid #e2e8f0;' : ''}font-size:14px;font-weight:600;color:#0f172a;">${escapeHtml(line)}</td></tr>`).join('')}
+            </table>
+            ${noticeBox('Please return them to the GSO office as soon as possible. New issuances to you are on hold until they are returned.')}`,
+        }),
       });
     } catch (error) {
       // The batch stays marked as reminded, so the next attempt is tomorrow.

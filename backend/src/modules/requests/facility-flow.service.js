@@ -9,6 +9,7 @@ const facilityDamageRepository = require('./facility-damage-payments.repository'
 const notificationsRepository = require('../notifications/notifications.repository');
 const auditRepository = require('../audit/audit.repository');
 const { invalid, text, validateRequestId } = require('./requests.validation');
+const { emailLayout, detailPanel } = require('../../lib/email-layout');
 
 const mailTransport = env.smtp
   ? nodemailer.createTransport({
@@ -46,6 +47,14 @@ async function emailRequester(request, subject, message) {
         '',
         'This is an automated message from A.S.SET.',
       ].join('\n'),
+      html: emailLayout({
+        title: subject,
+        intro: `Hello ${request.formData?.requesterName || request.requesterName || ''}, ${message}`,
+        body: detailPanel([
+          ['Reference', request.referenceNo],
+          ['Venue', request.formData?.venue || '—'],
+        ]),
+      }),
     });
   } catch (error) {
     console.error('Facility request email could not be delivered.', { code: error.code, responseCode: error.responseCode });

@@ -4,6 +4,7 @@ const env = require('../../config/env');
 const issuancesRepository = require('./issuances.repository');
 const { groupIssuanceLines, describeCodes } = require('./issuance-summary');
 const notificationsRepository = require('../notifications/notifications.repository');
+const { escapeHtml, emailLayout, noticeBox } = require('../../lib/email-layout');
 
 const mailTransport = env.smtp
   ? nodemailer.createTransport({
@@ -208,15 +209,6 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character]);
-}
 
 async function createIssuance(input, user) {
   const { employeeCode, itemId, quantity, notes } = validateCreateIssuance(input);
@@ -281,7 +273,6 @@ async function createIssuanceBatch(input, user) {
     tokenHash: hashToken(token),
     requestedByUserId: user.id,
   });
-  const employeeName = escapeHtml(batch.employee_name);
   const note = escapeHtml(notes || 'No additional notes.');
   const isConsumableDistribution = batch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'consumable');
   const isReusableBorrow = batch.items.every((item) => item.trackingMode === 'quantity' && item.issueBehavior === 'returnable');
@@ -324,23 +315,26 @@ async function createIssuanceBatch(input, user) {
     `Location: ${batch.borrowDetails.useLocation}`,
   ] : [];
   const borrowingDetailsHtml = batch.borrowDetails ? `
-    <div style="margin-top:16px;border-radius:10px;background:#fffbeb;padding:14px;color:#78350f">
-      <div style="font-weight:700">Face-to-face reusable-stock borrowing</div>
-      <div style="margin-top:6px">Borrow: <strong>${escapeHtml(batch.borrowDetails.useAt || batch.borrowDetails.useDate)}</strong></div>
-      <div style="margin-top:4px">Return: <strong>${escapeHtml(batch.borrowDetails.expectedReturnAt || batch.borrowDetails.expectedReturnDate)}</strong></div>
-      <div style="margin-top:4px">Event / purpose: <strong>${escapeHtml(batch.borrowDetails.purpose)}</strong></div>
-      <div style="margin-top:4px">Location: <strong>${escapeHtml(batch.borrowDetails.useLocation)}</strong></div>
+    <div style="margin-top:16px;border-radius:12px;background:#fffbeb;border:1px solid #fde68a;padding:14px 16px;color:#78350f;">
+      <p style="margin:0;font-size:13px;font-weight:700;">Face-to-face reusable-stock borrowing</p>
+      <p style="margin:6px 0 0;font-size:13px;">Borrow: <strong>${escapeHtml(batch.borrowDetails.useAt || batch.borrowDetails.useDate)}</strong></p>
+      <p style="margin:4px 0 0;font-size:13px;">Return: <strong>${escapeHtml(batch.borrowDetails.expectedReturnAt || batch.borrowDetails.expectedReturnDate)}</strong></p>
+      <p style="margin:4px 0 0;font-size:13px;">Event / purpose: <strong>${escapeHtml(batch.borrowDetails.purpose)}</strong></p>
+      <p style="margin:4px 0 0;font-size:13px;">Location: <strong>${escapeHtml(batch.borrowDetails.useLocation)}</strong></p>
     </div>` : '';
+  const lineRow = (label, value) => `<tr><td style="padding:3px 12px 3px 0;vertical-align:top;white-space:nowrap;color:#64748b;">${label}</td><td style="padding:3px 0;color:#0f172a;font-weight:600;">${value}</td></tr>`;
   const htmlItems = recordedLines.map((line) => `
-    <li style="margin:0 0 12px">
-      <strong>${escapeHtml(line.itemName)} × ${line.quantity} ${escapeHtml(line.unitOfMeasure)}</strong>
-      <div style="margin-top:4px;color:#64748b">Asset codes: ${escapeHtml(describeCodes(line.codes))}</div>
-      <div style="margin-top:4px;color:#64748b">Type: ${escapeHtml(itemTypeLabel(line))}</div>
-      <div style="margin-top:4px;color:#334155">Condition: <strong>${escapeHtml(line.condition)}</strong></div>
-      <div style="margin-top:4px;color:#334155">Assigned to: <strong>${escapeHtml(line.recipientEmployeeName)} (${escapeHtml(line.recipientEmployeeCode)})</strong></div>
-      ${line.recipientLocation ? `<div style="margin-top:4px;color:#334155">Use location: <strong>${escapeHtml(line.recipientLocation)}</strong></div>` : ''}
-      ${line.recipientPurpose ? `<div style="margin-top:4px;color:#334155">Intended use: <strong>${escapeHtml(line.recipientPurpose)}</strong></div>` : ''}
-    </li>`).join('');
+    <div style="margin-bottom:10px;border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;">
+      <p style="margin:0;font-size:14px;font-weight:700;color:#0f172a;">${escapeHtml(line.itemName)} × ${line.quantity} ${escapeHtml(line.unitOfMeasure)}</p>
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:8px;font-size:13px;">
+        ${lineRow('Asset codes', escapeHtml(describeCodes(line.codes)))}
+        ${lineRow('Type', escapeHtml(itemTypeLabel(line)))}
+        ${lineRow('Condition', escapeHtml(line.condition))}
+        ${lineRow('Assigned to', `${escapeHtml(line.recipientEmployeeName)} (${escapeHtml(line.recipientEmployeeCode)})`)}
+        ${line.recipientLocation ? lineRow('Use location', escapeHtml(line.recipientLocation)) : ''}
+        ${line.recipientPurpose ? lineRow('Intended use', escapeHtml(line.recipientPurpose)) : ''}
+      </table>
+    </div>`).join('');
 
   let emailSent = false;
   if (mailTransport) try {
@@ -359,22 +353,17 @@ async function createIssuanceBatch(input, user) {
         '',
         employeeActionText,
       ].join('\n'),
-      html: `
-        <div style="margin:0;background:#f1f5f9;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">
-          <div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:18px;background:#ffffff;padding:32px">
-            <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#2563eb">A.SSET - GSO</div>
-            <h1 style="margin:16px 0 8px;font-size:22px">${escapeHtml(subject)}</h1>
-            <p style="margin:0 0 24px;color:#475569">Hello ${employeeName}, ${escapeHtml(employeeActionText)}</p>
-            <div style="border:1px solid #e2e8f0;border-radius:12px;padding:18px">
-              <div style="margin-bottom:14px;font-size:16px;font-weight:700">Items recorded (${totalPieces})</div>
-              <ul style="margin:0;padding-left:20px">${htmlItems}</ul>
-              ${shortfallNote ? `<div style="margin-top:16px;border-radius:10px;background:#fffbeb;padding:14px;color:#78350f;line-height:1.5;white-space:pre-line">${escapeHtml(shortfallNote)}</div>` : ''}
-              ${borrowingDetailsHtml}
-              <div style="margin-top:16px;color:#334155">GSO notes: ${note}</div>
-            </div>
-            <p style="margin:24px 0 14px;color:#475569">${escapeHtml(employeeActionText)}</p>
-          </div>
-        </div>`,
+      html: emailLayout({
+        title: subject,
+        intro: `Hello ${batch.employee_name}, ${employeeActionText}`,
+        body: `
+          <p style="margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Items recorded (${totalPieces})</p>
+          ${htmlItems}
+          ${shortfallNote ? noticeBox(shortfallNote) : ''}
+          ${borrowingDetailsHtml}
+          <p style="margin:16px 0 0;font-size:13px;color:#334155;">GSO notes: <strong>${note}</strong></p>
+          <p style="margin:24px 0 0;font-size:14px;line-height:1.6;color:#475569;">${escapeHtml(employeeActionText)}</p>`,
+      }),
     });
     emailSent = true;
   } catch (error) {

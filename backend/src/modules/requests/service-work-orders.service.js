@@ -2,6 +2,7 @@ const nodemailer = require('nodemailer');
 const env = require('../../config/env');
 const repository = require('./service-work-orders.repository');
 const notificationsRepository = require('../notifications/notifications.repository');
+const { emailLayout, detailPanel } = require('../../lib/email-layout');
 const auditRepository = require('../audit/audit.repository');
 const {
   TEAM_ROLES,
@@ -181,6 +182,11 @@ async function emailRequester(workOrder, subject, message) {
       '',
       'This is an automated message from A.S.SET.',
     ].join('\n'),
+    html: emailLayout({
+      title: subject,
+      intro: `Hello ${workOrder.requesterName || ''}, ${message}`,
+      body: detailPanel([['Reference', workOrder.referenceNo]]),
+    }),
   }));
 }
 

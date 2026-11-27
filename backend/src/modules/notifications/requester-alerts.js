@@ -2,6 +2,7 @@ const nodemailer = require('nodemailer');
 const env = require('../../config/env');
 const pool = require('../../config/db');
 const notificationsRepository = require('./notifications.repository');
+const { emailLayout } = require('../../lib/email-layout');
 
 // The same mail setup as the return confirmation emails.
 const mailTransport = env.smtp
@@ -44,6 +45,11 @@ async function notifyRequester({ userId, employeeCode, employeeEmail, title, mes
       to: email,
       subject: title,
       text: [`Dear ${name || 'requester'},`, '', message, '', 'Sign in to A.SSET to see the details.'].join('\n'),
+      html: emailLayout({
+        title,
+        intro: `Dear ${name || 'requester'}, ${message}`,
+        body: '<p style="margin:0;font-size:13px;color:#64748b;">Sign in to A.SSET to see the details.</p>',
+      }),
     });
   } catch (error) {
     console.error('Requester notice failed:', error.message);

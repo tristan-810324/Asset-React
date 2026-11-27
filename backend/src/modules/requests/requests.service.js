@@ -11,6 +11,7 @@ const facilityFlow = require('./facility-flow.service');
 const facilityRepository = require('./facility-flow.repository');
 const serviceWorkOrders = require('./service-work-orders.service');
 const { invalid, text, validateCreateRequest, validateRequestFilters, validateRequestId } = require('./requests.validation');
+const { emailLayout, detailPanel } = require('../../lib/email-layout');
 
 const mailTransport = env.smtp
   ? nodemailer.createTransport({
@@ -105,6 +106,15 @@ async function notifyPurchaseRequester(request, status, note = '') {
         '',
         'This is an automated message from A.S.SET. You can sign in to view the request history.',
       ].join('\n'),
+      html: emailLayout({
+        title: notificationTitles[status] || 'Purchase requisition update',
+        intro: `Hello ${request.formData?.requesterName || request.requesterName}, ${message}`,
+        body: detailPanel([
+          ['Reference', request.referenceNo],
+          ['Department', request.formData?.departmentOrganization || '—'],
+        ]),
+        footer: 'This is an automated message from A.SSET. You can sign in to view the request history.',
+      }),
     });
     return true;
   } catch (error) {

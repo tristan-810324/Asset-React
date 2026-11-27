@@ -2,6 +2,7 @@ const nodemailer = require('nodemailer');
 const { waitUntil } = require('@vercel/functions');
 const env = require('../../config/env');
 const employeesRepository = require('./employees.repository');
+const { emailLayout, noticeBox } = require('../../lib/email-layout');
 const departmentsRepository = require('../departments/departments.repository');
 const {
   validateEmployee,
@@ -37,7 +38,15 @@ function emailChangeNoticeInBackground({ to, employeeName, newEmail, changedBy }
     '',
     'General Services Office',
   ].join('\n');
-  waitUntil(mailTransport.sendMail({ from: env.smtp.from, to, subject: 'Your GSO employee record email was changed', text })
+  const html = emailLayout({
+    title: 'Your GSO employee record email was changed',
+    intro: `Dear ${employeeName}, ${changedBy} of the General Services Office changed the email on your GSO employee record to ${newEmail}.`,
+    body: `
+      <p style="margin:0;font-size:14px;line-height:1.6;color:#334155;">Return confirmation codes and receipts for items you borrow will now go to that address.</p>
+      ${noticeBox('If you did not ask for this change, report it to the General Services Office and the IT Admin right away.')}
+      <p style="margin:18px 0 0;font-size:14px;font-weight:700;color:#0f172a;">General Services Office</p>`,
+  });
+  waitUntil(mailTransport.sendMail({ from: env.smtp.from, to, subject: 'Your GSO employee record email was changed', text, html })
     .catch((error) => {
       console.error('Employee email change notice could not be delivered.', { code: error.code, responseCode: error.responseCode });
     }));
