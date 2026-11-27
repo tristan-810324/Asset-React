@@ -487,7 +487,8 @@ export default function GsoPayments() {
   // Charged items and waived items in one list, each with its own status.
   const query = search.trim().toLowerCase()
   const entries: ListEntry[] = [
-    ...charges.map((charge): ListEntry => ({ status: charge.status, text: `${charge.referenceNo} ${charge.itemName} ${charge.personName}`, row: { type: 'charge', charge } })),
+    // Paid charges drop out of this table once the receipt is saved. The audit trail keeps the record.
+    ...charges.filter((charge) => !charge.paid).map((charge): ListEntry => ({ status: charge.status, text: `${charge.referenceNo} ${charge.itemName} ${charge.personName}`, row: { type: 'charge', charge } })),
     // Waived items drop out of this table once GSO attaches the signed proof. The audit trail keeps the record.
     ...waivers.filter((waiver) => !waiver.hasProof).map((waiver): ListEntry => ({ status: 'Waived', text: `${waiver.referenceNo} ${waiver.itemName} ${waiver.personName}`, row: { type: 'waiver', waiver } })),
   ]
