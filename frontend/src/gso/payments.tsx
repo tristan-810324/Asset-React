@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { CHARGE_SOURCE_LABEL, getChargeReceipt, getWaiverProof, listCharges, listWaivedCharges, markChargePaid, saveWaiverProof, type ChargeReceipt, type ChargeRow, type WaiverProof, type WaivedRow } from './paymentsApi'
 import AuditLogView from '../components/audit/auditlogview'
@@ -91,7 +91,7 @@ function FactTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl bg-slate-50 px-4 py-3">
       <dt className="text-xs font-semibold text-slate-500">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-bold text-slate-900">{value}</dd>
+      <dd className="mt-1 wrap-break-word text-sm font-bold text-slate-900">{value}</dd>
     </div>
   )
 }
@@ -113,7 +113,6 @@ function ChargePanel({ charge, onClose, onPaid }: { charge: ChargeRow; onClose: 
 
   // A paid charge shows the receipt that was uploaded for it.
   useEffect(() => {
-    setReceipt(null)
     if (!charge.paid) return
     let active = true
     getChargeReceipt(charge.kind, charge.ref)
@@ -467,12 +466,13 @@ export default function GsoPayments() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
-  const [filter, setFilter] = useState<PaymentFilter>('To pay')
+  const [filter, setFilter] = useState<PaymentFilter>('All')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<SelectedRow | null>(null)
+  // Bumped after a payment or waiver proof is saved, so the audit trail shows the new entry.
+  const [auditVersion, setAuditVersion] = useState(0)
 
   const load = () => {
-    setLoading(true)
     Promise.all([listCharges(), listWaivedCharges()])
       .then(([chargeRows, waiverRows]) => { setCharges(chargeRows); setWaivers(waiverRows); setError('') })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'The charges could not be loaded.'))
@@ -483,17 +483,15 @@ export default function GsoPayments() {
   const toPay = charges.filter((charge) => !charge.paid)
   const totalToPay = toPay.reduce((sum, charge) => sum + Number(charge.amount || 0), 0)
   const paidCount = charges.length - toPay.length
-  const waivedWithoutProof = waivers.filter((waiver) => !waiver.hasProof).length
 
   // Charged items and waived items in one list, each with its own status.
-  const visible = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    const entries: ListEntry[] = [
-      ...charges.map((charge): ListEntry => ({ status: charge.status, text: `${charge.referenceNo} ${charge.itemName} ${charge.personName}`, row: { type: 'charge', charge } })),
-      ...waivers.map((waiver): ListEntry => ({ status: 'Waived', text: `${waiver.referenceNo} ${waiver.itemName} ${waiver.personName}`, row: { type: 'waiver', waiver } })),
-    ]
-    return entries.filter((entry) => (filter === 'All' || entry.status === filter) && (!query || entry.text.toLowerCase().includes(query)))
-  }, [charges, waivers, filter, search])
+  const query = search.trim().toLowerCase()
+  const entries: ListEntry[] = [
+    ...charges.map((charge): ListEntry => ({ status: charge.status, text: `${charge.referenceNo} ${charge.itemName} ${charge.personName}`, row: { type: 'charge', charge } })),
+    // Waived items drop out of this table once GSO attaches the signed proof. The audit trail keeps the record.
+    ...waivers.filter((waiver) => !waiver.hasProof).map((waiver): ListEntry => ({ status: 'Waived', text: `${waiver.referenceNo} ${waiver.itemName} ${waiver.personName}`, row: { type: 'waiver', waiver } })),
+  ]
+  const visible = entries.filter((entry) => (filter === 'All' || entry.status === filter) && (!query || entry.text.toLowerCase().includes(query)))
 
   return (
     <GsoPageFrame activePage="Proof of Settlements" searchPlaceholder="Search requester, item, or reference...">
@@ -507,7 +505,7 @@ export default function GsoPayments() {
           <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-100">To pay</p><p className="mt-1 text-xl font-black">{toPay.length}</p></div>
           <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-100">Estimated to collect</p><p className="mt-1 text-xl font-black">{money(totalToPay)}</p></div>
           <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-100">Paid</p><p className="mt-1 text-xl font-black">{paidCount}</p></div>
-          <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-100">Waived · proof needed</p><p className="mt-1 text-xl font-black">{waivers.length} · {waivedWithoutProof}</p></div>
+          <div className="rounded-xl bg-white/10 px-4 py-3"><p className="text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-100">Waived</p><p className="mt-1 text-xl font-black">{waivers.length}</p></div>
         </div>
       </section>
 
@@ -517,7 +515,7 @@ export default function GsoPayments() {
       <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            {(['To pay', 'Paid', 'Waived', 'All'] as const).map((option) => (
+            {(['All', 'Waived', 'Paid', 'To pay'] as const).map((option) => (
               <button key={option} type="button" aria-pressed={filter === option} onClick={() => setFilter(option)} className={`rounded-xl px-3.5 py-2 text-xs font-extrabold transition ${filter === option ? 'bg-blue-600 text-white' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}>
                 {option}
               </button>
@@ -581,15 +579,16 @@ export default function GsoPayments() {
       </section>
 
       <section className="mt-6" aria-labelledby="payment-audit-title">
-        <h2 id="payment-audit-title" className="mb-3 text-sm font-black text-slate-900">Audit trail for payments</h2>
-        <AuditLogView frame={(content) => <>{content}</>} variant="activity" defaultSearch="marked Paid" />
+        <h2 id="payment-audit-title" className="mb-3 text-sm font-black text-slate-900">Payment and waiver audit trail</h2>
+        <AuditLogView key={auditVersion} frame={(content) => <>{content}</>} variant="activity" module="payments" intro="Read-only record of payments and waived items." />
       </section>
 
       {selected?.type === 'charge' && (
         <ChargePanel
+          key={`${selected.charge.kind}-${selected.charge.ref}`}
           charge={selected.charge}
           onClose={() => setSelected(null)}
-          onPaid={(text) => { setSelected(null); setMessage(text); load() }}
+          onPaid={(text) => { setSelected(null); setMessage(text); setLoading(true); setAuditVersion((version) => version + 1); load() }}
         />
       )}
       {selected?.type === 'waiver' && (
@@ -597,7 +596,7 @@ export default function GsoPayments() {
           key={`${selected.waiver.kind}-${selected.waiver.ref}`}
           waiver={selected.waiver}
           onClose={() => setSelected(null)}
-          onSaved={(text) => { setSelected(null); setMessage(text); load() }}
+          onSaved={(text) => { setSelected(null); setMessage(text); setLoading(true); setAuditVersion((version) => version + 1); load() }}
         />
       )}
     </GsoPageFrame>

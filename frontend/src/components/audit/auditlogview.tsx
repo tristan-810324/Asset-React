@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { listAuditLogs, type AuditLogAction, type AuditLogEntityType, type AuditLogEntry, type AuditLogFlag } from '../../admin/auditLogsApi'
-import { getChargeReceipt, type ChargeKind, type ChargeReceipt } from '../../gso/paymentsApi'
+import { CHARGE_SOURCE_LABEL, getChargeReceipt, getWaiverProof, type ChargeKind } from '../../gso/paymentsApi'
 
 const pageSize = 25
 
@@ -89,6 +89,13 @@ const valueLabels: Record<string, string> = {
   inventoryStatusBefore: 'Stock status before',
   financeQuantity: 'Finance quantity',
   requestedQuantity: 'Requested quantity',
+  chargeKind: 'Type',
+  chargeRef: 'Reference',
+  paid: 'Marked paid',
+  amountPaid: 'Amount paid',
+  receiptName: 'Receipt file',
+  waiverProof: 'Waiver proof attached',
+  proofName: 'Proof file',
 }
 
 function actionInfo(action: AuditLogAction) {
@@ -103,6 +110,8 @@ function formatValue(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (key === 'entryMethod') return value === 'scan' ? 'Scanned' : 'Typed'
+  if (key === 'chargeKind' && typeof value === 'string') return CHARGE_SOURCE_LABEL[value as ChargeKind] ?? value
+  if (key === 'amountPaid') return formatPeso(value)
   if (Array.isArray(value)) {
     return value.every((item) => typeof item !== 'object' || item === null)
       ? value.map(String).join(', ')
@@ -124,6 +133,22 @@ function formatShortDate(value: string) {
   return Number.isNaN(date.getTime())
     ? 'Unknown date'
     : new Intl.DateTimeFormat('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
+}
+
+function formatPeso(value: unknown) {
+  const amount = Number(value)
+  return Number.isFinite(amount) ? new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(amount) : '—'
+}
+
+// Payment and waiver entries show their amount or proof at a glance.
+function PaymentTag({ log }: { log: AuditLogEntry }) {
+  if (log.newValues?.paid === true) {
+    return <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[0.6rem] font-extrabold text-emerald-700 ring-1 ring-emerald-200">Paid {formatPeso(log.newValues.amountPaid)}</span>
+  }
+  if (log.newValues?.waiverProof === true) {
+    return <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[0.6rem] font-extrabold text-slate-700 ring-1 ring-slate-200">Waiver proof</span>
+  }
+  return null
 }
 
 function FlagBadge({ flag }: { flag: AuditLogFlag }) {
@@ -159,34 +184,44 @@ function readFlagFromUrl(): FlagFilter {
 
 // The audit view is shared by GSO Staff, GSO Head, and IT Admin. Each page passes its own frame.
 // variant="activity" is the requester-style card list used on the GSO Head page; "table" stays for GSO Staff.
-// A payment entry links to its charge, so the uploaded receipt picture is shown in the entry's details.
+// A payment entry shows its uploaded receipt, and a waiver entry shows its signed waiver proof.
+type Attachment = { label: string; src: string; name: string; isImage: boolean; by: string | null; at: string }
+
 function AuditReceipt({ log }: { log: AuditLogEntry }) {
   const kind = log.newValues?.chargeKind
   const ref = log.newValues?.chargeRef
+  const isWaiver = log.newValues?.waiverProof === true
   const hasCharge = typeof kind === 'string' && typeof ref === 'string' && ref.length > 0
-  const [receipt, setReceipt] = useState<ChargeReceipt | null>(null)
+  const [attachment, setAttachment] = useState<Attachment | null>(null)
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     if (!hasCharge) return
     let active = true
-    getChargeReceipt(kind as ChargeKind, ref as string)
-      .then((value) => { if (active) setReceipt(value) })
+    const request: Promise<Attachment> = isWaiver
+      ? getWaiverProof(kind as ChargeKind, ref as string).then((proof) => ({ label: 'Signed waiver', src: proof.proofData, name: proof.proofName, isImage: proof.proofMime.startsWith('image/'), by: proof.uploadedBy, at: proof.uploadedAt }))
+      : getChargeReceipt(kind as ChargeKind, ref as string).then((receipt) => ({ label: 'Receipt', src: receipt.receiptData, name: receipt.receiptName, isImage: true, by: receipt.uploadedBy, at: receipt.uploadedAt }))
+    request
+      .then((value) => { if (active) setAttachment(value) })
       .catch(() => { if (active) setFailed(true) })
     return () => { active = false }
-  }, [hasCharge, kind, ref])
+  }, [hasCharge, isWaiver, kind, ref])
   if (!hasCharge) return null
-  if (failed) return <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">The receipt picture could not be loaded.</p>
-  if (!receipt) return <p className="mt-4 text-xs font-semibold text-slate-500">Loading the receipt picture…</p>
+  if (failed) return <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">The attached file could not be loaded.</p>
+  if (!attachment) return <p className="mt-4 text-xs font-semibold text-slate-500">Loading the attached file…</p>
   return (
     <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-      <p className="text-[0.62rem] font-extrabold uppercase text-slate-400">Receipt</p>
-      <img src={receipt.receiptData} alt={`Receipt for ${log.entityName}`} className="mt-2 max-h-96 w-full rounded-xl border border-slate-200 bg-white object-contain" />
-      <p className="mt-2 text-xs font-semibold text-slate-600">{receipt.receiptName || 'Receipt'} · uploaded by {receipt.uploadedBy || 'GSO Staff'} on {formatDate(receipt.uploadedAt)}</p>
+      <p className="text-[0.62rem] font-extrabold uppercase text-slate-400">{attachment.label}</p>
+      {attachment.isImage ? (
+        <img src={attachment.src} alt={`${attachment.label} for ${log.entityName}`} className="mt-2 max-h-96 w-full rounded-xl border border-slate-200 bg-white object-contain" />
+      ) : (
+        <a href={attachment.src} download={attachment.name || 'signed-waiver.pdf'} className="mt-2 inline-flex rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-blue-700">Open PDF</a>
+      )}
+      <p className="mt-2 text-xs font-semibold text-slate-600">{attachment.name || attachment.label} · uploaded by {attachment.by || 'GSO Staff'} on {formatDate(attachment.at)}</p>
     </div>
   )
 }
 
-export default function AuditLogView({ frame, variant = 'table', defaultSearch = '' }: { frame: (content: ReactNode) => ReactNode; variant?: 'table' | 'activity'; defaultSearch?: string }) {
+export default function AuditLogView({ frame, variant = 'table', defaultSearch = '', intro, module: moduleFilter = 'all' }: { frame: (content: ReactNode) => ReactNode; variant?: 'table' | 'activity'; defaultSearch?: string; intro?: string; module?: 'all' | 'requisitions' | 'payments' }) {
   const [logs, setLogs] = useState<AuditLogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [flaggedCount, setFlaggedCount] = useState(0)
@@ -210,7 +245,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
       setIsLoading(true)
       setErrorMessage('')
       try {
-        const result = await listAuditLogs({ limit: pageSize, offset: page * pageSize, action, entityType, flag, search, from, to })
+        const result = await listAuditLogs({ limit: pageSize, offset: page * pageSize, action, entityType, flag, search, from, to, module: moduleFilter })
         if (!active) return
         setLogs(result.logs)
         setTotal(result.total)
@@ -224,7 +259,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
 
     void loadLogs()
     return () => { active = false }
-  }, [action, entityType, flag, from, page, search, to])
+  }, [action, entityType, flag, from, moduleFilter, page, search, to])
 
   const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1)
   const firstResult = total === 0 ? 0 : page * pageSize + 1
@@ -265,7 +300,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
           <div>
             <span className="inline-flex rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">Activity history</span>
             <h1 className="mt-2 text-xl font-black tracking-tight sm:mt-3 sm:text-3xl">Audit Logs</h1>
-            <p className="mt-2 hidden max-w-2xl text-sm font-medium leading-relaxed text-blue-100 sm:block">Read-only record of who added, issued, returned, or changed each item, with the reason. Entries marked ⚠ need a look.</p>
+            <p className="mt-2 hidden max-w-2xl text-sm font-medium leading-relaxed text-blue-100 sm:block">{intro ?? 'Read-only record of who added, issued, returned, or changed each item, with the reason. Entries marked ⚠ need a look.'}</p>
           </div>
           <div className="flex gap-2 sm:gap-3">
             <button type="button" onClick={showRedFlags} aria-pressed={flag === 'any'} className="rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-left transition hover:bg-amber-400/20 sm:px-4 sm:py-3">
@@ -282,7 +317,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
 
       {flaggedCount > 0 && flag !== 'any' && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 sm:mt-5 sm:gap-3 sm:rounded-2xl sm:px-5 sm:py-4">
-          <p className="text-xs font-bold leading-relaxed text-amber-900"><span className="sm:hidden">{flaggedCount} need a look.</span><span className="hidden sm:inline">{flaggedCount} entr{flaggedCount === 1 ? 'y' : 'ies'} in the last 30 days were typed in, reported lost, undone, deleted, reprinted, or edited. Check them first.</span></p>
+          <p className="text-xs font-bold leading-relaxed text-amber-900"><span className="sm:hidden">{flaggedCount} need a look.</span><span className="hidden sm:inline">{flaggedCount} flagged {flaggedCount === 1 ? 'entry' : 'entries'} in the last 30 days. Check {flaggedCount === 1 ? 'it' : 'them'} first.</span></p>
           <button type="button" onClick={showRedFlags} className="rounded-lg bg-amber-500 px-3 py-1.5 text-[0.7rem] font-extrabold text-white hover:bg-amber-600 sm:px-3.5 sm:py-2 sm:text-xs">Show red flags</button>
         </div>
       )}
@@ -382,7 +417,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
             <div className="flex items-center justify-between gap-2 sm:block">
               <div>
                 <h2 className="text-sm font-black tracking-tight text-slate-900 sm:text-base">Audit trail</h2>
-                <p className="mt-0.5 text-[0.65rem] text-slate-500 sm:mt-1 sm:text-xs">{isLoading ? 'Loading' : `${total} entries`}</p>
+                <p className="mt-0.5 text-[0.65rem] text-slate-500 sm:mt-1 sm:text-xs">{isLoading ? 'Loading…' : `${total} ${total === 1 ? 'entry' : 'entries'}`}</p>
               </div>
               <button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[0.7rem] font-extrabold text-slate-700 shadow-sm sm:hidden">{filtersOpen ? 'Hide' : 'Filters'}</button>
             </div>
@@ -394,24 +429,24 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
               <button type="submit" className="h-10 shrink-0 rounded-xl bg-blue-600 px-3.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 sm:hidden">Go</button>
               <div className={`${filtersOpen ? 'grid' : 'hidden'} w-full grid-cols-2 gap-2 sm:contents`}>
                 <label className="block">
-                  <span className={activityLabel}>What happened</span>
+                  <span className={activityLabel}>Action</span>
                   <select value={action} onChange={(event) => { setAction(event.target.value as 'all' | AuditLogAction); setPage(0) }} className={activityField}>
-                    <option value="all">All actions</option>
+                    <option value="all">All</option>
                     {actionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </label>
                 <label className="block">
                   <span className={activityLabel}>Record type</span>
                   <select value={entityType} onChange={(event) => { setEntityType(event.target.value as 'all' | AuditLogEntityType); setPage(0) }} className={activityField}>
-                    <option value="all">All records</option>
+                    <option value="all">All</option>
                     {(Object.keys(entityLabels) as AuditLogEntityType[]).map((value) => <option key={value} value={value}>{entityLabels[value]}</option>)}
                   </select>
                 </label>
                 <label className="block">
-                  <span className={activityLabel}>Red flags</span>
+                  <span className={activityLabel}>Flag</span>
                   <select value={flag} onChange={(event) => { setFlag(event.target.value as FlagFilter); setPage(0) }} className={activityField}>
-                    <option value="all">All entries</option>
-                    <option value="any">Any red flag</option>
+                    <option value="all">All</option>
+                    <option value="any">Any flag</option>
                     {flagOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </label>
@@ -445,7 +480,10 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
                   <li key={log.id} className="rounded-xl border border-slate-300/80 bg-white p-3 shadow-sm sm:border-2 sm:p-4">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-[0.8rem] font-black text-slate-900 sm:text-sm">{actionInfo(log.action).label}</p>
-                      {log.flag && <FlagBadge flag={log.flag} />}
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <PaymentTag log={log} />
+                        {log.flag && <FlagBadge flag={log.flag} />}
+                      </div>
                     </div>
                     <p className="mt-0.5 line-clamp-1 text-[0.7rem] font-bold text-blue-700 sm:mt-1 sm:line-clamp-none sm:text-xs">{log.entityName}<span className="hidden sm:inline"> · {entityLabels[log.entityType]} {log.entityId}</span></p>
                     <p title={log.reason} className="mt-1 line-clamp-1 text-[0.7rem] text-slate-500 sm:line-clamp-2 sm:text-xs">{log.reason}</p>

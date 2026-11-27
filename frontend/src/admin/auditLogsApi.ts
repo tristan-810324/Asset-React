@@ -30,7 +30,7 @@ export type AuditLogFilters = {
   from: string
   to: string
   // 'requisitions' = purchase requisition and main issuance entries only. Optional, so other pages need no change.
-  module?: 'all' | 'requisitions'
+  module?: 'all' | 'requisitions' | 'payments'
 }
 
 export type AuditLogPage = {

@@ -10,6 +10,10 @@ async function listLogs({ limit, offset, action, entityType, flag = 'all', searc
 
   if (action !== 'all') conditions.push(`log.action = ${addValue(action)}`);
   if (entityType !== 'all') conditions.push(`log.entity_type = ${addValue(entityType)}`);
+  // 'payments' = payment and waiver proof entries only (both store chargeKind in their new values).
+  if (module === 'payments') {
+    conditions.push(`(log.new_values ->> 'chargeKind') IS NOT NULL`);
+  }
   // shortcut: the requisition history reads only the newest 100 entries (no paging yet), add paging when the list gets long.
   if (module === 'requisitions') {
     conditions.push(`((log.entity_type = 'request' AND log.request_id IN (SELECT id FROM service_requests WHERE request_type = 'PURCHASE_REQUISITION'))

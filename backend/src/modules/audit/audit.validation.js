@@ -45,7 +45,7 @@ function validateAuditLogFilters(query) {
 
   // 'requisitions' = purchase requisition and main issuance entries only (see audit.repository.js).
   const module = query.module === undefined || query.module === '' ? 'all' : query.module;
-  if (module !== 'all' && module !== 'requisitions') invalid('Invalid module filter.');
+  if (module !== 'all' && module !== 'requisitions' && module !== 'payments') invalid('Invalid module filter.');
 
   const from = parseDate(query.from, 'Start date');
   const to = parseDate(query.to, 'End date');
