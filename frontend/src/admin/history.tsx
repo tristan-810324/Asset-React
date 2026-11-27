@@ -227,8 +227,9 @@ export default function AdminHistory() {
   const current = MODULES.find((item) => item.key === module) ?? MODULES[0]
   const moduleRows = useMemo<HistoryRow[]>(() => {
     if (module === 'support') return serviceRows
-    const audit = records.filter((record) => current.entityTypes.includes(record.entityType)).map(auditRow)
-    return module === 'users' ? [...employeeRows, ...audit] : audit
+    // User management lists the requester verifications only, the same table as the GSO Employees tab.
+    if (module === 'users') return employeeRows
+    return records.filter((record) => current.entityTypes.includes(record.entityType)).map(auditRow)
   }, [module, records, serviceRows, employeeRows, current])
   const statusOptions = useMemo(() => [...new Set(moduleRows.map((row) => row.status))].sort(), [moduleRows])
 
