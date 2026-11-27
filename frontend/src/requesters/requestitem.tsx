@@ -770,7 +770,7 @@ function RequestItemContent() {
     selectedServiceCategory
     && String(form.departmentOrganization || '').trim()
     && String(form.location || '').trim()
-    && String(form.requiredDate || '') >= today()
+    && Boolean(form.requiredDate) && String(form.requiredDate) < today()
     && String(form.purpose || '').trim()
     && (form.serviceCategory !== 'OTHERS' || String(form.serviceOther || '').trim()),
   )
