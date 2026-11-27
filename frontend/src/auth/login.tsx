@@ -26,7 +26,7 @@ export default function Login() {
       const destination = dashboardPathForRoles(result.user.roles)
 
       if (!destination) {
-        throw new Error('This account does not have a dashboard role. Contact the IT administrator.')
+        throw new Error('This account has no dashboard yet. Please contact the IT Admin.')
       }
 
       saveAuthToken(result.token)
@@ -73,20 +73,20 @@ export default function Login() {
 
             {/* Headline at Gradient Colors */}
             <h1 className="text-4xl font-black leading-[1.08] tracking-tight text-white xl:text-[3.2rem]">
-              Welcome to your
+              Good to see you
               <span className="mt-1 block">
                 <span className="bg-linear-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent">
-                  modern asset{" "}
+                  back at{" "}
                 </span>
                 <span className="bg-linear-to-r from-sky-300 via-blue-200 to-indigo-200 bg-clip-text text-transparent">
-                  command.
+                  A.S.S.E.T.
                 </span>
               </span>
             </h1>
 
             {/* Subtitle Text */}
             <p className="mt-5 max-w-md text-sm font-medium leading-relaxed text-slate-200">
-              Seamlessly manage school deployments, equipment tracking, and live audit logs in one unified platform—<strong className="font-extrabold text-white">ensuring campus readiness every day.</strong>
+              Keep track of school equipment, requests, and returns in one place, <strong className="font-extrabold text-white">so every room stays ready for class.</strong>
             </p>
           </div>
         </section>
@@ -110,7 +110,7 @@ export default function Login() {
               <div className="mb-3 text-center lg:hidden">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/15 bg-blue-50/70 px-2.5 py-0.5 text-[0.6rem] font-black uppercase tracking-widest text-blue-700 shadow-xs">
                   <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
-                  A.SSET Campus System
+                  A.S.S.E.T Campus System
                 </span>
               </div>
 
@@ -118,7 +118,7 @@ export default function Login() {
               <div className="mb-3.5 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
                 <img
                   src="/dyci_img/final_assetlogo.webp"
-                  alt="A.SSET logo"
+                  alt="A.S.S.E.T logo"
                   className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16"
                 />
                 <div className="h-6 w-px bg-slate-300/80 sm:h-8" />
@@ -134,13 +134,13 @@ export default function Login() {
                   Sign in
                 </h2>
                 <p className="mt-0.5 text-[0.7rem] font-medium text-slate-600 sm:text-xs">
-                  Sign in using your registered email account.
+                  Sign in with your DYCI email and password.
                 </p>
               </div>
 
               {emailVerified && (
                 <p role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
-                  Email verified. You can now sign in with your new requester account.
+                  Your email is verified. You can sign in now.
                 </p>
               )}
 
@@ -150,7 +150,7 @@ export default function Login() {
                     htmlFor="email"
                     className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]"
                   >
-                    DYCI Email Address
+                    DYCI email address
                   </label>
                   <input
                     id="email"
@@ -208,9 +208,9 @@ export default function Login() {
               </form>
 
               <p className="mt-4 text-center text-[0.7rem] font-medium text-slate-600 sm:text-xs">
-                Don&apos;t have an account?{' '}
+                New here?{' '}
                 <a href="/register" className="font-extrabold text-blue-600 transition hover:text-blue-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
-                  Register now
+                  Create an account
                 </a>
               </p>
 

@@ -40,7 +40,7 @@ export default function VerifyEmailOtp() {
     try {
       const result = await verifyEmailOtp(pending.challengeId, otp)
       const destination = dashboardPathForRoles(result.user.roles)
-      if (!destination) throw new Error('This account does not have a dashboard role. Please contact the IT Admin.')
+      if (!destination) throw new Error('This account has no dashboard access yet. Please contact the IT Admin.')
 
       clearPendingEmailVerification()
       if (pending.flow === 'registration') {
@@ -51,7 +51,7 @@ export default function VerifyEmailOtp() {
       saveAuthToken(result.token)
       window.location.replace(destination)
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'We could not verify your email. Please try again.')
+      setErrorMessage(error instanceof Error ? error.message : 'We could not verify your email. Check the code and try again.')
       setIsSubmitting(false)
     }
   }
@@ -114,7 +114,7 @@ export default function VerifyEmailOtp() {
               </span>
             </h1>
             <p className="mt-5 max-w-md text-sm font-medium leading-relaxed text-slate-200">
-              Enter the verification code sent to your email to continue securely.
+              Enter the code we sent to your email to finish signing in.
             </p>
           </div>
         </section>
@@ -129,12 +129,12 @@ export default function VerifyEmailOtp() {
             <div className="mb-3 text-center lg:hidden">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/15 bg-blue-50/70 px-2.5 py-0.5 text-[0.6rem] font-black uppercase tracking-widest text-blue-700 shadow-xs">
                 <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
-                A.SSET Campus System
+                A.S.S.E.T Campus System
               </span>
             </div>
 
             <div className="mb-4 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
-              <img src="/dyci_img/final_assetlogo.webp" alt="A.SSET logo" className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16" />
+              <img src="/dyci_img/final_assetlogo.webp" alt="A.S.S.E.T logo" className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16" />
               <div className="h-6 w-px bg-slate-300/80 sm:h-8" />
               <img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-9 w-9 object-contain transition-transform hover:scale-105 sm:h-11 sm:w-11 lg:h-14 lg:w-14" />
             </div>
@@ -142,7 +142,7 @@ export default function VerifyEmailOtp() {
             <div className="mb-5 text-center sm:text-left">
               <h2 className="text-xl font-black tracking-tight sm:text-2xl">Verify your email</h2>
               <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600">
-                This is the first sign-in for <span className="font-bold text-slate-800">{pending?.email || 'your account'}</span>. Enter the 6-digit code sent to your email. This email only needs to be verified once.
+                This is your first sign-in for <span className="font-bold text-slate-800">{pending?.email || 'your account'}</span>. Enter the 6-digit code we sent to your inbox. You only need to verify this email once.
               </p>
             </div>
 
@@ -167,13 +167,13 @@ export default function VerifyEmailOtp() {
               {noticeMessage && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">{noticeMessage}</p>}
 
               <button type="submit" disabled={isSubmitting || isResending || !pending} aria-busy={isSubmitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-xs font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition hover:bg-blue-500 active:scale-[0.98] disabled:cursor-wait disabled:opacity-60 sm:h-12">
-                {isSubmitting ? 'Verifying...' : 'Verify and continue'}
+                {isSubmitting ? 'Verifying…' : 'Verify and continue'}
                 <span aria-hidden="true">→</span>
               </button>
             </form>
 
             <div className="mt-5 border-t border-slate-200/70 pt-4 text-center">
-              <p className="text-xs font-semibold text-slate-600">Didn&apos;t receive or find the code?</p>
+              <p className="text-xs font-semibold text-slate-600">Didn&apos;t get the code?</p>
               <button type="button" onClick={handleResend} disabled={!pending || isSubmitting || isResending || resendSeconds > 0} aria-busy={isResending} className="mt-2 text-xs font-extrabold text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-400">
                 {isResending ? 'Sending new code…' : resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : 'Resend code'}
               </button>

@@ -17,7 +17,7 @@ export default function Register() {
     const confirmPassword = String(formData.get('confirmPassword') || '')
 
     if (password !== confirmPassword) {
-      setFeedback({ type: 'error', message: 'Passwords do not match. Please check and try again.' })
+      setFeedback({ type: 'error', message: 'The passwords do not match. Please check and try again.' })
       setIsSubmitting(false)
       return
     }
@@ -68,7 +68,7 @@ export default function Register() {
               Create your
               <span className="mt-1 block">
                 <span className="bg-linear-to-r from-amber-300 via-amber-400 to-amber-200 bg-clip-text text-transparent">
-                  A.SSET
+                  A.S.S.E.T
                 </span>{' '}
                 <span className="bg-linear-to-r from-sky-300 via-blue-200 to-indigo-200 bg-clip-text text-transparent">
                   account.
@@ -77,7 +77,7 @@ export default function Register() {
             </h1>
 
             <p className="mt-5 max-w-md text-sm font-medium leading-relaxed text-slate-200">
-              Register to get started with the A.SSET Campus System.
+              Sign up once, then request equipment and follow every request in one place.
             </p>
           </div>
         </section>
@@ -96,14 +96,14 @@ export default function Register() {
               <div className="mb-3 text-center lg:hidden">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/15 bg-blue-50/70 px-2.5 py-0.5 text-[0.6rem] font-black uppercase tracking-widest text-blue-700 shadow-xs">
                   <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-600" />
-                  A.SSET Campus System
+                  A.S.S.E.T Campus System
                 </span>
               </div>
 
               <div className="mb-3.5 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
                 <img
                   src="/dyci_img/final_assetlogo.webp"
-                  alt="A.SSET logo"
+                  alt="A.S.S.E.T logo"
                   className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16"
                 />
                 <div className="h-6 w-px bg-slate-300/80 sm:h-8" />
@@ -116,17 +116,17 @@ export default function Register() {
 
               <div className="mb-3.5 text-center sm:mb-5 sm:text-left">
                 <h2 className="text-xl font-black tracking-tight text-slate-900 sm:text-2xl lg:text-2xl">
-                  Create requester account
+                  Create your account
                 </h2>
                 <p className="mt-0.5 text-[0.7rem] font-medium text-slate-600 sm:text-xs">
-                  Register with your email to request and track borrowed items.
+                  Use your DYCI email. We will send a code to confirm it is yours.
                 </p>
               </div>
 
               <form className="space-y-3 sm:space-y-4" onSubmit={handleSubmit}>
                 <div>
                   <label htmlFor="email" className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]">
-                    Email Address
+                    Email address
                   </label>
                   <input
                     id="email"
@@ -158,7 +158,7 @@ export default function Register() {
 
                 <div>
                   <label htmlFor="confirmPassword" className="mb-1 block text-[0.65rem] font-extrabold uppercase tracking-wide text-slate-700 sm:text-[0.68rem] lg:text-[0.7rem]">
-                    Confirm Password
+                    Confirm password
                   </label>
                   <input
                     id="confirmPassword"
@@ -188,7 +188,7 @@ export default function Register() {
                   aria-busy={isSubmitting}
                   className="mt-1 flex h-10 w-full items-center justify-center gap-2 rounded-full bg-blue-600 text-[0.7rem] font-black uppercase tracking-[0.14em] text-white shadow-md shadow-blue-600/25 transition duration-200 hover:bg-blue-500 hover:shadow-blue-600/35 active:scale-[0.98] focus:outline-none focus-visible:ring-3 focus-visible:ring-blue-500/25 sm:h-11 sm:text-xs lg:h-12"
                 >
-                  {isSubmitting ? 'Creating account...' : 'Create account'}
+                  {isSubmitting ? 'Creating your account…' : 'Create account'}
                   <span aria-hidden="true" className="text-sm leading-none sm:text-base">→</span>
                 </button>
               </form>
