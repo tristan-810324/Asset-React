@@ -151,6 +151,11 @@ function PaymentTag({ log }: { log: AuditLogEntry }) {
   return null
 }
 
+// Removes a trailing file name such as (7dcc...jpg) from a log reason; the full text stays in the details.
+function stripFileNames(text: string) {
+  return text.replace(/\s*\([^()]*\.(?:webp|jpe?g|png|pdf)\)/gi, '')
+}
+
 function FlagBadge({ flag }: { flag: AuditLogFlag }) {
   const info = flagOptions.find((option) => option.value === flag)
   if (!info) return null
@@ -221,7 +226,7 @@ function AuditReceipt({ log }: { log: AuditLogEntry }) {
   )
 }
 
-export default function AuditLogView({ frame, variant = 'table', defaultSearch = '', intro, module: moduleFilter = 'all' }: { frame: (content: ReactNode) => ReactNode; variant?: 'table' | 'activity'; defaultSearch?: string; intro?: string; module?: 'all' | 'requisitions' | 'payments' }) {
+export default function AuditLogView({ frame, variant = 'table', defaultSearch = '', intro, module: moduleFilter = 'all', hideRedFlags = false, compact = false }: { frame: (content: ReactNode) => ReactNode; hideRedFlags?: boolean; compact?: boolean; variant?: 'table' | 'activity'; defaultSearch?: string; intro?: string; module?: 'all' | 'requisitions' | 'payments' }) {
   const [logs, setLogs] = useState<AuditLogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [flaggedCount, setFlaggedCount] = useState(0)
@@ -294,28 +299,28 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
 
   return frame(
     <>
-      <section className="relative overflow-hidden rounded-2xl bg-[#09244a] px-4 py-5 text-white shadow-xl shadow-blue-950/15 sm:rounded-3xl sm:px-7 sm:py-7">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" />
+      {!compact && (<section className={compact ? 'rounded-2xl border-2 border-slate-300/80 bg-white p-5 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-6' : 'relative overflow-hidden rounded-2xl bg-[#09244a] px-4 py-5 text-white shadow-xl shadow-blue-950/15 sm:rounded-3xl sm:px-7 sm:py-7'}>
+        {!compact && <><div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_10%,rgba(96,165,250,0.42),transparent_28%),radial-gradient(circle_at_72%_100%,rgba(14,165,233,0.2),transparent_36%)]" /><div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full border-18 border-white/4" /><div aria-hidden="true" className="pointer-events-none absolute -bottom-32 left-[40%] h-64 w-64 rounded-full border-22 border-white/3" /></>}
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <span className="inline-flex rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">Activity history</span>
-            <h1 className="mt-2 text-xl font-black tracking-tight sm:mt-3 sm:text-3xl">Audit Logs</h1>
-            <p className="mt-2 hidden max-w-2xl text-sm font-medium leading-relaxed text-blue-100 sm:block">{intro ?? 'Read-only record of who added, issued, returned, or changed each item, with the reason. Entries marked ⚠ need a look.'}</p>
+            <span className={compact ? 'inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-slate-500' : 'inline-flex rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100'}>Activity history</span>
+            <h1 className={`mt-2 text-xl font-black tracking-tight sm:mt-3 sm:text-3xl ${compact ? 'text-slate-900' : ''}`}>Audit Logs</h1>
+            <p className={`mt-2 hidden max-w-2xl text-sm font-medium leading-relaxed sm:block ${compact ? 'text-slate-500' : 'text-blue-100'}`}>{intro ?? 'Read-only record of who added, issued, returned, or changed each item, with the reason. Entries marked ⚠ need a look.'}</p>
           </div>
           <div className="flex gap-2 sm:gap-3">
-            <button type="button" onClick={showRedFlags} aria-pressed={flag === 'any'} className="rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-left transition hover:bg-amber-400/20 sm:px-4 sm:py-3">
+            {!hideRedFlags && <button type="button" onClick={showRedFlags} aria-pressed={flag === 'any'} className="rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-left transition hover:bg-amber-400/20 sm:px-4 sm:py-3">
               <span className="block text-[0.6rem] font-extrabold uppercase tracking-wide text-amber-100">Red flags · 30 days</span>
               <span className="mt-1 block text-xl font-black text-white">{isLoading ? '—' : flaggedCount}</span>
-            </button>
-            <div className="rounded-xl border border-white/10 bg-white/8 px-3 py-2 sm:px-4 sm:py-3">
-              <span className="block text-[0.6rem] font-extrabold uppercase tracking-wide text-blue-200">Matching entries</span>
-              <span className="mt-1 block text-xl font-black text-white">{isLoading ? '—' : total}</span>
+            </button>}
+            <div className={compact ? 'rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 sm:px-4 sm:py-3' : 'rounded-xl border border-white/10 bg-white/8 px-3 py-2 sm:px-4 sm:py-3'}>
+              <span className={`block text-[0.6rem] font-extrabold uppercase tracking-wide ${compact ? 'text-slate-500' : 'text-blue-200'}`}>Matching entries</span>
+              <span className={`mt-1 block text-xl font-black ${compact ? 'text-slate-900' : 'text-white'}`}>{isLoading ? '—' : total}</span>
             </div>
           </div>
         </div>
-      </section>
+      </section>)}
 
-      {flaggedCount > 0 && flag !== 'any' && (
+      {!hideRedFlags && flaggedCount > 0 && flag !== 'any' && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 sm:mt-5 sm:gap-3 sm:rounded-2xl sm:px-5 sm:py-4">
           <p className="text-xs font-bold leading-relaxed text-amber-900"><span className="sm:hidden">{flaggedCount} need a look.</span><span className="hidden sm:inline">{flaggedCount} flagged {flaggedCount === 1 ? 'entry' : 'entries'} in the last 30 days. Check {flaggedCount === 1 ? 'it' : 'them'} first.</span></p>
           <button type="button" onClick={showRedFlags} className="rounded-lg bg-amber-500 px-3 py-1.5 text-[0.7rem] font-extrabold text-white hover:bg-amber-600 sm:px-3.5 sm:py-2 sm:text-xs">Show red flags</button>
@@ -419,7 +424,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
                 <h2 className="text-sm font-black tracking-tight text-slate-900 sm:text-base">Audit trail</h2>
                 <p className="mt-0.5 text-[0.65rem] text-slate-500 sm:mt-1 sm:text-xs">{isLoading ? 'Loading…' : `${total} ${total === 1 ? 'entry' : 'entries'}`}</p>
               </div>
-              <button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[0.7rem] font-extrabold text-slate-700 shadow-sm sm:hidden">{filtersOpen ? 'Hide' : 'Filters'}</button>
+              {!compact && (<button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[0.7rem] font-extrabold text-slate-700 shadow-sm sm:hidden">{filtersOpen ? 'Hide' : 'Filters'}</button>)}
             </div>
             <div className="mt-2.5 flex w-full flex-wrap items-end gap-2 sm:mt-0 sm:w-auto">
               <label className="block min-w-0 flex-1 sm:w-56 sm:flex-none">
@@ -427,7 +432,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
                 <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Name, code, reason, or person" className={activityField} />
               </label>
               <button type="submit" className="h-10 shrink-0 rounded-xl bg-blue-600 px-3.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 sm:hidden">Go</button>
-              <div className={`${filtersOpen ? 'grid' : 'hidden'} w-full grid-cols-2 gap-2 sm:contents`}>
+              {!compact && (<div className={`${filtersOpen ? 'grid' : 'hidden'} w-full grid-cols-2 gap-2 sm:contents`}>
                 <label className="block">
                   <span className={activityLabel}>Action</span>
                   <select value={action} onChange={(event) => { setAction(event.target.value as 'all' | AuditLogAction); setPage(0) }} className={activityField}>
@@ -442,14 +447,14 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
                     {(Object.keys(entityLabels) as AuditLogEntityType[]).map((value) => <option key={value} value={value}>{entityLabels[value]}</option>)}
                   </select>
                 </label>
-                <label className="block">
+                {!hideRedFlags && <label className="block">
                   <span className={activityLabel}>Flag</span>
                   <select value={flag} onChange={(event) => { setFlag(event.target.value as FlagFilter); setPage(0) }} className={activityField}>
                     <option value="all">All</option>
                     <option value="any">Any flag</option>
                     {flagOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
-                </label>
+                </label>}
                 <label className="block">
                   <span className={activityLabel}>From</span>
                   <input type="date" value={from} onChange={(event) => { setFrom(event.target.value); setPage(0) }} className={activityField} />
@@ -462,7 +467,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
                   <button type="submit" className="hidden h-10 items-center justify-center rounded-xl bg-blue-600 px-4 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700 sm:inline-flex">Search</button>
                   <button type="button" onClick={clearFilters} className="inline-flex h-10 flex-1 items-center justify-center rounded-xl border-2 border-slate-300 bg-white px-3 text-xs font-extrabold text-slate-700 shadow-sm hover:bg-slate-50 sm:flex-none">Clear</button>
                 </div>
-              </div>
+              </div>)}
             </div>
           </form>
 
@@ -486,7 +491,7 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
                       </div>
                     </div>
                     <p className="mt-0.5 line-clamp-1 text-[0.7rem] font-bold text-blue-700 sm:mt-1 sm:line-clamp-none sm:text-xs">{log.entityName}<span className="hidden sm:inline"> · {entityLabels[log.entityType]} {log.entityId}</span></p>
-                    <p title={log.reason} className="mt-1 line-clamp-1 text-[0.7rem] text-slate-500 sm:line-clamp-2 sm:text-xs">{log.reason}</p>
+                    <p title={compact ? stripFileNames(log.reason) : log.reason} className="mt-1 line-clamp-1 text-[0.7rem] text-slate-500 sm:line-clamp-2 sm:text-xs">{compact ? stripFileNames(log.reason) : log.reason}</p>
                     <div className="mt-2 flex items-center justify-between gap-2 border-t border-slate-100 pt-2 sm:mt-3 sm:pt-3">
                       <p className="min-w-0 truncate text-[0.6rem] font-medium text-slate-400 sm:text-[0.62rem]"><span className="sm:hidden">{formatShortDate(log.changedAt)}</span><span className="hidden sm:inline">{formatDate(log.changedAt)}</span> · {log.changedBy || 'System'}</p>
                       <button type="button" onClick={() => setSelectedLog(log)} className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 text-[0.6rem] font-extrabold text-white shadow-sm transition hover:bg-blue-700 sm:px-3 sm:py-1.5 sm:text-[0.65rem]">View details</button>
@@ -507,7 +512,58 @@ export default function AuditLogView({ frame, variant = 'table', defaultSearch =
         </section>
       )}
 
-      {selectedLog && (
+      {selectedLog && compact && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-3 backdrop-blur-sm sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedLog(null) }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="audit-detail-title" className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl shadow-slate-950/30">
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-7">
+              <div className="flex min-w-0 items-center gap-3">
+                <span aria-hidden="true" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border-2 border-[#d6b333] bg-[#17377f] text-sm font-black text-white shadow-sm">
+                  {(selectedLog.changedBy || 'GS').split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Audit record</p>
+                  <h3 id="audit-detail-title" className="mt-0.5 truncate text-base font-black text-slate-900 sm:text-lg">{selectedLog.entityName}</h3>
+                  <p className="mt-0.5 text-xs font-semibold text-slate-500">{entityLabels[selectedLog.entityType]} · {selectedLog.entityId}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setSelectedLog(null)} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50">Close</button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-5 sm:px-7 sm:py-6">
+              <div className="mx-auto max-w-2xl space-y-4">
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`rounded-full px-3 py-1.5 text-sm font-extrabold ${actionInfo(selectedLog.action).tone}`}>{actionInfo(selectedLog.action).label}</span>
+                    {selectedLog.flag && <FlagBadge flag={selectedLog.flag} />}
+                  </div>
+                  <p className="mt-3 whitespace-pre-wrap text-sm font-semibold leading-relaxed text-slate-700">{selectedLog.reason}</p>
+                  <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+                      <dt className="text-xs font-semibold text-slate-500">Done by</dt>
+                      <dd className="mt-1 text-sm font-bold text-slate-900">{selectedLog.changedBy || 'System'}</dd>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+                      <dt className="text-xs font-semibold text-slate-500">Date and time</dt>
+                      <dd className="mt-1 text-sm font-bold text-slate-900">{formatDate(selectedLog.changedAt)}</dd>
+                    </div>
+                  </dl>
+                </section>
+
+                <AuditReceipt key={selectedLog.id} log={selectedLog} />
+
+                <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-4 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5 sm:p-5">
+                  <h3 className="mb-3 text-sm font-extrabold text-slate-900">Changes</h3>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <ValueList title="Before" values={selectedLog.oldValues} />
+                    <ValueList title="After" values={selectedLog.newValues} />
+                  </div>
+                </section>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+      {selectedLog && !compact && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedLog(null) }}>
           <section role="dialog" aria-modal="true" aria-labelledby="audit-detail-title" className="my-3 max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl sm:my-6 sm:rounded-3xl sm:p-7">
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">

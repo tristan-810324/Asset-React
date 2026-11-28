@@ -581,7 +581,7 @@ export default function GsoPayments() {
 
       <section className="mt-6" aria-labelledby="payment-audit-title">
         <h2 id="payment-audit-title" className="mb-3 text-sm font-black text-slate-900">Payment and waiver audit trail</h2>
-        <AuditLogView key={auditVersion} frame={(content) => <>{content}</>} variant="activity" module="payments" intro="Read-only record of payments and waived items." />
+        <AuditLogView key={auditVersion} frame={(content) => <>{content}</>} variant="activity" module="payments" hideRedFlags compact intro="Read-only record of payments and waived items." />
       </section>
 
       {selected?.type === 'charge' && (
