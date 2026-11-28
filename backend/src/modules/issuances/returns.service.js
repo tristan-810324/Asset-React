@@ -378,6 +378,59 @@ async function confirmScannedTagReturn(tagCodeValue, input, user) {
   return { ...result, entryMethod, emailQueued };
 }
 
+// Several units of ONE borrower share one code: each unit keeps its own challenge with the same code, so every confirm is still checked.
+async function sendBatchTaggedReturnOtp(tagCodesValue, user) {
+  if (!Array.isArray(tagCodesValue) || tagCodesValue.length < 1 || tagCodesValue.length > 50) {
+    throw httpError(400, 'Scan between 1 and 50 units to return.');
+  }
+  const tagCodes = [...new Set(tagCodesValue.map((value) => (typeof value === 'string' ? value.trim().toUpperCase() : '')))];
+  if (tagCodes.some((tagCode) => !/^AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})$/.test(tagCode))) {
+    throw httpError(400, 'Invalid unit barcode.');
+  }
+  requireMailTransport('Ask IT Admin to fix the email settings first.');
+  const otp = newReturnOtp();
+  const challenges = [];
+  for (const tagCode of tagCodes) {
+    challenges.push(await returnsRepository.createReturnOtp({ tagCode, otpHash: hashReturnOtp(tagCode, otp), requestedByUserId: user.id }));
+  }
+  const borrowers = new Set(challenges.map((challenge) => challenge.employeeEmail));
+  if (borrowers.size !== 1) throw httpError(400, 'Scan units from one employee at a time.');
+  const [first] = challenges;
+  await emailReturnCode({
+    to: first.employeeEmail,
+    employeeName: first.employeeName,
+    otp,
+    summary: `${user.name || user.email} of the General Services Office is recording the return of ${challenges.length} unit(s) from you: ${challenges.map((challenge) => `${challenge.itemName} (${challenge.tagCode})`).join(', ')}.`,
+    warning: 'Give this code to GSO staff only if you are returning these items now. If not, do not share it and report it to the General Services Office.',
+  });
+  return {
+    units: challenges.map((challenge) => ({ tagCode: challenge.tagCode, otpChallengeId: challenge.challengeId, itemName: challenge.itemName })),
+    expiresAt: first.expiresAt,
+    sentTo: maskEmail(first.employeeEmail),
+  };
+}
+
+// Each unit is confirmed with the existing single-unit rules; one unit failing does not stop the others.
+async function confirmBatchTaggedReturn(input, user) {
+  if (!input || typeof input !== 'object' || !Array.isArray(input.units) || input.units.length < 1 || input.units.length > 50) {
+    throw httpError(400, 'Choose the units to return.');
+  }
+  if (typeof input.otp !== 'string' || !/^\d{6}$/.test(input.otp.trim())) {
+    throw httpError(400, 'A 6-digit code sent to the employee email is required to confirm the return.');
+  }
+  const results = [];
+  for (const unit of input.units) {
+    const tagCode = typeof unit?.tagCode === 'string' ? unit.tagCode.trim().toUpperCase() : '';
+    try {
+      const result = await confirmScannedTagReturn(tagCode, { ...unit, otp: input.otp.trim() }, user);
+      results.push({ tagCode, ok: true, itemName: result.itemName, condition: result.condition });
+    } catch (error) {
+      results.push({ tagCode, ok: false, error: error.message });
+    }
+  }
+  return { results, returned: results.filter((row) => row.ok).length, failed: results.filter((row) => !row.ok).length };
+}
+
 function hashReturnOtp(tagCode, otp) {
   return crypto.createHmac('sha256', env.jwtSecret).update(`return-otp:${tagCode}:${otp}`).digest('hex');
 }
@@ -786,6 +839,8 @@ module.exports = {
   sendBulkReturnOtp,
   sendTaggedReturnOtp,
   confirmScannedTagReturn,
+  sendBatchTaggedReturnOtp,
+  confirmBatchTaggedReturn,
   resolveReturnRepair,
   updateReturnSettlement,
   requestReturnApproval,

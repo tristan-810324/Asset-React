@@ -715,3 +715,32 @@ export async function resolveTaggedRepair(
   )
   return result.result
 }
+
+// Batch return: one code for one borrower's units, then each unit is confirmed with its own challenge.
+export async function sendBatchTaggedReturnOtp(tagCodes: string[]) {
+  const result = await apiRequest<{ challenge: { units: Array<{ tagCode: string; otpChallengeId: string; itemName: string }>; expiresAt: string; sentTo: string } }>(
+    '/issuances/tagged-returns/otp',
+    { method: 'POST', body: JSON.stringify({ tagCodes }) },
+  )
+  return result.challenge
+}
+
+export async function confirmBatchTaggedReturn(input: {
+  otp: string
+  units: Array<{
+    tagCode: string
+    otpChallengeId: string
+    condition: string
+    reason: string
+    entryMethod: 'scan' | 'typed'
+    returnedByName?: string
+    repairOwner?: 'GSO' | 'ITSS'
+    serialLast4?: string
+  }>
+}) {
+  const result = await apiRequest<{ result: { results: Array<{ tagCode: string; ok: boolean; error?: string; itemName?: string }>; returned: number; failed: number } }>(
+    '/issuances/tagged-returns',
+    { method: 'POST', body: JSON.stringify(input) },
+  )
+  return result.result
+}

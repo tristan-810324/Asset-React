@@ -18,6 +18,9 @@ router.get('/tags/:tagCode', authenticate, requireRole('GSO_STAFF'), issuancesCo
 router.patch('/tags/:tagCode/inspection', authenticate, requireRole('GSO_STAFF'), issuancesController.inspectAssetTag);
 router.post('/tags/:tagCode/return-otp', authenticate, requireRole('GSO_STAFF'), returnsController.sendTaggedReturnOtp);
 router.post('/tags/:tagCode/return', authenticate, requireRole('GSO_STAFF'), returnsController.confirmScannedTagReturn);
+// Batch returns: one code for one borrower's units, then one confirm per unit.
+router.post('/tagged-returns/otp', authenticate, requireRole('GSO_STAFF'), returnsController.sendBatchTaggedReturnOtp);
+router.post('/tagged-returns', authenticate, requireRole('GSO_STAFF'), returnsController.confirmBatchTaggedReturn);
 router.patch('/tags/:tagCode/repair-complete', authenticate, requireRole('GSO_STAFF', 'IT_ADMIN'), returnsController.completeTaggedAssetRepair);
 router.get('/mine/activity', authenticate, requireRole('BORROWER'), issuancesController.listMyIssuanceActivity);
 router.get('/mine/department-returns', authenticate, requireRole('BORROWER'), issuancesController.listMyDepartmentReturnActivity);

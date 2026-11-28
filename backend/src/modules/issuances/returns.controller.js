@@ -64,6 +64,16 @@ const confirmScannedTagReturn = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { result } });
 });
 
+const sendBatchTaggedReturnOtp = asyncHandler(async (req, res) => {
+  const result = await returnsService.sendBatchTaggedReturnOtp(req.body?.tagCodes, req.user);
+  res.status(201).json({ success: true, data: { challenge: result } });
+});
+
+const confirmBatchTaggedReturn = asyncHandler(async (req, res) => {
+  const result = await returnsService.confirmBatchTaggedReturn(req.body, req.user);
+  res.json({ success: true, data: { result } });
+});
+
 const completeTaggedAssetRepair = asyncHandler(async (req, res) => {
   const result = await returnsService.completeTaggedAssetRepair(req.params.tagCode, req.user, req.body);
   res.json({ success: true, data: { result } });
@@ -92,6 +102,8 @@ module.exports = {
   sendBulkReturnOtp,
   sendTaggedReturnOtp,
   confirmScannedTagReturn,
+  sendBatchTaggedReturnOtp,
+  confirmBatchTaggedReturn,
   completeTaggedAssetRepair,
   lookupReturnApproval,
   decideReturnApproval,

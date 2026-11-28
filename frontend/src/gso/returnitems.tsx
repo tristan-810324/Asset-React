@@ -9,6 +9,7 @@ import {
   type AssetTagInspectionRecord,
   type TaggedReturnOtpChallenge,
 } from './issuancesApi'
+import { ReturnManyPanel } from './returnmany'
 
 const assetTagCodePattern = /^(?:AST-(?:[A-Z0-9]{13}|[A-F0-9]{20})|[A-Z0-9]{13}|[A-F0-9]{20})$/i
 const barcodeScanQuietPeriodMs = 220
@@ -90,6 +91,8 @@ export default function ReturnItems() {
   const [writeOffConfirmed, setWriteOffConfirmed] = useState(false)
   const [returnedByName, setReturnedByName] = useState('')
   const [serialLast4, setSerialLast4] = useState('')
+  // Single unit (the default) or many units scanned and inspected together on this page.
+  const [mode, setMode] = useState<'single' | 'many'>(() => (window.location.pathname === '/gso/return-many' || new URLSearchParams(window.location.search).get('mode') === 'many' ? 'many' : 'single'))
 
   useEffect(() => () => {
     if (scannerLookupTimerRef.current !== null) {
@@ -368,12 +371,17 @@ export default function ReturnItems() {
           <div>
             <h2 id="return-process-title" className="text-lg font-black tracking-tight text-slate-900">Process an item return</h2>
             <p className="mt-1.5 text-sm text-slate-600">
-              Scan the barcode on an individually tagged unit, like a laptop.
+              {mode === 'single' ? 'Scan the barcode on an individually tagged unit, like a laptop.' : 'Scan several units from one employee, inspect each one, then confirm them together.'}
             </p>
+          </div>
+          <div role="group" aria-label="Return mode" className="inline-flex rounded-xl border-2 border-blue-200 bg-blue-50/60 p-1">
+            {([['single', 'Single unit'], ['many', 'Many units']] as const).map(([value, label]) => (
+              <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className={`rounded-lg px-4 py-2 text-xs font-extrabold transition ${mode === value ? 'bg-blue-600 text-white shadow-sm' : 'text-blue-800 hover:bg-white'}`}>{label}</button>
+            ))}
           </div>
         </div>
 
-        <div>
+        <div hidden={mode !== 'single'}>
           <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border-2 border-blue-200 bg-blue-50/70 px-5 py-4">
             <div>
               <p className="flex items-center gap-2.5 text-sm font-extrabold text-blue-900" role="status" aria-live="polite">
@@ -429,6 +437,9 @@ export default function ReturnItems() {
               )}
             </div>
           )}
+        </div>
+        <div hidden={mode !== 'many'}>
+          <ReturnManyPanel active={mode === 'many'} />
         </div>
       </section>
 

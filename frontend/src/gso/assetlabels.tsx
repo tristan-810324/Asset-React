@@ -465,7 +465,7 @@ export default function AssetLabels() {
                             {group.labels.map((label) => <div key={label.tagCode} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
                               <div className="min-w-0">
                                 <p className="break-all font-mono text-sm font-extrabold text-slate-900">{label.tagCode}</p>
-                                <p className="mt-0.5 text-sm font-semibold text-slate-800">{label.itemName} · {label.itemCode} · Item {label.unitNumber}</p>
+                                <p className="mt-0.5 text-sm font-semibold text-slate-800">{label.itemName} · {label.itemCode}</p>
                                 <p className="mt-0.5 text-sm text-slate-700">Assigned to: <span className="font-bold">{label.holderName}</span> · {label.holderCode}</p>
                                 {label.isReturned && <p className="mt-1 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-900">{label.returnCondition === 'Lost' ? 'Lost. Do not reprint.' : 'Returned. Do not reprint.'}</p>}
                               </div>
@@ -555,7 +555,7 @@ export default function AssetLabels() {
           <form onSubmit={(event) => void handleReprintSubmit(event)}>
             <p className="text-[0.62rem] font-black uppercase tracking-[0.14em] text-blue-700">Replace barcode label</p>
             <h2 id="reprint-label-title" className="mt-1 text-base font-black text-slate-900">Reprint this label?</h2>
-            <p className="mt-1 text-xs text-slate-600">{reprintTarget.itemName} · {reprintTarget.itemCode} · Item {reprintTarget.unitNumber}</p>
+            <p className="mt-1 text-xs text-slate-600">{reprintTarget.itemName} · {reprintTarget.itemCode}</p>
             <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5">
               <p className="font-mono text-xs font-extrabold text-slate-900">{reprintTarget.tagCode}</p>
               <p className="mt-1 text-xs text-slate-700">Assigned to: <strong>{reprintTarget.holderName}</strong> · {reprintTarget.holderCode}</p>
