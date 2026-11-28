@@ -30,6 +30,7 @@ import GsoPurchaseRequisitions from './gso/purchaserequisitions'
 import GsoProcurement from './gso/procurement'
 import GsoHeadIssuanceRecord from './gsohead/issuancerecord'
 import ReturnItems from './gso/returnitems'
+import RecentReturns from './gso/recentreturns'
 import ToRepaired from './gso/torepaired'
 import LossDamageCases from './gso/lossdamagecases'
 import GsoPayments from './gso/payments'
@@ -226,6 +227,9 @@ export default function App() {
   }
   if (path === '/gso/return-items') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ReturnItems /></ProtectedDashboard>
+  }
+  if (path === '/gso/recent-returns') {
+    return <ProtectedDashboard requiredRole="GSO_STAFF"><RecentReturns /></ProtectedDashboard>
   }
   if (path === '/gso/to-be-repaired') {
     return <ProtectedDashboard requiredRole="GSO_STAFF"><ToRepaired /></ProtectedDashboard>

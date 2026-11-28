@@ -357,6 +357,9 @@ export default function ReturnItems() {
           <a href="/gso/return-items" aria-current="page" className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md">
             + Return Items
           </a>
+          <a href="/gso/recent-returns" className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-extrabold text-blue-100 transition hover:bg-white/12">
+            Recent Returns
+          </a>
         </nav>
       </section>
 
