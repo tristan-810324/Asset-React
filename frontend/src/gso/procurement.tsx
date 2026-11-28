@@ -31,6 +31,7 @@ const emptyCopy: Record<QueueTab, { title: string; detail: string }> = {
 const iconPaths = {
   view: <><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
   download: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
+  refresh: <><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></>,
   printer: <><path d="M6 9V3h12v6" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><path d="M6 14h12v8H6z" /></>,
 }
 
@@ -93,9 +94,39 @@ function FinanceLines({ request }: { request: ServiceRequest }) {
   </ul>
 }
 
+// Asks before a download, because downloading also marks the requisition as handed to Finance.
+function ConfirmDownloadDialog({ request, onCancel, onConfirm }: { request: ServiceRequest; onCancel: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancel() }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onCancel])
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel() }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="confirm-download-title" className="w-full max-w-md overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-2xl">
+        <header className="p-5 sm:p-6">
+          <h2 id="confirm-download-title" className="text-base font-black text-slate-900">Download and mark as handed?</h2>
+          <p className="mt-1 text-xs text-slate-600">{request.referenceNo} · {request.requesterName || 'Requester'}</p>
+        </header>
+        <div className="space-y-3 border-t border-slate-200 p-5 text-sm text-slate-700 sm:p-6">
+          <p>Downloading this signed PDF also marks the requisition as handed to Finance.</p>
+          <p className="text-xs text-slate-500">To only look at the PDF, use View PDF instead.</p>
+        </div>
+        <footer className="flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 p-4 sm:px-6">
+          <button type="button" onClick={onCancel} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-extrabold text-slate-700 transition hover:bg-slate-50">Cancel</button>
+          <button type="button" onClick={onConfirm} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700">Yes, download and mark</button>
+        </footer>
+      </section>
+    </div>,
+    document.body,
+  )
+}
+
 function QueueCard({ request, onHandedOff, onReprint }: { request: ServiceRequest; onHandedOff: HandedOff; onReprint: (request: ServiceRequest) => void }) {
   const [busy, setBusy] = useState<'view' | 'download' | null>(null)
   const [error, setError] = useState('')
+  const [confirming, setConfirming] = useState(false)
   const handed = request.status === 'Sent to Finance'
   const approvedOn = request.gsoHeadEndorsedAt ? formatDate(request.gsoHeadEndorsedAt) : '—'
   const handedOn = request.financeSentAt ? formatDate(request.financeSentAt) : null
@@ -151,10 +182,17 @@ function QueueCard({ request, onHandedOff, onReprint }: { request: ServiceReques
         <button type="button" onClick={() => void view()} disabled={busy !== null} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-extrabold text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:opacity-50"><Icon name="view" />{busy === 'view' ? 'Opening…' : 'View PDF'}</button>
         {handed
           ? <button type="button" onClick={() => onReprint(request)} disabled={busy !== null} className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-extrabold text-amber-800 transition hover:bg-amber-100 disabled:opacity-50"><Icon name="printer" />Reprint</button>
-          : <button type="button" onClick={() => void downloadFirstCopy()} disabled={busy !== null} className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:opacity-50"><Icon name="download" />{busy === 'download' ? 'Preparing…' : 'Download'}</button>}
+          : <button type="button" onClick={() => setConfirming(true)} disabled={busy !== null} className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-extrabold text-white shadow-sm shadow-blue-600/20 transition hover:bg-blue-700 disabled:opacity-50"><Icon name="download" />{busy === 'download' ? 'Preparing…' : 'Download'}</button>}
       </div>
     </div>
     {error && <p role="alert" className="mt-3 text-xs font-semibold text-rose-700">{error}</p>}
+    {confirming && (
+      <ConfirmDownloadDialog
+        request={request}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => { setConfirming(false); void downloadFirstCopy() }}
+      />
+    )}
   </article>
 }
 
@@ -311,7 +349,7 @@ export default function GsoProcurement() {
       <div className="mt-5 flex flex-col gap-3 sm:flex-row">
         <label className="sr-only" htmlFor="procurement-search">Search requisitions and items</label>
         <input id="procurement-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search requisition, requester, or item" className="h-11 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-semibold text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100" />
-        <button type="button" onClick={() => void loadData()} disabled={loading} className="h-11 rounded-xl border border-slate-300 bg-white px-4 text-xs font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-wait disabled:opacity-60">{loading ? 'Refreshing…' : 'Refresh list'}</button>
+        <button type="button" onClick={() => void loadData()} disabled={loading} className="inline-flex h-11 items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-4 text-xs font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 disabled:cursor-wait disabled:opacity-60"><Icon name="refresh" className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />{loading ? 'Refreshing…' : 'Refresh list'}</button>
       </div>
 
       {notice && <p role="status" className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">{notice}</p>}
@@ -335,7 +373,7 @@ export default function GsoProcurement() {
           />
         </div>
 
-        <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+        {items.length > 0 && <div className="mt-5 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[0.62rem] font-extrabold uppercase tracking-wide text-indigo-700">Combined items to buy</p>
             <p className="text-[0.62rem] font-bold text-indigo-700">{unitsToBuy} unit{unitsToBuy === 1 ? '' : 's'} in total</p>
@@ -358,7 +396,7 @@ export default function GsoProcurement() {
                 </div>
               </a>)}
             </div>}
-        </div>
+        </div>}
 
         <div className="mt-5">
           {visibleRequests.length === 0

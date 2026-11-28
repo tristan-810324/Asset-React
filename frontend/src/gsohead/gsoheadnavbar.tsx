@@ -64,12 +64,12 @@ export default function GsoHeadNavbar({ activePage, mobileOpen = false, onClose 
   return <>
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col overflow-y-auto bg-[#071b35] px-5 py-6 text-slate-300 shadow-2xl shadow-slate-900/20 transition-transform duration-300 lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`} aria-label="GSO Head navigation">
       <div className="flex items-center justify-between px-2">
-        <a href="/gso-head" className="flex items-center gap-3" aria-label="A.S.S.E.T GSO Head home">
+        <a href="/gso-head" className="flex items-center gap-3" aria-label="ASSET GSO Head home">
   <span className="grid h-12 w-12 place-items-center overflow-hidden">
     <img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-full w-full object-contain" />
   </span>
   <span>
-    <span className="block text-sm font-black tracking-tight text-white">A.S.S.E.T</span>
+    <span className="block text-sm font-black tracking-tight text-white">ASSET</span>
     <span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">GSO Head Portal</span>
   </span>
 </a>
@@ -136,7 +136,7 @@ export function GsoHeadPageHeader({ pageName, today, onOpenMenu }: { pageName: s
   return <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f4f7fb]/90 px-4 py-3 backdrop-blur-xl sm:px-6 lg:px-9">
     <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="flex shrink-0 items-center gap-3"><span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-slate-300/50 ring-1 ring-slate-200"><img src="/dyci_img/final_assetlogo.webp" alt="A.S.S.E.T" className="h-full w-full object-contain" /></span></div>
+        <div className="flex shrink-0 items-center gap-3"><span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-slate-300/50 ring-1 ring-slate-200"><img src="/dyci_img/final_assetlogo.webp" alt="ASSET" className="h-full w-full object-contain" /></span></div>
         <button type="button" onClick={onOpenMenu} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden" aria-label="Open navigation menu">
           <NavIcon name="menu" className="h-4 w-4" />
         </button>

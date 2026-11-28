@@ -221,7 +221,7 @@ function buildPurchaseRequisitionPdf({ request, endorsedBy, endorsedEmail, signa
   // First page header: logo (or name, if the logo is missing), document title, and reference.
   startPage(138);
   if (logoImage) drawImage(ops, 'Logo', LEFT, 36, 150, (150 * logo.height) / logo.width);
-  else text(ops, 'A.S.SET', LEFT, 40, { size: 16, bold: true, color: NAVY });
+  else text(ops, 'ASSET', LEFT, 40, { size: 16, bold: true, color: NAVY });
   text(ops, 'PURCHASE REQUISITION', RIGHT, 40, { size: 18, bold: true, color: NAVY, align: 'right' });
   text(ops, 'General Services Office', RIGHT, 64, { size: 9, color: MUTED, align: 'right' });
   text(ops, `Reference ${request.referenceNo}`, RIGHT, 80, { size: 11, bold: true, align: 'right' });
@@ -352,7 +352,7 @@ function buildPurchaseRequisitionPdf({ request, endorsedBy, endorsedEmail, signa
 
   pages.forEach((pageOps, index) => {
     rule(pageOps, LEFT, 792, RIGHT, 792, RULE, 0.5);
-    text(pageOps, `A.S.SET - ${request.referenceNo}`, LEFT, 800, { size: 8, color: MUTED });
+    text(pageOps, `ASSET - ${request.referenceNo}`, LEFT, 800, { size: 8, color: MUTED });
     text(pageOps, `Page ${index + 1} of ${pages.length}`, RIGHT, 800, { size: 8, color: MUTED, align: 'right' });
   });
   return assemble(pages, images);

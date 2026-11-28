@@ -54,7 +54,7 @@ async function notifyPurchaseRequester(request, status, note = '') {
     .map((line) => `${line.itemName}: ${line.reviewNote}`);
   const declinedText = declined.length ? ` Declined items: ${declined.join('; ')}.` : '';
   const messages = {
-    'Needs Information': `GSO needs more information before continuing. Sign in to A.S.SET and reply to this requisition.${note ? ` Details: ${note}` : ''}`,
+    'Needs Information': `GSO needs more information before continuing. Sign in to ASSET and reply to this requisition.${note ? ` Details: ${note}` : ''}`,
     Approved: `The GSO Head approved the complete request. All requested items are reserved, so GSO Staff can prepare the full issuance.${declinedText}`,
     Rejected: `GSO declined the complete requisition.${declinedText}`,
     'Items Declined': `Some items in your requisition could not be issued.${declinedText} The other items continue; check My Requests for each item.`,
@@ -104,7 +104,7 @@ async function notifyPurchaseRequester(request, status, note = '') {
         `Reference: ${request.referenceNo}`,
         `Department: ${request.formData?.departmentOrganization || '—'}`,
         '',
-        'This is an automated message from A.S.SET. You can sign in to view the request history.',
+        'This is an automated message from ASSET. You can sign in to view the request history.',
       ].join('\n'),
       html: emailLayout({
         title: notificationTitles[status] || 'Purchase requisition update',
@@ -113,7 +113,7 @@ async function notifyPurchaseRequester(request, status, note = '') {
           ['Reference', request.referenceNo],
           ['Department', request.formData?.departmentOrganization || '—'],
         ]),
-        footer: 'This is an automated message from A.SSET. You can sign in to view the request history.',
+        footer: 'This is an automated message from ASSET. You can sign in to view the request history.',
       }),
     });
     return true;

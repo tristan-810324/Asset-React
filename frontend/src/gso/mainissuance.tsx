@@ -35,7 +35,7 @@ type IssuanceItemGroup = {
 const INVENTORY_PAGE_SIZE = 50
 const inventoryTypeOptions: Array<{ value: InventoryTypeFilter; label: string }> = [
   { value: 'all', label: 'All requisition items' },
-  { value: 'individual', label: 'Track each item separately' },
+  { value: 'individual', label: 'Individual Asset' },
   { value: 'consumable', label: 'Consumable stock' },
 ]
 
@@ -176,7 +176,7 @@ function printRecipientSheet(batch: SubmittedBatch, requisitionReference: string
     + '.meta { margin: 16px 0; display: flex; gap: 40px; } table { width: 100%; border-collapse: collapse; margin-top: 14px; }'
     + 'th,td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; } th { background: #eff6ff; font-size: 10px; text-transform: uppercase; }'
     + 'small { color: #64748b; } .signature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 28px 36px; margin-top: 34px; } .signature { min-width: 0; break-inside: avoid; } .signature-line { height: 22px; border-bottom: 1px solid #64748b; margin-bottom: 6px; } .signature strong,.signature span { display: block; } .signature strong { font-size: 11px; } .signature span { margin-top: 2px; color: #475569; font-size: 10px; }'
-    + '</style></head><body><div class="header"><img class="logo" src="' + logoUrl + '" alt="DYCI and A.S.SET logo"></div><h1>Asset Distribution Receipt</h1>'
+    + '</style></head><body><div class="header"><img class="logo" src="' + logoUrl + '" alt="DYCI and ASSET logo"></div><h1>Asset Distribution Receipt</h1>'
     + '<div class="meta"><p><strong>Request:</strong> ' + reference + '</p><p><strong>Head:</strong> ' + escapePrintText(batch.employeeName) + ' (' + escapePrintText(batch.employeeCode) + ')</p><p><strong>Date:</strong> ' + new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeZone: 'Asia/Manila' }).format(new Date()) + '</p></div>'
     + '<table><thead><tr><th>Item</th><th>Barcode</th><th>Assigned to</th>' + (withPlacement ? '<th>Location</th>' : '') + '<th>Received</th></tr></thead><tbody>' + rows + '</tbody></table>'
     + '<div class="signature-grid">' + signatureBlocks + '</div></body></html>'

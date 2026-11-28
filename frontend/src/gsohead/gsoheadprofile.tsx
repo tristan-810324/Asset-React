@@ -48,7 +48,7 @@ export default function GsoHeadProfile() {
           <div className="relative">
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-200/20 bg-white/10 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">GSO Head workspace</span>
             <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Your profile</h1>
-            <p className="mt-2 text-sm font-medium leading-relaxed text-blue-100">GSO Staff verify your staff details.</p>
+            <p className="mt-2 text-sm font-medium leading-relaxed text-blue-100">IT Admin verifies your staff details.</p>
           </div>
         </section>
 

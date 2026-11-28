@@ -346,7 +346,7 @@ export default function ReturnItems() {
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
               Asset Custody &amp; Tracking
             </span>
-            <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Returned Items</h1>
+            <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Return Items</h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
               Scan the unique barcode for an individually tracked item. Record returns for items tracked by quantity by count.
             </p>

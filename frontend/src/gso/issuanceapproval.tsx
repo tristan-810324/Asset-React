@@ -75,7 +75,7 @@ export default function IssuanceApproval() {
     <main className="grid min-h-screen place-items-center bg-slate-100 px-4 py-10 font-['Plus_Jakarta_Sans'] text-slate-900">
       <section className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-xl sm:p-9">
         <div className="mb-7 border-b border-slate-100 pb-5">
-          <p className="text-xs font-black uppercase tracking-[0.16em] text-blue-700">A.SSET · GSO</p>
+          <p className="text-xs font-black uppercase tracking-[0.16em] text-blue-700">ASSET · GSO</p>
           <h1 className="mt-2 text-xl font-black">{requestType === 'return' ? 'Equipment Return Confirmation' : 'Equipment Issuance Approval'}</h1>
           <p className="mt-1 text-sm text-slate-500">{requestType === 'return' ? 'Review the return request sent to your employee email address.' : 'Review the request sent to your employee email address.'}</p>
         </div>

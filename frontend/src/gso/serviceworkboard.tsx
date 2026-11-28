@@ -40,7 +40,7 @@ type JobButton = {
 const TEAM_COPY: Record<ServiceWorkTeam, { eyebrow: string; title: string; subtitle: string; otherTeam: ServiceWorkTeam; otherLabel: string }> = {
   GSO: {
     eyebrow: 'GSO operations',
-    title: 'Service Workboard',
+    title: 'Service Operations',
     subtitle: 'Facilities jobs that GSO Staff claim, work on, and mark complete.',
     otherTeam: 'ITSS',
     otherLabel: 'ITSS Support',
@@ -863,7 +863,7 @@ export function ServiceWorkboard({ team }: { team: ServiceWorkTeam }) {
 
 export default function ServiceWorkboardPage() {
   return (
-    <GsoPageFrame activePage="Service Workboard" searchPlaceholder="">
+    <GsoPageFrame activePage="Service Operations" searchPlaceholder="">
       <ServiceWorkboard team="GSO" />
     </GsoPageFrame>
   )

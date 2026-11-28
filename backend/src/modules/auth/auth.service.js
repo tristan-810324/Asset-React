@@ -125,9 +125,9 @@ async function requestEmailVerificationOtp(user) {
     await mailTransport.sendMail({
       from: env.smtp.from,
       to: user.email,
-      subject: 'A.SSET account verification code',
-      text: `Your A.SSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not try to sign in, ignore this email.`,
-      html: otpEmailHtml({ heading: 'Verify your email', intro: 'Use this code to finish signing in to your A.SSET account.', otp, outro: 'If you did not try to sign in, you can safely ignore this email.' }),
+      subject: 'ASSET account verification code',
+      text: `Your ASSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not try to sign in, ignore this email.`,
+      html: otpEmailHtml({ heading: 'Verify your email', intro: 'Use this code to finish signing in to your ASSET account.', otp, outro: 'If you did not try to sign in, you can safely ignore this email.' }),
     });
   } catch (error) {
     await authRepository.invalidateToken(challengeId);
@@ -177,9 +177,9 @@ async function resendEmailVerificationOtp({ challengeId, ipAddress }) {
     await mailTransport.sendMail({
       from: env.smtp.from,
       to: user.email,
-      subject: 'A.SSET account verification code',
-      text: `Your new A.SSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not request this, ignore this email.`,
-      html: otpEmailHtml({ heading: 'Your new verification code', intro: 'You asked for a new code to verify your A.SSET account. Your earlier code no longer works.', otp, outro: 'If you did not request this, you can safely ignore this email.' }),
+      subject: 'ASSET account verification code',
+      text: `Your new ASSET email verification code is ${otp}. It expires in 5 minutes and can only be used once. If you did not request this, ignore this email.`,
+      html: otpEmailHtml({ heading: 'Your new verification code', intro: 'You asked for a new code to verify your ASSET account. Your earlier code no longer works.', otp, outro: 'If you did not request this, you can safely ignore this email.' }),
     });
   } catch (error) {
     await authRepository.invalidateToken(nextChallengeId);
@@ -289,9 +289,9 @@ async function requestPasswordReset({ email, ipAddress }) {
     await mailTransport.sendMail({
       from: env.smtp.from,
       to: user.email,
-      subject: 'A.SSET password reset code',
-      text: `Your A.SSET password reset code is ${otp}. It expires in 5 minutes and can only be used once. If you did not request this, ignore this email.`,
-      html: otpEmailHtml({ heading: 'Reset your password', intro: 'Use this code to reset the password for your A.SSET account.', otp, outro: 'If you did not request a password reset, you can safely ignore this email. Your password will not change.' }),
+      subject: 'ASSET password reset code',
+      text: `Your ASSET password reset code is ${otp}. It expires in 5 minutes and can only be used once. If you did not request this, ignore this email.`,
+      html: otpEmailHtml({ heading: 'Reset your password', intro: 'Use this code to reset the password for your ASSET account.', otp, outro: 'If you did not request a password reset, you can safely ignore this email. Your password will not change.' }),
     });
   } catch (error) {
     await authRepository.invalidateToken(challengeId);

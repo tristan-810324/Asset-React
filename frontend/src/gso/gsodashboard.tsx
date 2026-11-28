@@ -437,7 +437,7 @@ export default function GsoDashboard() {
 
       <section className="min-h-screen lg:pl-72">
         <GsoPageHeader
-          pageName="Executive Analytics"
+          pageName="Overview"
           today={today}
           notificationsOpen={notificationsOpen}
           onNotificationsOpenChange={setNotificationsOpen}
@@ -452,7 +452,7 @@ export default function GsoDashboard() {
             <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Executive Analytics
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Overview
                 </span>
                 <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">GSO Executive Overview</h1>
                 <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
@@ -493,7 +493,7 @@ export default function GsoDashboard() {
                   <p className="mt-0.5 text-[0.68rem] font-medium text-slate-500">Facility jobs for GSO Staff. Claim, start, and finish them here.</p>
                 </div>
               </div>
-              <a href="/gso/service-workboard" className="inline-flex min-h-9 items-center justify-center gap-1.5 self-start rounded-xl border border-slate-300 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 sm:self-auto">Open Service Workboard <Icon name="arrow-right" className="h-3.5 w-3.5" /></a>
+              <a href="/gso/service-workboard" className="inline-flex min-h-9 items-center justify-center gap-1.5 self-start rounded-xl border border-slate-300 bg-white px-3 py-2 text-[0.68rem] font-extrabold text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-800 sm:self-auto">Open Service Operations <Icon name="arrow-right" className="h-3.5 w-3.5" /></a>
             </div>
             <div className="grid divide-y divide-slate-100 sm:grid-cols-4 sm:divide-x sm:divide-y-0">
               {[

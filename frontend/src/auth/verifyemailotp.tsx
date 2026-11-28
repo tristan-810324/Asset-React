@@ -129,12 +129,12 @@ export default function VerifyEmailOtp() {
             <div className="mb-3 text-center lg:hidden">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/15 bg-blue-50/70 px-2.5 py-0.5 text-[0.6rem] font-black uppercase tracking-widest text-blue-700 shadow-xs">
                 <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
-                A.S.S.E.T Campus System
+                ASSET Campus System
               </span>
             </div>
 
             <div className="mb-4 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
-              <img src="/dyci_img/final_assetlogo.webp" alt="A.S.S.E.T logo" className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16" />
+              <img src="/dyci_img/final_assetlogo.webp" alt="ASSET logo" className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16" />
               <div className="h-6 w-px bg-slate-300/80 sm:h-8" />
               <img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-9 w-9 object-contain transition-transform hover:scale-105 sm:h-11 sm:w-11 lg:h-14 lg:w-14" />
             </div>

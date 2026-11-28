@@ -23,20 +23,20 @@ export function AboutSection() {
               <img src="/dyci_img/dyci-logo.webp" alt="" className="h-9 w-9 shrink-0 object-contain sm:h-11 sm:w-11" loading="lazy" />
               <span>
                 <span className="block text-sm font-extrabold text-slate-950">Dr. Yanga&apos;s Colleges, Inc.</span>
-                <span className="mt-0.5 block text-xs text-slate-500">A.SSET equipment tracking</span>
+                <span className="mt-0.5 block text-xs text-slate-500">ASSET equipment tracking</span>
               </span>
             </figcaption>
           </figure>
 
           <div className="relative flex flex-col justify-center p-4 sm:p-8 lg:p-9 xl:p-10">
             <p className="inline-flex w-fit items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3.5 py-2 text-[0.62rem] font-extrabold uppercase tracking-[0.15em] text-blue-800">
-              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-blue-600" />About A.SSET
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-blue-600" />About ASSET
             </p>
             <h2 id="about-heading" className="mt-3 max-w-2xl text-2xl font-black leading-[1.1] tracking-[-0.045em] text-slate-950 sm:mt-4 sm:text-4xl lg:text-4xl">
               School equipment records, <span className="text-blue-700">kept in view.</span>
             </h2>
             <p className="mt-3 max-w-2xl text-xs leading-5 text-slate-600 sm:mt-4 sm:text-[0.95rem] sm:leading-7">
-              A.SSET is Dr. Yanga&apos;s Colleges&apos; equipment tracking portal. It helps the teams responsible for school equipment organize item records and follow equipment through assignment, return, and repair.
+              ASSET is Dr. Yanga&apos;s Colleges&apos; equipment tracking portal. It helps the teams responsible for school equipment organize item records and follow equipment through assignment, return, and repair.
             </p>
 
             <div className="mt-4 grid grid-cols-2 gap-2.5 max-[360px]:grid-cols-1 sm:mt-6 sm:grid-cols-2 sm:gap-3">

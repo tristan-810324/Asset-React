@@ -7,15 +7,15 @@ import { getRequesterIdentityPicture, listRequesterIdentityReviews, type Request
 
 type SortKey = 'newest' | 'oldest' | 'reference' | 'person'
 type ModuleKey = 'users' | 'support' | 'repair'
-// One history row. Service Workboard rows are the ITSS jobs; the other modules are the IT Admin's own audit entries.
+// One history row. Service Operations rows are the ITSS jobs; the other modules are the IT Admin's own audit entries.
 type HistoryRow = { id: string; date: string | null; reference: string; detail: string; person: string; status: string; service?: { title: string; claimedBy: string | null; closedAt: string | null }; approvedBy?: string; identity?: RequesterIdentity }
 // One table column: the header, the plain text used by the exports, and the cell as it looks on screen.
 type TableColumn = { label: string; text: (row: HistoryRow) => string; render: (row: HistoryRow, index: number) => ReactNode }
 
-// The Service Workboard module lists the ITSS jobs, the same list as the Support Queue. The other two read the audit entries.
+// The Service Operations module lists the ITSS jobs, the same list as the Support Queue. The other two read the audit entries.
 const MODULES: { key: ModuleKey; label: string; entityTypes: string[] }[] = [
   { key: 'users', label: 'User management', entityTypes: ['user'] },
-  { key: 'support', label: 'Service Workboard', entityTypes: [] },
+  { key: 'support', label: 'Service Operations', entityTypes: [] },
   { key: 'repair', label: 'Repair & Maintenance', entityTypes: ['item'] },
 ]
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
@@ -24,7 +24,7 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'reference', label: 'Reference A–Z' },
   { value: 'person', label: 'Person A–Z' },
 ]
-// Status colours, the same as the GSO Service Workboard history.
+// Status colours, the same as the GSO Service Operations history.
 const STATUS_TONE: Record<string, string> = {
   'In Progress': 'bg-blue-50 text-blue-700',
   'Awaiting Requester Confirmation': 'bg-violet-50 text-violet-700',

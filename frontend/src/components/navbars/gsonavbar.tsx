@@ -12,7 +12,7 @@ export type GsoNavigationItem =
   | 'Asset Labels'
   | 'Procurement'
   | 'Facilities and equipment'
-  | 'Service Workboard'
+  | 'Service Operations'
   | 'Issuance History'
   | 'History'
   | 'Audit Logs'
@@ -30,7 +30,7 @@ type NavigationIconName = 'alert' | 'archive' | 'bell' | 'building' | 'cart' | '
 type NavigationLink = { kind: 'link'; name: VisibleNavigationItem; icon: NavigationIconName; href: string; activePages?: GsoNavigationItem[] }
 type NavigationGroup = {
   kind: 'group'
-  name: 'Return Issuance'
+  name: 'Return Items'
   icon: NavigationIconName
   href: string
   activePages: GsoNavigationItem[]
@@ -173,12 +173,12 @@ const navigation: NavigationEntry[] = [
   { kind: 'link', name: 'Requisition and Issuances', icon: 'clipboard-check', href: '/gso/purchase-requisitions', activePages: ['Purchase Requisitions', 'Main Issuance', 'Asset Labels'] },
   {
     kind: 'group',
-    name: 'Return Issuance',
+    name: 'Return Items',
     icon: 'return',
     href: '/gso/return-items',
     activePages: ['Return Items'],
   },
-  { kind: 'link', name: 'Service Workboard', icon: 'wrench', href: '/gso/service-workboard' },
+  { kind: 'link', name: 'Service Operations', icon: 'wrench', href: '/gso/service-workboard' },
   { kind: 'link', name: 'Loss & Damage Cases', icon: 'alert', href: '/gso/loss-damage-cases' },
   { kind: 'link', name: 'Proof of Settlements', icon: 'clipboard-check', href: '/gso/payments' },
   { kind: 'link', name: 'Repair & Maintenance', icon: 'settings', href: '/gso/to-be-repaired' },
@@ -205,12 +205,12 @@ export default function GsoNavbar({ currentPage, mobileMenuOpen, onClose }: GsoN
         aria-label="GSO navigation"
       >
         <div className="flex items-center justify-between px-2">
-          <a href="/" className="flex items-center gap-3" aria-label="A.S.S.E.T home">
+          <a href="/" className="flex items-center gap-3" aria-label="ASSET home">
   <span className="grid h-12 w-12 place-items-center overflow-hidden">
     <img src="/dyci_img/dyci-logo.webp" alt="Dr. Yanga's Colleges logo" className="h-full w-full object-contain" />
   </span>
   <span>
-    <span className="block text-sm font-black tracking-tight text-white">A.S.S.E.T</span>
+    <span className="block text-sm font-black tracking-tight text-white">ASSET</span>
     <span className="block text-[0.62rem] font-bold uppercase tracking-[0.17em] text-blue-200">GSO Staff Portal</span>
   </span>
 </a>
@@ -327,7 +327,7 @@ export function GsoPageHeader({
       <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <GsoMenuButton onClick={onOpenMenu} />
-          <div className="flex shrink-0 items-center gap-3"><span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-slate-300/50 ring-1 ring-slate-200"><img src="/dyci_img/final_assetlogo.webp" alt="A.S.S.E.T" className="h-full w-full object-contain" /></span></div>
+          <div className="flex shrink-0 items-center gap-3"><span className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl bg-white p-1.5 shadow-lg shadow-slate-300/50 ring-1 ring-slate-200"><img src="/dyci_img/final_assetlogo.webp" alt="ASSET" className="h-full w-full object-contain" /></span></div>
           <div className="min-w-0">
             <p className="truncate text-[0.65rem] font-bold text-slate-500 sm:text-xs">General Services Office / <span className="text-slate-700">{pageName}</span></p>
             <p className="mt-0.5 hidden text-[0.68rem] font-bold text-slate-400 sm:block">{today}</p>

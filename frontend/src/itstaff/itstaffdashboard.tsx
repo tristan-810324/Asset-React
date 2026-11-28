@@ -26,7 +26,7 @@ export default function ITStaffDashboard() {
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> IT Staff Workspace
             </span>
-            <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Welcome to A.S.SET</h1>
+            <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Welcome to ASSET</h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
               Computer laboratory and technical requests from requesters land here. Claim a job, work on it, and mark it complete.
             </p>

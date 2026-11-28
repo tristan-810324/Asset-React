@@ -12,13 +12,14 @@ const statusStyles = {
 }
 
 // The staff identity card. The requester and GSO Head profiles both show it, so the details, form, and actions match.
-export function IdentityProfileCard({ user, identity, identityLoading, identityError, refreshIdentity, openVerificationStatus }: {
+export function IdentityProfileCard({ user, identity, identityLoading, identityError, refreshIdentity, openVerificationStatus, verifier = 'IT Admin' }: {
   user: AuthUser | null
   identity: RequesterIdentity | null
   identityLoading: boolean
   identityError: string
   refreshIdentity: () => Promise<unknown>
   openVerificationStatus: () => void
+  verifier?: string
 }) {
   const [editing, setEditing] = useState(false)
   const needsDetails = !identity || identity.status === 'Incomplete' || identity.status === 'Needs Correction' || identity.status === 'Rejected'
@@ -39,7 +40,7 @@ export function IdentityProfileCard({ user, identity, identityLoading, identityE
       {identityError && <p role="alert" className="m-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{identityError}</p>}
       {identityLoading && <p className="p-6 text-sm font-semibold text-slate-500">Loading identity details…</p>}
       {!identityLoading && identity && <>
-        {identity.status === 'Pending' && <div className="mx-5 mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:mx-6"><p className="text-sm font-extrabold text-blue-900">GSO is validating your details.</p><p className="mt-1 text-xs leading-relaxed text-blue-800">You can send requests once you are verified.</p>{identity.reviewNote && <p className="mt-3 text-xs font-semibold text-slate-700">GSO note: {identity.reviewNote}</p>}</div>}
+        {identity.status === 'Pending' && <div className="mx-5 mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 sm:mx-6"><p className="text-sm font-extrabold text-blue-900">{verifier} is validating your details.</p><p className="mt-1 text-xs leading-relaxed text-blue-800">You can send requests once you are verified.</p>{identity.reviewNote && <p className="mt-3 text-xs font-semibold text-slate-700">{verifier} note: {identity.reviewNote}</p>}</div>}
         {identity.status === 'Needs Correction' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6">{identity.reviewNote || 'Check and fix your details, then submit again.'}</div>}
         {identity.status === 'Rejected' && <div role="alert" className="mx-5 mt-5 rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-800 sm:mx-6"><p className="font-extrabold text-rose-900">Your account was not approved.</p><p className="mt-1">{identity.reviewNote || 'You can fix your details and submit again.'}</p></div>}
         {!showForm && <dl className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6">
@@ -60,8 +61,8 @@ export function IdentityProfileCard({ user, identity, identityLoading, identityE
     </section>
 
     {!identityLoading && showForm && <section className="mt-4 rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
-      <div className="mb-5"><h2 className="text-lg font-black text-slate-900">{identity?.status === 'Needs Correction' ? 'Update staff details' : 'Complete staff details'}</h2><p className="mt-1 text-xs text-slate-500">GSO will verify these details.</p></div>
-      <RequesterIdentityForm profile={identity} accountEmail={user?.email || ''} onSaved={async () => { await refreshIdentity(); setEditing(false) }} onCancel={identity?.status === 'Verified' ? () => setEditing(false) : undefined} />
+      <div className="mb-5"><h2 className="text-lg font-black text-slate-900">{identity?.status === 'Needs Correction' ? 'Update staff details' : 'Complete staff details'}</h2><p className="mt-1 text-xs text-slate-500">{verifier} will verify these details.</p></div>
+      <RequesterIdentityForm profile={identity} accountEmail={user?.email || ''} verifier={verifier} onSaved={async () => { await refreshIdentity(); setEditing(false) }} onCancel={identity?.status === 'Verified' ? () => setEditing(false) : undefined} />
     </section>}
   </>
 }

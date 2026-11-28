@@ -180,7 +180,7 @@ async function emailRequester(workOrder, subject, message) {
       '',
       `Reference: ${workOrder.referenceNo}`,
       '',
-      'This is an automated message from A.S.SET.',
+      'This is an automated message from ASSET.',
     ].join('\n'),
     html: emailLayout({
       title: subject,

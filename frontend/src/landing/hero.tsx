@@ -28,7 +28,7 @@ export default function Hero() {
           </h1>
 
           <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-100/90 sm:mt-5 sm:text-base sm:leading-7">
-            A.SSET brings DYCI equipment records and GSO workflows together—from item details and staff assignments to returns and repair follow-up.
+            ASSET brings DYCI equipment records and GSO workflows together—from item details and staff assignments to returns and repair follow-up.
           </p>
 
           <div className="mt-5 flex flex-col gap-2.5 sm:mt-7 sm:flex-row sm:items-center sm:gap-4">
@@ -42,7 +42,7 @@ export default function Hero() {
               href="#about"
               className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/25 bg-slate-950/40 px-4 py-2.5 text-[0.68rem] font-extrabold uppercase tracking-widest text-white backdrop-blur-md transition hover:-translate-y-0.5 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white sm:min-h-12 sm:min-w-48 sm:px-6 sm:py-3.5 sm:text-xs"
             >
-              Explore A.SSET
+              Explore ASSET
             </a>
           </div>
         </div>

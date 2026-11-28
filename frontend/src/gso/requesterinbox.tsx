@@ -21,7 +21,7 @@ const actionsFor = (request: ServiceRequest) => {
     if (request.status === 'For Repair') return ['Returned']
     if (request.status === 'Returned') return ['Closed']
   } else if (request.requestType === 'JOB_REQUEST') {
-    // Jobs are claimed, worked, and closed in the Service Workboard, so this inbox does not change them.
+    // Jobs are claimed, worked, and closed in the Service Operations, so this inbox does not change them.
     return []
   } else if (request.status === 'Approved') {
     return request.requestType === 'LOSS_DAMAGE_REPORT' ? ['In Progress', 'Completed', 'Closed'] : ['Completed', 'Closed']
@@ -333,7 +333,7 @@ export default function RequesterRequestInbox({ initialType = '' }: { initialTyp
                 )}
 
                 {selected?.requestType === 'JOB_REQUEST' && (
-                  <a href={`/gso/service-workboard?request=${encodeURIComponent(selected.id)}`} className="mt-3 inline-flex min-h-10 items-center rounded-xl bg-blue-600 px-3.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700">Open in Service Workboard</a>
+                  <a href={`/gso/service-workboard?request=${encodeURIComponent(selected.id)}`} className="mt-3 inline-flex min-h-10 items-center rounded-xl bg-blue-600 px-3.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-blue-700">Open in Service Operations</a>
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
                   {selectedActions.map((action) => (

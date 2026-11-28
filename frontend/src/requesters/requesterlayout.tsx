@@ -9,11 +9,12 @@ const OTHER_MASTER_VALUE = '__requester_master_data_other__'
 
 const findMasterValue = (values: string[], value: string) => values.find((item) => item.trim().toLowerCase() === value.trim().toLowerCase())
 
-export function RequesterIdentityForm({ profile, onSaved, onCancel, accountEmail = '' }: {
+export function RequesterIdentityForm({ profile, onSaved, onCancel, accountEmail = '', verifier = 'IT Admin' }: {
   profile: RequesterIdentity | null
   onSaved: (identity: RequesterIdentity) => void
   onCancel?: () => void
   accountEmail?: string
+  verifier?: string
 }) {
   const [form, setForm] = useState<RequesterIdentityInput>(() => {
     return {
@@ -87,11 +88,11 @@ export function RequesterIdentityForm({ profile, onSaved, onCancel, accountEmail
       <label className="block"><span className="mb-2 block text-sm font-extrabold text-slate-900">Contact number</span><input className={identityInputClass} type="tel" autoComplete="tel" value={form.contactNumber} onChange={(event) => setField('contactNumber', event.target.value)} placeholder="e.g. 09XX XXX XXXX" required maxLength={30} /></label>
       <label className="block sm:col-span-2"><span className="mb-2 block text-sm font-extrabold text-slate-900">Account email</span><input className={`${identityInputClass} cursor-not-allowed bg-slate-100 text-slate-700`} type="email" value={profile?.accountEmail || accountEmail} readOnly aria-readonly="true" /><span className="mt-1.5 block text-xs text-slate-500">Used for login.</span></label>
     </div>
-    <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-xs leading-relaxed text-blue-900"><p>GSO checks these details against Employee Master Data.</p><p className="mt-1 font-semibold">New departments or positions are added only after GSO approves them.</p></div>
+    <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-xs leading-relaxed text-blue-900"><p>{verifier} checks these details against Employee Master Data.</p><p className="mt-1 font-semibold">New departments or positions are added only after GSO approves them.</p></div>
     {error && <p role="alert" className="rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{error}</p>}
     <div className="flex flex-wrap justify-end gap-2 pt-1">
       {onCancel && <button type="button" onClick={onCancel} disabled={saving} className="rounded-xl border border-slate-200 px-4 py-2.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50">Cancel</button>}
-      <button type="submit" disabled={saving} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{saving ? 'Submitting...' : 'Submit for GSO verification'}</button>
+      <button type="submit" disabled={saving} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-extrabold text-white shadow-md shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60">{saving ? 'Submitting...' : `Submit for ${verifier} verification`}</button>
     </div>
   </form>
 }
@@ -113,13 +114,13 @@ export function IdentityPrompt({ identity, onSaved, onClose }: { identity: Reque
   return <div className="fixed inset-0 z-100 grid place-items-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm" role="presentation">
         <section role="dialog" aria-modal="true" aria-labelledby="requester-identity-title" className="my-4 flex max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border-2 border-slate-300 bg-white shadow-2xl shadow-slate-950/30">
       <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200/80 bg-white px-5 py-4 sm:px-7 sm:py-5">
-        <div className="min-w-0"><p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-700">Requester identity</p><h2 id="requester-identity-title" className="mt-1 text-lg font-black tracking-tight text-slate-900 sm:text-xl">{canEdit ? 'Complete your staff details' : 'Waiting for GSO Staff approval'}</h2><p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">{canEdit ? 'Enter your official staff details before submitting requests.' : 'Your account is under review. You\'ll be able to submit requests once approved.'}</p></div>
+        <div className="min-w-0"><p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-700">Requester identity</p><h2 id="requester-identity-title" className="mt-1 text-lg font-black tracking-tight text-slate-900 sm:text-xl">{canEdit ? 'Complete your staff details' : 'Waiting for IT Admin approval'}</h2><p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">{canEdit ? 'Enter your official staff details before submitting requests.' : 'Your account is under review. You\'ll be able to submit requests once approved.'}</p></div>
         <button type="button" onClick={onClose} className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-500 transition hover:border-slate-300 hover:bg-slate-50" aria-label="Close identity verification">Close</button>
       </header>
       <div className="min-h-0 space-y-3 overflow-y-auto bg-slate-50/70 p-4 sm:p-6">
-        {identity.status === 'Pending' && <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-3"><p className="text-xs font-extrabold text-blue-900">Under review by GSO Staff</p><p className="mt-1 text-xs leading-relaxed text-blue-800">We're verifying your employee information. This usually takes 1-2 business days.</p>{identity.reviewNote && <p className="mt-2 rounded-lg bg-white/80 p-2.5 text-xs font-semibold text-slate-700">GSO note: {identity.reviewNote}</p>}</div>}
+        {identity.status === 'Pending' && <div role="status" className="rounded-xl border border-blue-200 bg-blue-50 p-3"><p className="text-xs font-extrabold text-blue-900">Under review by IT Admin</p><p className="mt-1 text-xs leading-relaxed text-blue-800">We're verifying your employee information. This usually takes 1-2 business days.</p>{identity.reviewNote && <p className="mt-2 rounded-lg bg-white/80 p-2.5 text-xs font-semibold text-slate-700">IT Admin note: {identity.reviewNote}</p>}</div>}
         {identity.status === 'Needs Correction' && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-xs font-extrabold text-rose-900">Correction needed</p><p className="mt-1 text-xs leading-relaxed text-rose-800">{identity.reviewNote || 'Review and correct the staff details below before resubmitting.'}</p></div>}
-        {identity.status === 'Rejected' && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-3"><p className="text-xs font-extrabold text-rose-900">Account not approved</p><p className="mt-1 text-xs leading-relaxed text-rose-800">{identity.reviewNote || 'GSO did not approve this account. You may update your details and resubmit.'}</p></div>}
+        {identity.status === 'Rejected' && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 p-3"><p className="text-xs font-extrabold text-rose-900">Account not approved</p><p className="mt-1 text-xs leading-relaxed text-rose-800">{identity.reviewNote || 'IT Admin did not approve this account. You may update your details and resubmit.'}</p></div>}
         {canEdit && <section className="rounded-2xl border-2 border-slate-300/80 bg-white p-5 sm:p-6 shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5"><RequesterIdentityForm profile={identity} onSaved={onSaved} /></section>}
         {!canEdit && <div className="flex justify-end"><button type="button" onClick={onClose} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Close for now</button></div>}
       </div>

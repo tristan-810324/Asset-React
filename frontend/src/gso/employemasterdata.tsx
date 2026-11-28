@@ -122,6 +122,16 @@ function historyEventTone(event: string) {
   return 'bg-amber-50 text-amber-700'
 }
 
+// Initials from the given names: the first two words, so "tristan ivan" -> "TI". The last name is only a fallback.
+function initialsFrom(firstName: string, lastName: string) {
+  const given = firstName.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('')
+  return (given || lastName.trim()[0] || '').toUpperCase() || 'EM'
+}
+// Each word with a capital first letter, so "tristan ivan" -> "Tristan Ivan".
+function properCase(value: string) {
+  return value.trim().split(/\s+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(' ')
+}
+
 function employeeRecordFromProfile(profile: EmployeeProfile, existing?: EmployeeRecord): EmployeeRecord {
   const firstName = profile.firstName
   const lastName = profile.lastName
@@ -131,7 +141,7 @@ function employeeRecordFromProfile(profile: EmployeeProfile, existing?: Employee
     middleName: profile.middleName,
     lastName,
     suffix: profile.suffix,
-    initials: `${firstName[0] || ''}${lastName[0] || ''}`.toUpperCase() || 'EM',
+    initials: initialsFrom(firstName, lastName),
     department: profile.department,
     position: profile.position,
     email: profile.email,
@@ -519,7 +529,7 @@ export default function EmployeeMasterData() {
       middleName: editEmployeeData.middleName.trim(),
       lastName: editEmployeeData.lastName.trim(),
       suffix: editEmployeeData.suffix.trim(),
-      initials: `${editEmployeeData.firstName[0] || ''}${editEmployeeData.lastName[0] || ''}`.toUpperCase() || 'EM',
+      initials: initialsFrom(editEmployeeData.firstName, editEmployeeData.lastName),
       department: editEmployeeData.department,
       position: editEmployeeData.position.trim(),
       email: editEmployeeData.email.trim(),
@@ -642,15 +652,6 @@ export default function EmployeeMasterData() {
         <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
           Manage profiles, assignments, and custody history. GSO-approved requesters appear here.
         </p>
-        <nav className="mt-6 flex flex-wrap gap-2 border-t border-blue-300/20 pt-4" aria-label="Employees and requester pages">
-            <a
-              href="#employee-directory"
-              aria-current="page"
-              className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#123c70]"
-            >
-              View Employees
-            </a>
-        </nav>
         </div>
       </section>
 
@@ -852,7 +853,7 @@ export default function EmployeeMasterData() {
               }}
               className="inline-flex items-center justify-center rounded-xl border border-blue-200 bg-white px-3.5 py-2 text-xs font-extrabold text-blue-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100"
             >
-              Manage departments, offices &amp; positions
+              Manage departments and positions
             </button>
           </div>
         </div>
@@ -863,18 +864,6 @@ export default function EmployeeMasterData() {
               <span className="text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">
                 Filter (by Department)
               </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setMasterDataTab('departments')
-                  setMasterDataError('')
-                  setMasterDataNotice('')
-                  setShowDepartmentModal(true)
-                }}
-                className="text-[0.65rem] font-extrabold text-blue-600 hover:underline"
-              >
-                Manage list
-              </button>
             </div>
             <select
               value={selectedDeptFilter}
@@ -893,7 +882,7 @@ export default function EmployeeMasterData() {
 
           <label className="block">
             <span className="mb-1.5 block text-[0.68rem] font-extrabold uppercase tracking-wide text-slate-700">
-              Search Bar
+              Search Employee
             </span>
             <input
               type="search"
@@ -971,7 +960,7 @@ export default function EmployeeMasterData() {
                       {emp.initials}
                     </span>
                     <span className="mt-3 block truncate text-xs font-bold text-slate-900" title={`${emp.firstName} ${emp.middleName} ${emp.lastName} ${emp.suffix}`.trim()}>
-                      {emp.firstName} {emp.lastName}
+                      {properCase(emp.firstName)} {properCase(emp.lastName)}
                     </span>
                     <span className="mt-0.5 block truncate text-[0.6rem] font-medium text-slate-400" title={emp.id}>
                       Employee · {emp.id}
@@ -979,7 +968,7 @@ export default function EmployeeMasterData() {
                     <span className="mx-auto mt-3 flex min-h-7 max-w-full items-center justify-center rounded-full bg-[#17377f] px-3 text-[0.58rem] font-semibold text-white" title={emp.position}>
                       <span className="truncate">{emp.position || 'Employee'}</span>
                     </span>
-                    <span className="mt-2 block truncate text-[0.62rem] font-semibold text-slate-500" title={emp.department}>
+                    <span className="mt-2 block line-clamp-2 px-1 text-[0.62rem] font-semibold leading-snug text-slate-500" title={emp.department}>
                       {emp.department}
                     </span>
                   </button>
@@ -1021,7 +1010,7 @@ export default function EmployeeMasterData() {
                 <div className="min-w-0">
                   <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee management</p>
                   <h2 id="employee-details-title" className="mt-0.5 truncate text-base font-black text-slate-900 sm:text-lg">
-                    {selectedEmployee.firstName} {selectedEmployee.lastName}
+                    {properCase(selectedEmployee.firstName)} {properCase(selectedEmployee.lastName)}
                   </h2>
                   <p className="mt-1 truncate text-xs font-semibold text-slate-500">
                     {selectedEmployee.id} <span className="px-1 text-slate-300">/</span> {selectedEmployee.department} <span className="px-1 text-slate-300">/</span> {selectedEmployee.position}
@@ -1225,7 +1214,7 @@ export default function EmployeeMasterData() {
                   Employee history
                 </h2>
                 <p className="mt-0.5 truncate text-xs font-semibold text-slate-500">
-                  {selectedEmployee.firstName} {selectedEmployee.lastName} · {selectedEmployee.id}
+                  {properCase(selectedEmployee.firstName)} {properCase(selectedEmployee.lastName)} · {selectedEmployee.id}
                 </p>
               </div>
               <button
@@ -1357,7 +1346,7 @@ export default function EmployeeMasterData() {
                   <p className="text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-600">Employee management</p>
                   <h2 id="edit-employee-profile-title" className="mt-0.5 text-base font-black text-slate-900 sm:text-lg">Edit Employee Profile</h2>
                   <p className="mt-1 truncate text-xs font-semibold text-slate-500">
-                    {selectedEmployee.id} <span className="px-1 text-slate-300">/</span> {selectedEmployee.firstName} {selectedEmployee.lastName}
+                    {selectedEmployee.id} <span className="px-1 text-slate-300">/</span> {properCase(selectedEmployee.firstName)} {properCase(selectedEmployee.lastName)}
                   </p>
                 </div>
               </div>

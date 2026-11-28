@@ -1,6 +1,7 @@
 const repository = require('./requester-identity.repository');
 const notificationsRepository = require('../notifications/notifications.repository');
 const auditRepository = require('../audit/audit.repository');
+const authRepository = require('../auth/auth.repository');
 
 function invalid(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -104,6 +105,10 @@ async function review(userIdValue, input, reviewer) {
   if (typeof addDepartment !== 'boolean' || typeof addPosition !== 'boolean') invalid('Invalid master data decision.');
   if (addDepartment && !department) invalid('Choose or enter a department / office before you approve.');
   if (addPosition && !position) invalid('Choose or enter a position before you approve.');
+  // GSO Staff details are decided by IT Admin only, so GSO Staff cannot verify their own or another staff member's details.
+  if (!reviewer.roles?.includes('IT_ADMIN') && (await authRepository.getUserRoles(userId)).includes('GSO_STAFF')) {
+    invalid('Only the IT Admin can verify GSO Staff details.', 403);
+  }
   const current = await repository.listReviewByUserId(userId);
   if (!current) invalid('The requester identity to review was not found.', 404);
   if (status === 'Verified' && current.matchedEmployeeCode && !current.employeeRecordMatch && !note) {

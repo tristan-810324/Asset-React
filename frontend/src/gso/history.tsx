@@ -42,7 +42,7 @@ const LEGACY_TABS: Record<string, TabKey> = { requisitions: 'returns', facilitie
 // Tabs with a working history list. The rest are placeholders until their data is wired.
 const TABS: { key: TabKey; label: string; ready: boolean }[] = [
   { key: 'returns', label: 'Returns & Requisitions', ready: true },
-  { key: 'service', label: 'Service Workboard', ready: true },
+  { key: 'service', label: 'Service Operations', ready: true },
   { key: 'loss', label: 'Loss, Repair & Unserviceable', ready: true },
   { key: 'employees', label: 'Employees', ready: true },
   { key: 'payments', label: 'To Pay / Settled', ready: true },
@@ -50,7 +50,7 @@ const TABS: { key: TabKey; label: string; ready: boolean }[] = [
 
 type HistoryRow = { id: string; date: string | null; reference: string; detail: string; items?: string; view?: 'issued' | 'declined' | 'returned'; itemName?: string; condition?: string | null; reason?: string; charge?: { kind: string; ref: string }; person: string; personEmail?: string; status: string; service?: { title: string; team: string; claimedBy: string | null; closedAt: string | null }; actorName?: string; actorEmail?: string; category?: LossCategory; tag?: string; place?: string; handledBy?: string; chargeText?: string; identity?: RequesterIdentity }
 
-// Service Workboard job statuses, coloured the way the workboard cards are.
+// Service Operations job statuses, coloured the way the workboard cards are.
 const serviceStatusTone = (status: string) => {
   if (status === 'In Progress') return 'bg-blue-50 text-blue-700'
   if (status === 'Awaiting Requester Confirmation') return 'bg-violet-50 text-violet-700'
@@ -290,7 +290,7 @@ async function loadSource(tab: SourceKey): Promise<HistoryRow[]> {
     return [...issued, ...declined, ...returned, ...facilityReturns]
   }
   if (tab === 'service') {
-    // Every job on the GSO Service Workboard and the ITSS Support Queue, with who claimed it and when it closed.
+    // Every job on the GSO Service Operations and the ITSS Support Queue, with who claimed it and when it closed.
     // A queue the user cannot open is skipped. The status filter narrows the list.
     // The backend caps one page at 100 jobs per team.
     const results = await Promise.allSettled((['GSO', 'ITSS'] as const).map((team) => listServiceWorkOrders({ team, limit: 100 })))

@@ -17,7 +17,7 @@ function otpEmailHtml({ heading, intro, otp, outro }) {
     title: heading,
     intro,
     body,
-    footer: 'Sent by A.SSET. Please do not share this code with anyone.',
+    footer: 'Sent by ASSET. Please do not share this code with anyone.',
   });
 }
 

@@ -43,7 +43,7 @@ export function ContactSection() {
                 <span aria-hidden="true" className="h-2 w-2 rounded-full bg-sky-300" />Contact and support
               </p>
               <h2 id="contact-heading" className="mt-3 text-2xl font-black leading-[1.1] tracking-[-0.045em] sm:mt-4 sm:text-4xl lg:text-4xl">
-                Need help with <span className="text-sky-200">A.SSET?</span>
+                Need help with <span className="text-sky-200">ASSET?</span>
               </h2>
               <p className="mt-2.5 max-w-2xl text-xs leading-5 text-blue-100/85 sm:mt-3 sm:text-[0.95rem] sm:leading-7">
                 Contact GSO for equipment records and workflows. For account access, contact your school&apos;s IT Admin through the official support channel.
@@ -94,7 +94,7 @@ export function ContactSection() {
           <aside className="relative isolate flex flex-col justify-between overflow-hidden rounded-[1.25rem] bg-[#0b2551] bg-linear-to-br from-[#0b2551] to-[#174b8a] p-4 text-white shadow-[0_20px_60px_-32px_rgba(5,27,64,0.4)] sm:rounded-3xl sm:p-6">
             <div aria-hidden="true" className="absolute -right-12 -top-14 -z-10 h-56 w-56 rounded-full bg-sky-300/15 blur-2xl" />
             <div>
-              <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.15em] text-sky-200">A.SSET portal</p>
+              <p className="text-[0.62rem] font-extrabold uppercase tracking-[0.15em] text-sky-200">ASSET portal</p>
               <h3 className="mt-2 text-lg font-black tracking-tight sm:text-xl">Already have an account?</h3>
               <p className="mt-2.5 text-xs leading-5 text-blue-100/85 sm:mt-3 sm:text-sm sm:leading-7">Sign in to reach the workspace assigned to your role.</p>
             </div>

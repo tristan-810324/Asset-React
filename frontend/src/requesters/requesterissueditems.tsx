@@ -5,13 +5,13 @@ import {
   type RequesterIssuanceApproval,
 } from './requesterApi'
 
-type ItemFilter = 'All items' | 'Track each item separately' | 'Consumables' | 'Reusable stock'
+type ItemFilter = 'All items' | 'Individual Asset' | 'Consumables' | 'Reusable stock'
 type IssuedItem = RequesterIssuanceApproval['items'][number]
 
-const filters: ItemFilter[] = ['All items', 'Track each item separately', 'Consumables', 'Reusable stock']
+const filters: ItemFilter[] = ['All items', 'Individual Asset', 'Consumables', 'Reusable stock']
 
 function itemCategory(item: IssuedItem): Exclude<ItemFilter, 'All items'> {
-  if (item.trackingMode === 'individual') return 'Track each item separately'
+  if (item.trackingMode === 'individual') return 'Individual Asset'
   return item.issueBehavior === 'consumable' ? 'Consumables' : 'Reusable stock'
 }
 

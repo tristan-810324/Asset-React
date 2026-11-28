@@ -39,7 +39,7 @@ const REPAIR_CONDITIONS = ['Needs Repair', 'Under Maintenance', 'Unserviceable',
 // What can be wrong with a damaged item on return. Damaged items send the request to For Repair.
 // Every item that comes back damaged goes to To Be Repaired. What is wrong is decided there, not at the return.
 const DAMAGE_CONDITION = 'Needs Repair'
-// Who repairs an item that came back as Needs Repair: GSO staff here, or ITSS through the Service Workboard.
+// Who repairs an item that came back as Needs Repair: GSO staff here, or ITSS through the Service Operations.
 const REPAIR_OWNERS: { value: 'GSO' | 'ITSS'; label: string; detail: string }[] = [
   { value: 'GSO', label: 'GSO checks it', detail: 'GSO staff checks if it can still be fixed.' },
   { value: 'ITSS', label: 'Send to ITSS', detail: 'ITSS checks if it can be fixed, then returns it to GSO.' },

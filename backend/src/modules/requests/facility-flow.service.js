@@ -45,7 +45,7 @@ async function emailRequester(request, subject, message) {
         `Reference: ${request.referenceNo}`,
         `Venue: ${request.formData?.venue || '—'}`,
         '',
-        'This is an automated message from A.S.SET.',
+        'This is an automated message from ASSET.',
       ].join('\n'),
       html: emailLayout({
         title: subject,

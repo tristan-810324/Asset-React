@@ -1,4 +1,4 @@
-// Shared look for every A.SSET email. Inline styles and tables only, so Gmail and Outlook keep the design.
+// Shared look for every ASSET email. Inline styles and tables only, so Gmail and Outlook keep the design.
 // title, intro, footer, detailPanel rows and noticeBox text are plain text and are escaped here.
 // body is HTML, so escape any value you put in it with escapeHtml.
 
@@ -12,7 +12,7 @@ function escapeHtml(value) {
   })[character]);
 }
 
-function emailLayout({ title, intro = '', body = '', footer = 'This is an automated message from A.SSET.' }) {
+function emailLayout({ title, intro = '', body = '', footer = 'This is an automated message from ASSET.' }) {
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:0;background:#eef2f7;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
@@ -22,7 +22,7 @@ function emailLayout({ title, intro = '', body = '', footer = 'This is an automa
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #cbd5e1;border-radius:16px;overflow:hidden;">
             <tr>
               <td style="background:#09244a;padding:22px 28px;color:#ffffff;">
-                <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#bfdbfe;">A.SSET</p>
+                <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#bfdbfe;">ASSET</p>
                 <p style="margin:4px 0 0;font-size:16px;font-weight:700;color:#ffffff;">GSO Asset Management</p>
               </td>
             </tr>

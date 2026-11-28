@@ -77,7 +77,7 @@ function InventoryPreview() {
         </div>
       </div>
       <div className="absolute bottom-0 right-3 flex items-center gap-1.5 rounded-lg border border-white/20 bg-white px-2.5 py-1.5 text-[0.56rem] font-extrabold uppercase tracking-[0.08em] text-blue-900 shadow-lg shadow-blue-950/20 sm:-bottom-4 sm:right-8 sm:gap-2 sm:rounded-xl sm:px-3.5 sm:py-2.5 sm:text-[0.65rem] sm:tracking-widest">
-        <span className="h-2 w-2 rounded-full bg-blue-600" />A.SSET · DYCI
+        <span className="h-2 w-2 rounded-full bg-blue-600" />ASSET · DYCI
       </div>
     </div>
   )
@@ -182,7 +182,7 @@ export function FeaturesSection() {
             </h2>
           </div>
           <p className="max-w-xl text-sm leading-7 text-slate-600 sm:text-base sm:leading-7 lg:justify-self-end">
-            A.SSET supports the day-to-day work of keeping school equipment documented, assigned, and accounted for.
+            ASSET supports the day-to-day work of keeping school equipment documented, assigned, and accounted for.
           </p>
         </div>
 

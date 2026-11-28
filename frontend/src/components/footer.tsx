@@ -13,13 +13,13 @@ export default function LandingPageFooter() {
             <a
               href="/#home"
               className="inline-flex items-center gap-3 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#061632]"
-              aria-label="A.SSET home"
+              aria-label="ASSET home"
             >
               <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white p-1.5 shadow-lg shadow-blue-950/30 ring-1 ring-white/30">
                 <img src="/dyci_img/final_assetlogo.webp" alt="" className="h-full w-full object-contain" loading="lazy" />
               </span>
               <span>
-                <span className="block text-sm font-black tracking-[0.16em] text-white">A.SSET</span>
+                <span className="block text-sm font-black tracking-[0.16em] text-white">ASSET</span>
                 <span className="mt-1 block text-[0.6rem] font-bold uppercase tracking-[0.13em] text-blue-100/70">Equipment tracking portal</span>
               </span>
             </a>
@@ -29,7 +29,7 @@ export default function LandingPageFooter() {
             </p>
             <p className="mt-3 text-xs font-extrabold tracking-wide text-sky-200 sm:mt-4 sm:text-base">Dr. Yanga&apos;s Colleges, Inc.</p>
             <p className="mt-2.5 max-w-xl text-xs leading-5 text-blue-100/70 sm:mt-3 sm:text-sm sm:leading-6">
-              A.SSET helps keep school equipment records and everyday GSO workflows in view.
+              ASSET helps keep school equipment records and everyday GSO workflows in view.
             </p>
           </div>
 
@@ -74,7 +74,7 @@ export default function LandingPageFooter() {
         </div>
 
         <div className="flex flex-col gap-2 pt-4 text-[0.68rem] text-blue-100/55 sm:gap-3 sm:pt-5 sm:text-xs sm:flex-row sm:items-center sm:justify-between">
-          <p>© {new Date().getFullYear()} Dr. Yanga&apos;s Colleges, Inc. · A.SSET equipment tracking</p>
+          <p>© {new Date().getFullYear()} Dr. Yanga&apos;s Colleges, Inc. · ASSET equipment tracking</p>
           <a href="/#home" className="inline-flex w-fit items-center gap-2 rounded-sm font-bold text-blue-100/75 transition hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
             Back to top <span aria-hidden="true">↑</span>
           </a>

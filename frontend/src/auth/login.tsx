@@ -1,3 +1,4 @@
+import PasswordField from "./passwordfield"
 import { useState, type FormEvent } from 'react'
 import { dashboardPathForRoles, saveAuthToken, savePendingEmailVerification, signIn } from './authApi'
 
@@ -79,7 +80,7 @@ export default function Login() {
                   back at{" "}
                 </span>
                 <span className="bg-linear-to-r from-sky-300 via-blue-200 to-indigo-200 bg-clip-text text-transparent">
-                  A.S.S.E.T.
+                  ASSET.
                 </span>
               </span>
             </h1>
@@ -110,7 +111,7 @@ export default function Login() {
               <div className="mb-3 text-center lg:hidden">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/15 bg-blue-50/70 px-2.5 py-0.5 text-[0.6rem] font-black uppercase tracking-widest text-blue-700 shadow-xs">
                   <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
-                  A.S.S.E.T Campus System
+                  ASSET Campus System
                 </span>
               </div>
 
@@ -118,7 +119,7 @@ export default function Login() {
               <div className="mb-3.5 flex items-center justify-center gap-2.5 sm:mb-5 sm:gap-3.5">
                 <img
                   src="/dyci_img/final_assetlogo.webp"
-                  alt="A.S.S.E.T logo"
+                  alt="ASSET logo"
                   className="h-10 w-10 object-contain transition-transform hover:scale-105 sm:h-13 sm:w-13 lg:h-16 lg:w-16"
                 />
                 <div className="h-6 w-px bg-slate-300/80 sm:h-8" />
@@ -157,7 +158,7 @@ export default function Login() {
                     name="email"
                     type="email"
                     autoComplete="email"
-                    placeholder="yourname@example.com"
+                    placeholder="Enter your Email"
                     required
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-900 shadow-sm shadow-slate-900/5 outline-none transition duration-200 placeholder:text-slate-500 hover:border-blue-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
                   />
@@ -170,12 +171,12 @@ export default function Login() {
                   >
                     Password
                   </label>
-                  <input
+                  <PasswordField
                     id="password"
                     name="password"
                     type="password"
                     autoComplete="current-password"
-                    placeholder="Enter your password"
+                    placeholder="Enter your Password"
                     required
                     className="h-10 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-900 shadow-sm shadow-slate-900/5 outline-none transition duration-200 placeholder:text-slate-500 hover:border-blue-300 focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 sm:h-11 sm:px-4 sm:text-sm lg:h-12"
                   />

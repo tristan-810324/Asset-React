@@ -1606,9 +1606,9 @@ async function resolveApproval({ tokenHash, batchId, requesterUserId, gsoUserId,
         [tokenHash],
       );
     const batch = batchResult.rows[0];
-    // An employee with an A.S.SET account confirms receipt there; GSO records it only for those without one.
+    // An employee with an ASSET account confirms receipt there; GSO records it only for those without one.
     if (batch && gsoUserId !== undefined && batch.requester_user_id && batch.status === 'Pending') {
-      throw conflict('This employee has an A.S.SET account, so they must confirm the receipt in their Requester account.');
+      throw conflict('This employee has an ASSET account, so they must confirm the receipt in their Requester account.');
     }
     if (batch) {
       const itemsResult = await client.query(

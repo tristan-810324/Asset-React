@@ -107,7 +107,7 @@ const consumableStockUnits: UnitGroup[] = [
 ]
 
 function inventoryTypeLabel(trackingMode: InventoryTrackingMode, issueBehavior: InventoryIssueBehavior) {
-  if (trackingMode === 'individual') return 'Track each item separately'
+  if (trackingMode === 'individual') return 'Individual Asset'
   return issueBehavior === 'consumable' ? 'Consumable stock' : 'Group stock (returned)'
 }
 
@@ -1724,7 +1724,7 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
     selectedItemNameFilter !== 'all' ? `item name: ${selectedItemNameFilter}` : '',
     selectedConditionStatusFilter !== 'all' ? selectedConditionStatusFilter.replace(':', ': ') : '',
     selectedTrackingModeFilter !== 'all'
-      ? `inventory type: ${selectedTrackingModeFilter === 'individual' ? 'Track each item' : selectedTrackingModeFilter === 'group' ? 'Group (returned)' : 'Consumable'}`
+      ? `inventory type: ${selectedTrackingModeFilter === 'individual' ? 'Individual Asset' : selectedTrackingModeFilter === 'group' ? 'Group (returned)' : 'Consumable'}`
       : '',
     selectedInventoryDate ? `acquisition date: ${formatAcquiredDate(selectedInventoryDate)}` : '',
   ].filter(Boolean)
@@ -1856,7 +1856,7 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
             onClick={() => setShowAddItemModal(true)}
             className="rounded-xl bg-white px-4 py-2 text-xs font-extrabold text-blue-950 shadow-md transition hover:bg-blue-50"
           >
-            + Add & Overview
+            + Add New Items
           </button>
         </div>}
       </section>
@@ -2076,7 +2076,7 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
               <p className="-mt-1 mb-3 text-xs leading-relaxed text-slate-600">How GSO tracks this item.</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {([
-                  { value: 'individual' as const, title: 'Track each item', description: 'Each item gets its own barcode.' },
+                  { value: 'individual' as const, title: 'Individual Asset', description: 'Each item gets its own barcode.' },
                   { value: 'consumable' as const, title: 'Consumable', description: 'Used up, not returned.' },
                 ]).map((option) => (
                   <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border-2 p-4 transition ${selectedInventoryType === option.value ? 'border-blue-400 bg-blue-50/70 ring-2 ring-blue-100' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
@@ -2148,7 +2148,7 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
             </label>
 
             <label className="block">
-              <span className={editFieldLabelClass}>{formData.trackingMode === 'individual' ? 'Number of items to track separately' : 'Stock quantity'} <span className="text-rose-600">*</span></span>
+              <span className={editFieldLabelClass}>{formData.trackingMode === 'individual' ? 'Number of individual assets' : 'Stock quantity'} <span className="text-rose-600">*</span></span>
               <input
                 type="number"
                 min="1"
@@ -2738,7 +2738,7 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
                 className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-xs font-bold text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
               >
                 <option value="all">All inventory</option>
-                <option value="individual">Track each item</option>
+                <option value="individual">Individual Asset</option>
                 <option value="group">Group (returned)</option>
                 <option value="consumable">Consumable</option>
               </select>
@@ -2765,7 +2765,7 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
                   onClick={() => setSelectedItem(item)}
                   className="cursor-pointer border-t border-slate-100 transition hover:bg-blue-50/50"
                 >
-                  <td className="px-5 py-4 sm:px-6">
+                  <td className="px-5 py-5 sm:px-6">
                     <div className="flex min-w-52 items-center gap-3">
                       <span
                         className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 text-xs font-black shadow-sm ${inventoryAvatarTone(index)}`}
@@ -2776,15 +2776,8 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
                         <span title={item.description} className="line-clamp-2 block text-xs font-extrabold leading-5 text-slate-800">
                           {item.description || item.name}
                         </span>
-                        {item.name.trim().toLocaleLowerCase() !== (item.description || '').trim().toLocaleLowerCase() && (
-                          <span className="mt-1 block truncate text-[0.68rem] font-bold text-blue-700">{item.name}</span>
-                        )}
-                        <span className="mt-1 block text-[0.62rem] font-bold text-slate-400">{item.code}</span>
-                        <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[0.6rem] font-extrabold ${item.statusTone}`}>
-                            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
-                            {item.status}
-                          </span>
+                        <span className="mt-1.5 block text-[0.62rem] font-bold text-slate-400">{item.code}</span>
+                        <span className="mt-3 flex flex-wrap items-center gap-1.5">
                           <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-[0.6rem] font-bold text-slate-600">
                             {item.category}
                           </span>
@@ -2801,7 +2794,6 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
                   </td>
                   <td className="whitespace-nowrap px-5 py-4">
                     <span className="block text-xs font-bold text-slate-700">Unit {item.unitCost}</span>
-                    <span className="mt-1 block text-[0.65rem] text-slate-500">Acquired {item.acquisitionCost}</span>
                   </td>
                   <td className="px-5 py-4">
                     <span className="block whitespace-nowrap text-xs font-extrabold text-slate-700">
@@ -3175,7 +3167,7 @@ export default function ItemsMasterData({ readOnly = false }: { readOnly?: boole
                         required
                         className={`${editControlClass} disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500`}
                       >
-                        <option value="individual">Track each item separately - unique barcode for each item</option>
+                        <option value="individual">Individual Asset - unique barcode for each item</option>
                         <option value="quantity">
                           {isLegacyReturnableStock(selectedItem)
                             ? 'Group stock (returned) - existing record'

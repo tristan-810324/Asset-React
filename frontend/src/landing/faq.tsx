@@ -9,12 +9,12 @@ type FaqItem = {
 const faqItems: FaqItem[] = [
   {
     id: 'what-is-asset',
-    question: 'What is A.SSET?',
-    answer: "A.SSET is DYCI's equipment tracking portal for inventory, employee assignments, returns, and repair follow-up.",
+    question: 'What is ASSET?',
+    answer: "ASSET is DYCI's equipment tracking portal for inventory, employee assignments, returns, and repair follow-up.",
   },
   {
     id: 'who-can-use',
-    question: 'Who can use A.SSET?',
+    question: 'Who can use ASSET?',
     answer: 'GSO Staff, IT Admin, and authorized requesters can sign in. Your account determines which workspace and tools are available.',
   },
   {
@@ -61,7 +61,7 @@ export function FAQSection() {
               <span aria-hidden="true" className="h-2 w-2 rounded-full bg-blue-600" />Help center
             </p>
             <h2 id="faq-heading" className="mt-3 max-w-xl text-2xl font-black leading-[1.1] tracking-[-0.045em] text-slate-950 sm:mt-4 sm:text-4xl lg:text-4xl">
-              Quick answers about <span className="text-blue-700">A.SSET.</span>
+              Quick answers about <span className="text-blue-700">ASSET.</span>
             </h2>
           </div>
           <p className="max-w-2xl text-xs leading-5 text-slate-600 sm:text-base sm:leading-8 lg:justify-self-end">

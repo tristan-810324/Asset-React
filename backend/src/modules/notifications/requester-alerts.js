@@ -44,11 +44,11 @@ async function notifyRequester({ userId, employeeCode, employeeEmail, title, mes
       from: env.smtp.from,
       to: email,
       subject: title,
-      text: [`Dear ${name || 'requester'},`, '', message, '', 'Sign in to A.SSET to see the details.'].join('\n'),
+      text: [`Dear ${name || 'requester'},`, '', message, '', 'Sign in to ASSET to see the details.'].join('\n'),
       html: emailLayout({
         title,
         intro: `Dear ${name || 'requester'}, ${message}`,
-        body: '<p style="margin:0;font-size:13px;color:#64748b;">Sign in to A.SSET to see the details.</p>',
+        body: '<p style="margin:0;font-size:13px;color:#64748b;">Sign in to ASSET to see the details.</p>',
       }),
     });
   } catch (error) {
