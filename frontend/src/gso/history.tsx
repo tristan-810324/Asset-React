@@ -3,6 +3,7 @@ import { GsoPageFrame } from '../components/navbars/gsonavbar'
 import { getRequesterIdentityPicture, listFacilityFinanceReport, listGsoRequests, listRequesterIdentityReviews, type FacilityFinanceRow, type RequesterIdentity } from '../requesters/requesterApi'
 import { formatDateTime } from '../requesters/requesterrequestutils'
 import { listIssuanceRecords, listRepairHistory, type RepairHistoryRecord } from './issuancesApi'
+import { listInventoryItems } from './inventoryApi'
 import { getChargeReceipt, listCharges, type ChargeKind, type ChargeReceipt } from './paymentsApi'
 import { listServiceWorkOrders } from './serviceWorkboardApi'
 import { listAuditLogs, type AuditLogEntry } from '../admin/auditLogsApi'
@@ -561,7 +562,14 @@ export default function GsoHistory() {
 
   const [dateFilter, setDateFilter] = useState('')
   const [lossCategory, setLossCategory] = useState<LossView>('all')
-  const [sortKey, setSortKey] = useState<SortKey>('oldest')
+  const [sortKey, setSortKey] = useState<SortKey>('newest')
+  // Item descriptions from Item Master Data, keyed by item code, so the record popup can show them.
+  const [itemDescriptions, setItemDescriptions] = useState<Record<string, string>>({})
+  useEffect(() => {
+    listInventoryItems()
+      .then((items) => setItemDescriptions(Object.fromEntries(items.map((item) => [item.itemCode, item.description]))))
+      .catch(() => setItemDescriptions({}))
+  }, [])
   // Employee first and last names by email, so the Person column shows a real name instead of the login name.
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({})
   useEffect(() => {
@@ -583,7 +591,7 @@ export default function GsoHistory() {
     setSearch('')
     setStatusFilter('all')
     setDateFilter('')
-    setSortKey('oldest')
+    setSortKey('newest')
     setLossCategory('all')
   }
   const changeLossCategory = (next: LossView) => {
@@ -804,7 +812,8 @@ export default function GsoHistory() {
     { label: 'Reference', value: row.reference },
     row.tag && row.tag !== row.reference ? { label: 'Tag', value: row.tag } : null,
     { label: 'Item', value: row.itemName || row.detail },
-    row.itemName && row.detail ? { label: 'Details', value: row.detail } : null,
+    itemDescriptions[row.reference] ? { label: 'Description', value: itemDescriptions[row.reference], wide: true } : null,
+    row.itemName && row.detail && row.detail !== row.itemName ? { label: 'Details', value: row.detail } : null,
     row.place ? { label: 'Location', value: row.place } : null,
     row.handledBy ? { label: 'Repair by', value: row.handledBy } : null,
     row.condition ? { label: 'Condition', value: conditionText(row) } : null,

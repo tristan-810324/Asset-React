@@ -242,8 +242,8 @@ export default function RequesterNotifications() {
       <section className="mt-6 overflow-hidden rounded-2xl border-2 border-slate-300/80 bg-white shadow-md shadow-slate-300/35 ring-1 ring-slate-900/5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-4 sm:px-5">
           <div>
-            <h2 className="text-sm font-black text-slate-900">Activity timeline</h2>
-            <p className="mt-1 text-[0.68rem] font-medium text-slate-500">{loading ? 'Loading…' : `${unreadCount} unread`}</p>
+            <h2 className="text-sm font-black text-slate-900">Activity Timeline</h2>
+            {loading && <p className="mt-1 text-[0.68rem] font-medium text-slate-500">Loading…</p>}
           </div>
           <div className="flex rounded-xl bg-slate-100 p-1" role="group" aria-label="Show notifications">
             {([

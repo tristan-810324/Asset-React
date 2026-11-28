@@ -126,7 +126,13 @@ export default function AdminNavbar({ activePath, mobileMenuOpen, onMobileMenuCl
             )
           })}
         </nav>
-      </aside>
+        <div className="mt-auto border-t border-white/10 pt-4">
+          <button type="button" onClick={() => { clearAuthSession(); window.location.replace('/login') }} className="group flex w-full items-center gap-3 rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2.5 text-left text-xs font-extrabold text-rose-200 shadow-sm transition hover:border-rose-400/40 hover:bg-rose-500/20 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/50">
+            <span aria-hidden="true" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-rose-500/15 transition group-hover:bg-rose-500/25"><svg aria-hidden="true" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17l5-5-5-5m5 5H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></svg></span>
+            Logout
+          </button>
+        </div>
+            </aside>
 
       {mobileMenuOpen && (
         <button type="button" className="fixed inset-0 z-30 bg-slate-950/55 backdrop-blur-[2px] lg:hidden" aria-label="Close navigation menu" onClick={onMobileMenuClose} />

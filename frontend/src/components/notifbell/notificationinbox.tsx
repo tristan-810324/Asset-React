@@ -7,6 +7,12 @@ import {
   type ServerNotification,
 } from '../../auth/notificationsApi'
 
+// Repair notices show under Repair & Maintenance, even when the backend files them as Returns or Requests.
+function categoryLabelFor(row: { type: string; title: string; href?: string | null }) {
+  if (row.href?.includes('/gso/to-be-repaired') || /repair/i.test(row.title)) return 'Repair & Maintenance'
+  return notificationModuleFor(row.type)
+}
+
 type InboxFilter = 'all' | 'unread'
 
 const moduleTone: Record<string, string> = {
@@ -68,7 +74,7 @@ function TimelineRow({ row, onRead }: { row: ServerNotification; onRead: (id: Se
       </div>
       <p title={row.message} className="mt-1 line-clamp-1 text-[0.7rem] leading-relaxed text-slate-600 sm:line-clamp-2 sm:text-xs">{row.message}</p>
       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 sm:mt-3 sm:pt-3">
-        <p className="text-[0.62rem] font-medium text-slate-400"><span className="hidden sm:inline">{notificationModuleFor(row.type)}</span>{unread && <span className="font-extrabold text-blue-700 sm:ml-2">New</span>}</p>
+        <p className="text-[0.62rem] font-medium text-slate-400"><span className="hidden sm:inline">{categoryLabelFor(row)}</span>{unread && <span className="font-extrabold text-blue-700 sm:ml-2">New</span>}</p>
         {(row.href || unread) && (
           <div className="flex items-center gap-2">
             {unread && <button type="button" onClick={() => onRead(row.id)} className="rounded-lg border-2 border-slate-300 bg-white px-2.5 py-1 text-[0.6rem] font-extrabold text-slate-700 hover:bg-slate-50 sm:px-3 sm:py-1.5 sm:text-[0.65rem]">Mark as read</button>}
@@ -164,8 +170,8 @@ export default function NotificationInbox({ eyebrow, description, variant = 'inb
         <section className="mt-4 overflow-hidden rounded-2xl border border-slate-300/80 bg-white shadow-md sm:border-2 shadow-slate-300/35 ring-1 ring-slate-900/5 sm:mt-6" aria-labelledby="notification-list-title">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 px-3 py-3 sm:px-5 sm:py-4">
             <div>
-              <h2 id="notification-list-title" className="text-sm font-black text-slate-900">Activity timeline</h2>
-              <p className="mt-1 text-[0.68rem] font-medium text-slate-500">{loading ? 'Loading…' : `${unreadCount} unread`}</p>
+              <h2 id="notification-list-title" className="text-sm font-black text-slate-900">Activity Timeline</h2>
+              {loading && <p className="mt-1 text-[0.68rem] font-medium text-slate-500">Loading…</p>}
             </div>
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
               <label className="sr-only" htmlFor="notification-search">Search notifications</label>

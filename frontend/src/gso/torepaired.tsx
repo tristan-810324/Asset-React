@@ -106,7 +106,7 @@ function repairCheckProblem(open: number, entry: { repaired: string; unserviceab
 // GSO sees the units GSO checks; IT Admin's page (owner "ITSS") sees the units sent to ITSS.
 export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedded?: boolean; owner?: 'GSO' | 'ITSS' } = {}) {
   const isItssView = owner === 'ITSS'
-  const [activeRepairSection, setActiveRepairSection] = useState<'queue' | 'history'>('queue')
+  const [activeRepairSection] = useState<'queue' | 'history'>('queue')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedReportDate, setSelectedReportDate] = useState('')
   const [repairItems, setRepairItems] = useState<RepairQueueItem[]>([])
@@ -499,20 +499,10 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
             <span className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-white/8 px-3 py-1 text-[0.6rem] font-extrabold uppercase tracking-[0.16em] text-blue-100">
               Asset Maintenance
             </span>
-            <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">To Be Repaired</h1>
+            <h1 className="mt-3 text-2xl font-black tracking-tight sm:text-3xl">Repair & Maintenance</h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-blue-100">
               Review equipment reported for inspection, maintenance, or repair.
             </p>
-          </div>
-          <div className="mt-5 flex flex-wrap gap-2 border-t border-white/10 pt-4" role="group" aria-label="Repair records view">
-            <button
-              type="button"
-              aria-pressed={activeRepairSection === 'queue'}
-              onClick={() => setActiveRepairSection('queue')}
-              className={`rounded-xl px-4 py-2 text-xs font-extrabold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${activeRepairSection === 'queue' ? 'bg-white text-[#09244a]' : 'border border-white/10 bg-white/8 text-white hover:bg-white/15'}`}
-            >
-              Items To Be Repaired ({isLoadingRepairs ? '…' : repairItems.length})
-            </button>
           </div>
         </div>
       </section>
@@ -634,7 +624,6 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
                 {facilityRepairs.map((row) => {
                   // GSO and ITSS items both get the same check here; the owner only shows who is responsible for the repair.
                   const forGso = true
-                  const open = openUnits(row)
                   return <tr key={`${row.requestId}-${row.itemCode}-${row.assetId}`} className="border-t border-slate-100">
                     <td className="px-5 py-4 sm:px-6">
                       <span className="block text-xs font-extrabold text-slate-800">{row.itemName}</span>
@@ -649,7 +638,6 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
                     <td className="px-5 py-4 sm:px-6">
                       {forGso ? <div>
                         <button type="button" onClick={() => openFacilityCheck(row)} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
-                        <p className="mt-1.5 text-[0.62rem] font-bold text-slate-500">{open} of {row.damagedQuantity} left to check.</p>
                       </div> : <span className="text-[0.65rem] font-bold text-slate-500">With ITSS. Waits for their return.</span>}
                     </td>
                   </tr>
@@ -690,7 +678,6 @@ export default function ToRepaired({ embedded = false, owner = 'GSO' }: { embedd
                     </td>
                     <td className="px-5 py-4 sm:px-6">
                       <button type="button" onClick={() => { setCompletionChoice('repaired'); setConfirmRepaired(false); setRepairedByName(''); setRepairedCondition('Good'); setRepairActionError(''); setRepairCompletionItem(item) }} className="h-9 whitespace-nowrap rounded-lg bg-blue-600 px-3.5 text-xs font-extrabold text-white transition hover:bg-blue-700">Repair check</button>
-                      <p className="mt-1.5 text-[0.62rem] font-bold text-slate-500">1 left to check.</p>
                     </td>
                   </tr>
                 ))}
