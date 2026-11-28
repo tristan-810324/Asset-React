@@ -183,12 +183,6 @@ function groupAssets(assets: CatalogAsset[], keyOf: (asset: CatalogAsset) => str
   return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right))
 }
 
-// The job's target date is a day that has already ended, so the latest choice is yesterday.
-const yesterday = () => {
-  const date = new Date()
-  date.setDate(date.getDate() - 1)
-  return date.toLocaleDateString('en-CA')
-}
 const today = () => {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -403,7 +397,8 @@ function RequestItemContent() {
     .join(' ') || identity?.accountName || ''
   const verifiedDepartment = identity?.matchedDepartment || identity?.department || ''
   // The account that files the job is recorded with it, so the name shown here is the one staff see.
-  const madeByName = user?.name || identity?.accountName || ''
+  // The requester's first and last name from their staff details; the login name is only a fallback.
+  const madeByName = [identity?.firstName, identity?.lastName].map((part) => (part || '').trim()).filter(Boolean).join(' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) || user?.name || identity?.accountName || ''
   const verifiedPosition = identity?.matchedPosition || identity?.position || ''
   // The venue list comes from GSO, so it is loaded only for the facilities request form.
   useEffect(() => {
@@ -770,7 +765,7 @@ function RequestItemContent() {
     selectedServiceCategory
     && String(form.departmentOrganization || '').trim()
     && String(form.location || '').trim()
-    && Boolean(form.requiredDate) && String(form.requiredDate) < today()
+    && Boolean(form.requiredDate) && String(form.requiredDate) >= today()
     && String(form.purpose || '').trim()
     && (form.serviceCategory !== 'OTHERS' || String(form.serviceOther || '').trim()),
   )
@@ -1193,7 +1188,7 @@ function RequestItemContent() {
                     </select>
                   </Field>
                   <Field label="Target date">
-                    <input className={inputClass} type="date" max={yesterday()} value={String(form.requiredDate || '')} onChange={(event) => setField('requiredDate', event.target.value)} required />
+                    <input className={inputClass} type="date" min={today()} value={String(form.requiredDate || '')} onChange={(event) => setField('requiredDate', event.target.value)} required />
                   </Field>
                 </div>
                 {form.serviceCategory === 'OTHERS' && (

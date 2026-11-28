@@ -400,7 +400,7 @@ function groupReportedItems(rows: ItemRow[]): ItemGroup[] {
 function IncidentItems({ item }: { item: LossDamageCase }) {
   const groups = groupReportedItems(itemsOf(item))
   return <section className={sectionBorder} aria-labelledby="case-items-title">
-    <SectionHeading id="case-items-title" title="Items reported" detail="Still with the requester." />
+    <SectionHeading id="case-items-title" title="Items reported" detail={item.settlement?.status === 'FOR_REPAIR' ? 'Returned to GSO.' : 'Still with the requester.'} />
     {groups.length === 0
       ? <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-4 text-center text-xs font-semibold text-slate-500">No items on this report.</p>
       : <ul className="space-y-2">{groups.map((group) => <li key={group.name} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-200/60">

@@ -245,6 +245,11 @@ export default function GsoDashboard() {
     const timer = window.setTimeout(() => { void loadService() }, 0)
     return () => window.clearTimeout(timer)
   }, [loadService])
+  // Refresh the service counts when this tab is focused again, so they match the workboard after changes made there.
+  useEffect(() => {
+    window.addEventListener('focus', loadService)
+    return () => window.removeEventListener('focus', loadService)
+  }, [loadService])
 
   const runServiceQuick = async (job: ServiceWorkOrder) => {
     setServiceBusyId(job.id)

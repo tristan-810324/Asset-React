@@ -174,7 +174,7 @@ function validateCreateRequest(input) {
     // The category decides the receiving team and the starting priority. The client's values are never trusted.
     const serviceCategory = text(data.serviceCategory, 'service category', 60);
     if (!SERVICE_CATEGORIES.has(serviceCategory)) invalid('Choose a valid service category.');
-    const requiredDate = date(data.requiredDate, 'target date', { beforeToday: true });
+    const requiredDate = date(data.requiredDate, 'target date', { notPast: true });
     // "Others" needs the requester to say what the service is. The text is ignored for every other category.
     const serviceOther = serviceCategory === 'OTHERS' ? text(data.serviceOther, 'description of the service', 200) : '';
     return {
